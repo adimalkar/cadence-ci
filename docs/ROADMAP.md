@@ -52,13 +52,29 @@ plan (GitHub retains logs 90 days).*
 **Week 7** — catalog classes A–C complete
 **Week 8** — cost model, two-currency reporting · **start cold pitches**
 **Week 9** — classes D–E; projection engine with corpus priors
-**Week 10** — eval harness, calibration measurement, report page
+**Week 10** — eval harness, calibration measurement
+
+**F0 + F1 — the audit report (weeks 8–10)** · design in [`FRONTEND.md`](FRONTEND.md)
+
+The report is not a nice-to-have at the end of the phase — it **is** the cold-pitch
+artifact from §10, so it has to exist the week pitching starts.
+
+- [ ] F0: design tokens; the dimension-line waterfall component (shared by all 4 screens)
+- [ ] F1: audit report — public, no auth, shareable URL
+- [ ] Hero waterfall: actual vs floor, recoverable region hatched
+- [ ] **Replay renders solid + point value; projection renders hatched + range.** The
+      credibility rule from `PRODUCT.md` §6 made visible, not just documented.
+- [ ] Every finding row: claim · evidence link · saving · basis · action
+- [ ] Hover a job bar → queue time splits out as a leading segment
+- [ ] Empty state as a real outcome: "No recoverable waste across 1,412 runs."
+- [ ] Mobile — this link arrives in a GitHub issue, read on a phone
 
 **Ship criteria**
 - [ ] Audit runs across all 50 corpus repos unattended
 - [ ] Median repo: ≥3 findings, ≥10% combined recoverable wall time
 - [ ] Replay reconstructs known-good historical durations within 2%
 - [ ] Zero findings without evidence (DB-enforced, test-verified)
+- [ ] Report readable on a 375px viewport; every number reachable as text by screen reader
 - [ ] **3 maintainers of repos we don't own confirm a finding surprised them**
 
 ---
@@ -75,6 +91,12 @@ plan (GitHub retains logs 90 days).*
 - [ ] Anti-spam: 1 open PR max → 3 after first merge; report-first; closed = suppressed;
       **never an unsolicited PR on a read-only-ingested repo**
 - [ ] Realized-savings writeback (30-day post-merge window)
+
+**F2 — findings console (weeks 12–13)**
+- [ ] Authenticated list: filter, sort, suppress with a reason
+- [ ] "Open fix PR" from a finding
+- [ ] **"This was wrong" button, prominent not buried** — it is the continuous eval stream
+      that makes the calibration dashboard possible
 
 **Ship criteria**
 - [ ] Each fixer has a ≥20-workflow before/after corpus
@@ -115,7 +137,12 @@ plan (GitHub retains logs 90 days).*
 - [ ] Feedback-loop decomposition: push → queue → execution → post (21–22)
 - [ ] Changepoint regression detection, not fixed thresholds (22)
 - [ ] DORA — one page, four queries (23)
-- [ ] **Public calibration dashboard** (24) — replay vs projection reported separately
+
+**F3 — trends (21–22)** · **F4 — public calibration (24)**
+- [ ] F3: flaky cost over time, feedback decomposition, regressions with introducing
+      commit linked. One screen, not a dashboard suite.
+- [ ] F4: **public calibration dashboard** — predicted vs realized per rule, replay and
+      projection reported separately, published whether or not it flatters us
 
 **Ship criteria**
 - [ ] A maintainer says a number surprised them

@@ -1,0 +1,498 @@
+<title>Cadence — audit report</title>
+<style>
+  /* ─── tokens ─────────────────────────────────────────────────────────────
+     Dark is the designed primary: a drafting table under lamplight.
+     Light is its counterpart: vellum on the same table. Not an inversion —
+     both are real states of the same object.
+
+     Green / red / amber are reserved for CI status and never mean anything
+     else. A maintainer reads green as "passed"; borrowing it for "saved"
+     would collide with the one color vocabulary this audience already has.
+     So the accent for recoverable time sits outside that palette entirely.
+     Cyan reads as measurement, not verdict.                                */
+  :root {
+    --ground:  #E8E8E3;   /* cool vellum, biased slightly toward the accent */
+    --panel:   #F1F1EE;
+    --rule:    #C6CAC6;
+    --rule-hi: #A9AFAC;
+    --text:    #1F272D;
+    --muted:   #5E6A71;
+    --spent:   #8B979D;
+    --recover: #0E7C86;
+    --pass:    #2E7D52;
+    --fail:    #B4402F;
+    --shadow:  0 1px 2px rgba(31,39,45,.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground:  #131A1F;
+      --panel:   #1A232A;
+      --rule:    #2B3843;
+      --rule-hi: #3C4C58;
+      --text:    #C7D1D8;
+      --muted:   #7B8994;
+      --spent:   #55666F;
+      --recover: #3FD0D8;
+      --pass:    #5FBF7F;
+      --fail:    #E06A5C;
+      --shadow:  none;
+    }
+  }
+  :root[data-theme="light"] {
+    --ground:#E8E8E3; --panel:#F1F1EE; --rule:#C6CAC6; --rule-hi:#A9AFAC;
+    --text:#1F272D; --muted:#5E6A71; --spent:#8B979D; --recover:#0E7C86;
+    --pass:#2E7D52; --fail:#B4402F; --shadow:0 1px 2px rgba(31,39,45,.10);
+  }
+  :root[data-theme="dark"] {
+    --ground:#131A1F; --panel:#1A232A; --rule:#2B3843; --rule-hi:#3C4C58;
+    --text:#C7D1D8; --muted:#7B8994; --spent:#55666F; --recover:#3FD0D8;
+    --pass:#5FBF7F; --fail:#E06A5C; --shadow:none;
+  }
+
+  /* The product is numbers, so mono is the display face, not the caption
+     face. Tabular figures by default; durations align without coaxing. */
+  :root {
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --s1: .6875rem; --s2: .8125rem; --s3: .9375rem; --s4: 1.5rem; --s5: 2.75rem;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--ground); color: var(--text);
+    font-family: var(--sans); font-size: var(--s3); line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    font-variant-numeric: tabular-nums;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 clamp(16px, 4vw, 40px); }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--recover); outline-offset: 2px; border-radius: 1px; }
+
+  /* ─── header rail ─────────────────────────────────────────────────────── */
+  .rail {
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--mono); font-size: var(--s1);
+    letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+  }
+  .rail__in {
+    display: flex; flex-wrap: wrap; gap: 8px 20px;
+    align-items: baseline; padding: 14px 0;
+  }
+  .rail__mark { color: var(--text); font-weight: 600; letter-spacing: .16em; }
+  .rail__sep { color: var(--rule-hi); }
+  .rail__right { margin-left: auto; }
+
+  /* ─── hero ────────────────────────────────────────────────────────────── */
+  .hero { padding: clamp(32px, 6vw, 56px) 0 clamp(24px, 4vw, 36px); }
+  .eyebrow {
+    font-family: var(--mono); font-size: var(--s1); color: var(--muted);
+    letter-spacing: .1em; text-transform: uppercase; margin: 0 0 20px;
+  }
+  .verdict {
+    font-family: var(--mono); font-weight: 600;
+    font-size: clamp(1.75rem, 6vw, var(--s5)); line-height: 1.1;
+    letter-spacing: -.02em; margin: 0 0 10px; text-wrap: balance;
+  }
+  .verdict em { font-style: normal; color: var(--recover); }
+  .verdict__sub {
+    margin: 0 0 8px; color: var(--muted); font-size: var(--s3);
+    max-width: 60ch;
+  }
+
+  /* ─── the waterfall ───────────────────────────────────────────────────── */
+  .chart { margin: 36px 0 0; }
+  .chart__scroll { overflow-x: auto; }
+  .chart__inner { min-width: 540px; }
+
+  .axis {
+    position: relative; height: 18px; margin-left: var(--label-w);
+    border-bottom: 1px solid var(--rule);
+  }
+  .axis__tick {
+    position: absolute; top: 0; bottom: 0; width: 1px; background: var(--rule);
+  }
+  .axis__num {
+    position: absolute; bottom: 2px; transform: translateX(-50%);
+    font-family: var(--mono); font-size: var(--s1); color: var(--muted);
+  }
+
+  .track { --label-w: 148px; }
+  .row {
+    display: grid; grid-template-columns: var(--label-w) 1fr;
+    align-items: center; gap: 0; min-height: 22px;
+  }
+  .row__label {
+    font-family: var(--mono); font-size: var(--s1); color: var(--muted);
+    padding-right: 12px; text-align: right;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .row__bars { position: relative; height: 14px; }
+  .bar {
+    position: absolute; top: 2px; height: 10px;
+    background: var(--spent); border-radius: 1px;
+  }
+  /* Queue and execution are different problems with opposite fixes, so the
+     interface must never merge them. Queue is the hollow leading segment. */
+  .bar--queue {
+    background: transparent;
+    border: 1px solid var(--rule-hi); border-right: none;
+    top: 3px; height: 8px;
+  }
+  .row:hover .bar--queue, .row:focus-within .bar--queue { border-color: var(--recover); }
+  .row--critical .row__label { color: var(--text); }
+  .row--critical .bar { background: var(--recover); }
+  .row__dur {
+    position: absolute; top: 0; font-family: var(--mono); font-size: var(--s1);
+    color: var(--muted); white-space: nowrap; padding-left: 6px;
+  }
+
+  .rest {
+    font-family: var(--mono); font-size: var(--s1); color: var(--muted);
+    margin: 6px 0 0 var(--label-w); padding-left: 2px;
+  }
+
+  /* ─── dimension line: the correct notation for a span of time ─────────── */
+  .dim { --label-w: 148px; margin-top: 26px; }
+  .dim__row { display: grid; grid-template-columns: var(--label-w) 1fr; align-items: center; }
+  .dim__label {
+    font-family: var(--mono); font-size: var(--s1); color: var(--muted);
+    text-align: right; padding-right: 12px; text-transform: uppercase; letter-spacing: .08em;
+  }
+  .dim__line { position: relative; height: 26px; }
+  .dim__span {
+    position: absolute; top: 11px; height: 1px; background: var(--rule-hi);
+  }
+  .dim__span::before, .dim__span::after {
+    content: ""; position: absolute; top: -4px; width: 1px; height: 9px; background: var(--rule-hi);
+  }
+  .dim__span::before { left: 0; }
+  .dim__span::after  { right: 0; }
+  .dim__span--recover, .dim__span--recover::before, .dim__span--recover::after { background: var(--recover); }
+  .dim__val {
+    position: absolute; top: 0; transform: translateX(-50%);
+    font-family: var(--mono); font-size: var(--s1); color: var(--muted);
+    background: var(--ground); padding: 0 6px;
+  }
+  .dim__val--recover { color: var(--recover); }
+
+  /* Hatching is drafting notation for material to be removed. It is also the
+     redundant, non-color channel that makes "recoverable" legible without
+     relying on hue alone. */
+  .hatch {
+    position: absolute; top: 4px; height: 10px;
+    background-image: repeating-linear-gradient(
+      -45deg, var(--recover) 0 1px, transparent 1px 5px);
+    border: 1px solid var(--recover); border-radius: 1px;
+    opacity: .85;
+  }
+
+  /* ─── findings ledger ─────────────────────────────────────────────────── */
+  .ledger { padding: clamp(28px, 5vw, 44px) 0 0; }
+  .ledger__head {
+    display: flex; align-items: baseline; gap: 12px;
+    border-top: 1px solid var(--rule); padding-top: 14px; margin-bottom: 4px;
+  }
+  .ledger__title {
+    font-family: var(--mono); font-size: var(--s1); letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted); margin: 0;
+  }
+  .ledger__count { font-family: var(--mono); font-size: var(--s1); color: var(--rule-hi); }
+
+  .finding {
+    border-bottom: 1px solid var(--rule); padding: 22px 0;
+    display: grid; gap: 14px;
+    grid-template-columns: 1fr minmax(150px, auto);
+  }
+  .finding__main { min-width: 0; }
+  .finding__claim {
+    font-size: var(--s4); font-weight: 500; line-height: 1.3;
+    margin: 0 0 8px; letter-spacing: -.01em; text-wrap: balance;
+  }
+  .finding__body { margin: 0 0 12px; color: var(--muted); max-width: 62ch; }
+  .finding__body code {
+    font-family: var(--mono); font-size: .9em; color: var(--text);
+  }
+
+  .ev { display: flex; flex-wrap: wrap; gap: 6px; }
+  .ev__item {
+    font-family: var(--mono); font-size: var(--s1); color: var(--muted);
+    border: 1px solid var(--rule); border-radius: 2px; padding: 3px 8px;
+    background: var(--panel); text-decoration: none;
+  }
+  a.ev__item:hover { border-color: var(--recover); color: var(--text); }
+
+  .finding__side { text-align: right; display: flex; flex-direction: column; gap: 4px; align-items: flex-end; }
+  .saving {
+    font-family: var(--mono); font-size: var(--s4); font-weight: 600;
+    letter-spacing: -.02em; color: var(--recover); line-height: 1.1;
+  }
+  .saving--range { font-size: 1.15rem; }
+  .saving__unit { color: var(--muted); font-size: var(--s1); font-weight: 400; }
+
+  /* The credibility rule, made visible: replay is arithmetic over observed
+     timings; projection is an estimate of a state we never observed. A reader
+     must be able to tell them apart without reading a word. */
+  .basis {
+    font-family: var(--mono); font-size: var(--s1); letter-spacing: .04em;
+    display: inline-flex; align-items: center; gap: 6px; color: var(--muted);
+  }
+  .basis__swatch { width: 22px; height: 9px; border-radius: 1px; flex: none; }
+  .basis--replay .basis__swatch { background: var(--recover); }
+  .basis--projection .basis__swatch {
+    border: 1px solid var(--recover);
+    background-image: repeating-linear-gradient(-45deg, var(--recover) 0 1px, transparent 1px 5px);
+  }
+
+  .act {
+    font-family: var(--mono); font-size: var(--s2); margin-top: 6px;
+    background: none; border: 1px solid var(--rule-hi); color: var(--text);
+    border-radius: 2px; padding: 6px 12px; cursor: pointer;
+  }
+  .act:hover { border-color: var(--recover); color: var(--recover); }
+  .act--quiet { border-color: var(--rule); color: var(--muted); }
+  .act--quiet:hover { border-color: var(--rule-hi); color: var(--text); }
+
+  /* ─── method note ─────────────────────────────────────────────────────── */
+  .method {
+    margin: 36px 0 64px; padding: 18px 20px;
+    border: 1px solid var(--rule); border-radius: 2px; background: var(--panel);
+    font-size: var(--s2); color: var(--muted); max-width: 72ch;
+  }
+  .method h2 {
+    font-family: var(--mono); font-size: var(--s1); letter-spacing: .1em;
+    text-transform: uppercase; margin: 0 0 8px; color: var(--text);
+  }
+  .method p { margin: 0 0 8px; }
+  .method p:last-child { margin-bottom: 0; }
+
+  @media (max-width: 640px) {
+    .finding { grid-template-columns: 1fr; }
+    .finding__side { text-align: left; align-items: flex-start; }
+    .track, .dim { --label-w: 108px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+</style>
+
+<header class="rail">
+  <div class="wrap rail__in">
+    <span class="rail__mark">Cadence</span>
+    <span class="rail__sep">/</span>
+    <span>audit</span>
+    <span class="rail__sep">·</span>
+    <span>astral-sh/ruff</span>
+    <span class="rail__right">150 runs read · no install</span>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <p class="eyebrow">Run 16234891 · 39 jobs · read-only</p>
+
+    <h1 class="verdict">11:37 to a signal.<br>Your longest job is 8:43.</h1>
+    <p class="verdict__sub">
+      The other <strong>2:48</strong> is scheduling. <code>benchmarks instrumented ty</code>
+      determines when this run finishes, and it does not start until the run is
+      already 2:48 old.
+    </p>
+
+    <div class="chart">
+      <div class="chart__scroll">
+        <div class="chart__inner">
+
+          <div class="track">
+            <div class="axis" role="presentation">
+              <span class="axis__tick" style="left:0"></span><span class="axis__num" style="left:0">0:00</span>
+              <span class="axis__tick" style="left:25%"></span><span class="axis__num" style="left:25%">2:54</span>
+              <span class="axis__tick" style="left:50%"></span><span class="axis__num" style="left:50%">5:48</span>
+              <span class="axis__tick" style="left:75%"></span><span class="axis__num" style="left:75%">8:42</span>
+              <span class="axis__tick" style="left:100%"></span><span class="axis__num" style="left:100%">11:37</span>
+            </div>
+
+            <div class="row row--critical" tabindex="0">
+              <span class="row__label">benchmarks ty</span>
+              <span class="row__bars">
+                <span class="bar--queue bar" style="left:24.1%;width:.9%"></span>
+                <span class="bar" style="left:25.0%;width:75.0%"></span>
+                <span class="row__dur" style="left:100%">8:43</span>
+              </span>
+            </div>
+            <div class="row" tabindex="0">
+              <span class="row__label">cargo fuzz build</span>
+              <span class="row__bars">
+                <span class="bar--queue bar" style="left:2.7%;width:.4%"></span>
+                <span class="bar" style="left:3.1%;width:54.2%"></span>
+                <span class="row__dur" style="left:57.3%">6:18</span>
+              </span>
+            </div>
+            <div class="row" tabindex="0">
+              <span class="row__label">benchmarks walltime</span>
+              <span class="row__bars">
+                <span class="bar--queue bar" style="left:26.7%;width:11.0%"></span>
+                <span class="bar" style="left:37.7%;width:39.0%"></span>
+                <span class="row__dur" style="left:76.7%">4:32 <span style="opacity:.6">· 1:17 queued</span></span>
+              </span>
+            </div>
+            <div class="row" tabindex="0">
+              <span class="row__label">cargo test</span>
+              <span class="row__bars">
+                <span class="bar--queue bar" style="left:2.7%;width:.4%"></span>
+                <span class="bar" style="left:3.1%;width:35.9%"></span>
+                <span class="row__dur" style="left:39.0%">4:10</span>
+              </span>
+            </div>
+            <div class="row" tabindex="0">
+              <span class="row__label">cargo test</span>
+              <span class="row__bars">
+                <span class="bar--queue bar" style="left:2.7%;width:6.0%"></span>
+                <span class="bar" style="left:8.7%;width:32.6%"></span>
+                <span class="row__dur" style="left:41.3%">3:47 <span style="opacity:.6">· 0:42 queued</span></span>
+              </span>
+            </div>
+            <div class="row" tabindex="0">
+              <span class="row__label">mkdocs</span>
+              <span class="row__bars">
+                <span class="bar--queue bar" style="left:0;width:.4%"></span>
+                <span class="bar" style="left:.4%;width:24.7%"></span>
+                <span class="row__dur" style="left:25.1%">2:52</span>
+              </span>
+            </div>
+            <div class="row" tabindex="0">
+              <span class="row__label">prek</span>
+              <span class="row__bars">
+                <span class="bar--queue bar" style="left:0;width:.4%"></span>
+                <span class="bar" style="left:.4%;width:14.1%"></span>
+                <span class="row__dur" style="left:14.5%">1:38</span>
+              </span>
+            </div>
+            <div class="row" tabindex="0">
+              <span class="row__label">Determine changes</span>
+              <span class="row__bars">
+                <span class="bar--queue bar" style="left:0;width:.4%"></span>
+                <span class="bar" style="left:.4%;width:2.2%"></span>
+                <span class="row__dur" style="left:2.6%">0:15</span>
+              </span>
+            </div>
+            <p class="rest">+ 31 more jobs</p>
+          </div>
+
+          <div class="dim">
+            <div class="dim__row">
+              <span class="dim__label">actual</span>
+              <span class="dim__line">
+                <span class="dim__span" style="left:0;right:0"></span>
+                <span class="dim__val" style="left:50%">11:37</span>
+              </span>
+            </div>
+            <div class="dim__row">
+              <span class="dim__label">unblocked</span>
+              <span class="dim__line">
+                <span class="dim__span dim__span--recover" style="left:0;width:75.9%"></span>
+                <span class="dim__val dim__val--recover" style="left:38%">8:49</span>
+                <span class="hatch" style="left:75.9%;right:0"></span>
+              </span>
+            </div>
+            <div class="dim__row">
+              <span class="dim__label"></span>
+              <span class="dim__line" style="height:18px">
+                <span class="dim__val dim__val--recover" style="left:88%;top:-4px">2:48 recoverable</span>
+              </span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="ledger">
+    <div class="ledger__head">
+      <h2 class="ledger__title">Findings</h2>
+      <span class="ledger__count">3 · ranked by time recovered</span>
+    </div>
+
+    <article class="finding">
+      <div class="finding__main">
+        <h3 class="finding__claim">The longest job waits 2:48 for work it doesn't use</h3>
+        <p class="finding__body">
+          <code>benchmarks instrumented ty</code> runs 8:43 and sets the finish time for the
+          whole run. It is gated behind <code>Determine changes</code> and the build tier,
+          but consumes no artifact either produces. Starting it at <code>t=0</code> ends the
+          run at 8:49.
+        </p>
+        <div class="ev">
+          <a class="ev__item" href="#">.github/workflows/ci.yml : 412–419</a>
+          <span class="ev__item">39 jobs · 1 run</span>
+          <a class="ev__item" href="#">show the graph</a>
+        </div>
+      </div>
+      <div class="finding__side">
+        <span class="saving">2:48 <span class="saving__unit">/run</span></span>
+        <span class="basis basis--replay"><span class="basis__swatch"></span>replay · exact</span>
+        <button class="act" type="button">Open fix PR</button>
+      </div>
+    </article>
+
+    <article class="finding">
+      <div class="finding__main">
+        <h3 class="finding__claim">39 jobs pay a runner provisioning tax of 8:55 in aggregate</h3>
+        <p class="finding__body">
+          Every job waits for a runner before it executes anything — a median of 2s here,
+          but 23s at p90. Across 150 runs that is 9.5% of all job wall-clock. Six lint jobs
+          each run under 30s and each pay the toll; consolidating them into one recovers
+          most of it.
+        </p>
+        <div class="ev">
+          <span class="ev__item">150 runs · 2,046 jobs</span>
+          <span class="ev__item">p50 2s · p90 23s</span>
+          <a class="ev__item" href="#">show the distribution</a>
+        </div>
+      </div>
+      <div class="finding__side">
+        <span class="saving saving--range">0:46–1:23 <span class="saving__unit">/run</span></span>
+        <span class="basis basis--projection"><span class="basis__swatch"></span>projection · range</span>
+        <button class="act act--quiet" type="button">Show suggested diff</button>
+      </div>
+    </article>
+
+    <article class="finding">
+      <div class="finding__main">
+        <h3 class="finding__claim">Two jobs queued longer than they ran</h3>
+        <p class="finding__body">
+          <code>benchmarks walltime</code> waited 1:17 to start; a <code>cargo test</code>
+          shard waited 0:42. Both are runner contention, not slow code — so adding
+          parallelism here would make this run <em>slower</em>, not faster. Widen the runner
+          pool or narrow the matrix.
+        </p>
+        <div class="ev">
+          <span class="ev__item">2 jobs this run</span>
+          <span class="ev__item">queue &gt; execution</span>
+          <a class="ev__item" href="#">show contention window</a>
+        </div>
+      </div>
+      <div class="finding__side">
+        <span class="saving saving--range">no safe auto-fix</span>
+        <span class="basis basis--replay"><span class="basis__swatch"></span>replay · exact</span>
+        <button class="act act--quiet" type="button">Mark as wrong</button>
+      </div>
+    </article>
+  </section>
+
+  <section class="method">
+    <h2>How these numbers were made</h2>
+    <p>
+      Read-only, from 150 workflow runs through the public GitHub API. No install, no
+      agent, no change to your repository. Step timings reconstruct their own span at
+      0.03% mean error across 1,401 jobs.
+    </p>
+    <p>
+      <strong>Replay</strong> figures are arithmetic over timings we observed — the run
+      above is replayed with the dependency edge removed. <strong>Projection</strong>
+      figures estimate a state we never observed, so they are given as a range with their
+      basis. The two are never added together.
+    </p>
+  </section>
+
+</main>
