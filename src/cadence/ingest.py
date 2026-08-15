@@ -91,6 +91,37 @@ def upsert_run(conn: psycopg.Connection, run: Run) -> None:
     )
 
 
+def ensure_run_stub(conn: psycopg.Connection, run: Run) -> None:
+    """Satisfy job.run_id's foreign key when a workflow_job event arrives with no
+    workflow_run row recorded yet.
+
+    `ON CONFLICT DO NOTHING` is the entire safety property: this must never win against
+    a fuller row. A workflow_job payload can never be authoritative about the run as a
+    whole (its status/conclusion describe one job, not the run), so unlike `upsert_run`
+    this never updates an existing row -- only a real workflow_run event or a REST
+    backfill is allowed to do that.
+    """
+    conn.execute(
+        """
+        INSERT INTO run (id, repo_id, workflow_name, run_attempt, head_sha, head_branch,
+                         created_at, started_at)
+        VALUES (%(id)s, %(repo_id)s, %(workflow_name)s, %(run_attempt)s, %(head_sha)s,
+                %(head_branch)s, %(created_at)s, %(started_at)s)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        {
+            "id": run.id,
+            "repo_id": run.repo_id,
+            "workflow_name": run.workflow_name,
+            "run_attempt": run.run_attempt,
+            "head_sha": run.head_sha,
+            "head_branch": run.head_branch,
+            "created_at": run.created_at,
+            "started_at": run.started_at,
+        },
+    )
+
+
 def upsert_job(conn: psycopg.Connection, job: Job, repo_id: int) -> int:
     conn.execute(
         """

@@ -134,3 +134,19 @@ class RunPage:
     runs: list[Run]
     etag: str | None
     not_modified: bool = False
+
+
+@dataclass(slots=True)
+class NormalizedEvent:
+    """What a webhook payload boils down to, once a provider has parsed it.
+
+    `run` and `jobs` are both optional because a single GitHub event only ever carries
+    one or the other -- a `workflow_run` event gives run metadata with no step detail;
+    a `workflow_job` event gives one job with full step timings but no run summary.
+    Webhook ingest skips the extra API round-trip that polling needs precisely because
+    the push payload already contains everything the corresponding fetch would return.
+    """
+
+    repo: Repo
+    run: Run | None = None
+    jobs: list[Job] = field(default_factory=list)

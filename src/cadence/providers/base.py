@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from cadence.models import Job, Repo, RunPage
+from cadence.models import Job, NormalizedEvent, Repo, RunPage
 
 
 class RateLimited(Exception):
@@ -77,3 +77,13 @@ class CIProvider(Protocol):
         ...
 
     async def aclose(self) -> None: ...
+
+    def normalize_event(self, event: str, payload: dict) -> NormalizedEvent | None:
+        """Parse a webhook payload into provider-neutral shape, or None if this event
+        carries nothing we track.
+
+        Pure parsing, no I/O -- it runs synchronously inside the webhook request
+        handler (which must respond in under 500ms) as well as inside the async
+        worker, with no ceremony either place.
+        """
+        ...

@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import httpx
 import structlog
 
-from cadence.models import Job, Repo, Run, RunPage, Step
+from cadence.models import Job, NormalizedEvent, Repo, Run, RunPage, Step
 from cadence.providers.base import NotFound, RateLimited
 
 log = structlog.get_logger(__name__)
@@ -232,6 +232,64 @@ class GitHubProvider:
             attempt=raw.get("run_attempt", 1),
             steps=steps,
             matrix=matrix,
+        )
+
+    def normalize_event(self, event: str, payload: dict) -> NormalizedEvent | None:
+        repo_json = payload.get("repository")
+        if not repo_json:
+            return None
+        repo = Repo(
+            id=repo_json["id"],
+            owner=repo_json["owner"]["login"],
+            name=repo_json["name"],
+            is_private=repo_json.get("private", False),
+            default_branch=repo_json.get("default_branch"),
+        )
+
+        if event == "workflow_run":
+            wr = payload.get("workflow_run")
+            if not wr:
+                return None
+            # Reuses the same parser the polling path calls, so a run recorded via
+            # webhook and one recorded via backfill can never silently diverge.
+            return NormalizedEvent(repo=repo, run=self._to_run(wr, repo.id))
+
+        if event == "workflow_job":
+            wj = payload.get("workflow_job")
+            if not wj:
+                return None
+            # job.run_id has a foreign key to run, and GitHub does not guarantee
+            # workflow_run and workflow_job deliveries arrive in any particular order --
+            # an installation may also be subscribed to only one of the two event types.
+            # _to_stub_run carries the run-level fields a job payload can genuinely
+            # support, so the FK is always satisfiable; ensure_run_stub (ingest.py)
+            # is what guarantees this never overwrites a fuller row.
+            return NormalizedEvent(
+                repo=repo,
+                run=self._to_stub_run(wj, repo.id),
+                jobs=[self._to_job(wj, wj["run_id"])],
+            )
+
+        return None
+
+    @staticmethod
+    def _to_stub_run(wj: dict, repo_id: int) -> Run:
+        return Run(
+            id=wj["run_id"],
+            repo_id=repo_id,
+            workflow_id=None,
+            workflow_path=None,
+            workflow_name=wj.get("workflow_name"),
+            run_number=None,
+            run_attempt=wj.get("run_attempt", 1),
+            event=None,
+            status=None,
+            conclusion=None,
+            head_sha=wj["head_sha"],
+            head_branch=wj.get("head_branch"),
+            created_at=_dt(wj.get("run_started_at")) or _dt(wj.get("created_at")),
+            started_at=_dt(wj.get("run_started_at")),
+            updated_at=None,
         )
 
     async def fetch_logs(self, repo: Repo, job_id: int) -> bytes | None:

@@ -27,6 +27,11 @@ def provider():
 def _job_json(**overrides):
     base = {
         "id": 900,
+        # Real GitHub job objects carry run_id whether they arrive via the REST list-jobs
+        # endpoint or a workflow_job webhook payload; the REST path ignores it in favour
+        # of the run_id known from the URL, but normalize_event (no URL context) reads it
+        # from here.
+        "run_id": 100,
         "name": "test (ubuntu-latest, 3.12)",
         "status": "completed",
         "conclusion": "success",
@@ -400,3 +405,99 @@ class TestProvisioningOverhead:
         wide_overhead = lead * len(wide)
         narrow_overhead = lead * len(narrow)
         assert wide_overhead - narrow_overhead == 110  # ~2 min/run difference
+
+
+class TestNormalizeEvent:
+    """Webhook ingest and REST polling must never silently diverge in how they parse a
+    run or job -- normalize_event reuses the same _to_run/_to_job static methods the
+    polling path calls, and these tests pin that down."""
+
+    @pytest.fixture
+    def provider(self):
+        return GitHubProvider("test-token")
+
+    def test_workflow_run_event_extracts_run(self, provider):
+        payload = {
+            "action": "completed",
+            "repository": {
+                "id": 42, "owner": {"login": "acme"}, "name": "widget", "private": False
+            },
+            "workflow_run": {
+                "id": 555,
+                "workflow_id": 7,
+                "path": ".github/workflows/ci.yml",
+                "name": "CI",
+                "run_number": 1,
+                "run_attempt": 2,
+                "event": "push",
+                "status": "completed",
+                "conclusion": "success",
+                "head_sha": "abc",
+                "head_branch": "main",
+                "created_at": "2026-08-01T10:00:00Z",
+                "run_started_at": "2026-08-01T10:00:01Z",
+                "updated_at": "2026-08-01T10:05:00Z",
+                "pull_requests": [],
+            },
+        }
+        event = provider.normalize_event("workflow_run", payload)
+        assert event is not None
+        assert event.repo.id == 42
+        assert event.repo.full_name == "acme/widget"
+        assert event.run.id == 555
+        assert event.run.run_attempt == 2  # same field the polling path treats as load-bearing
+        assert event.jobs == []
+
+    def test_workflow_job_event_extracts_job_with_steps_and_matrix(self, provider):
+        payload = {
+            "action": "completed",
+            "repository": {
+                "id": 42, "owner": {"login": "acme"}, "name": "widget", "private": False
+            },
+            "workflow_job": _job_json(
+                name="test (ubuntu-latest, 3.12)",
+                workflow_name="CI", head_sha="deadbeef", head_branch="main",
+            ),
+        }
+        event = provider.normalize_event("workflow_job", payload)
+        assert event is not None
+        assert len(event.jobs) == 1
+        job = event.jobs[0]
+        # Same matrix-parsing behaviour as the REST path -- not reimplemented here.
+        assert job.name == "test"
+        assert job.matrix == {"0": "ubuntu-latest", "1": "3.12"}
+        assert len(job.steps) == 2
+
+    def test_workflow_job_event_also_yields_a_stub_run(self, provider):
+        """job.run_id has a foreign key to run, and a workflow_job event can arrive with
+        no workflow_run row recorded yet -- the stub is what makes that insert
+        satisfiable. Its status/conclusion must stay unset: a job's outcome is not the
+        run's outcome, and claiming otherwise would be a wrong, confident answer."""
+        payload = {
+            "action": "completed",
+            "repository": {
+                "id": 42, "owner": {"login": "acme"}, "name": "widget", "private": False
+            },
+            "workflow_job": _job_json(
+                run_id=555, workflow_name="CI", head_sha="deadbeef", head_branch="main",
+            ),
+        }
+        event = provider.normalize_event("workflow_job", payload)
+        assert event.run is not None
+        assert event.run.id == 555
+        assert event.run.head_sha == "deadbeef"
+        assert event.run.head_branch == "main"
+        assert event.run.workflow_name == "CI"
+        assert event.run.status is None
+        assert event.run.conclusion is None
+
+    def test_missing_repository_returns_none(self, provider):
+        assert provider.normalize_event("workflow_run", {"workflow_run": {}}) is None
+
+    def test_missing_workflow_run_object_returns_none(self, provider):
+        payload = {"repository": {"id": 1, "owner": {"login": "a"}, "name": "b", "private": False}}
+        assert provider.normalize_event("workflow_run", payload) is None
+
+    def test_unknown_event_type_returns_none(self, provider):
+        payload = {"repository": {"id": 1, "owner": {"login": "a"}, "name": "b", "private": False}}
+        assert provider.normalize_event("issue_comment", payload) is None

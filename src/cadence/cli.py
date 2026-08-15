@@ -7,13 +7,25 @@ from rich.console import Console
 from rich.table import Table
 
 from cadence.config import settings
+from cadence.corpus import CORPUS
 from cadence.db import apply_migrations, connect
 from cadence.ingest import ingest_repo
+from cadence.logstore import LocalLogStore
 from cadence.providers import GitHubProvider
+from cadence.queue import enqueue
+from cadence.worker import run_worker
 
 app = typer.Typer(no_args_is_help=True, help="Evidence-grounded CI intelligence.")
 db_app = typer.Typer(no_args_is_help=True, help="Database management.")
+worker_app = typer.Typer(no_args_is_help=True, help="The ingest queue's consumer side.")
+queue_app = typer.Typer(no_args_is_help=True, help="Inspect the ingest queue.")
+corpus_app = typer.Typer(no_args_is_help=True, help="The no-install evaluation corpus.")
+webhook_app = typer.Typer(no_args_is_help=True, help="The webhook receiver.")
 app.add_typer(db_app, name="db")
+app.add_typer(worker_app, name="worker")
+app.add_typer(queue_app, name="queue")
+app.add_typer(corpus_app, name="corpus")
+app.add_typer(webhook_app, name="webhook")
 
 console = Console()
 
@@ -214,6 +226,126 @@ def stats(repo: str = typer.Argument(..., help="owner/name")) -> None:
                 f"fixed overhead. Each added parallel job costs "
                 f"~{mean_lead:.0f}s before it runs anything.[/dim]"
             )
+
+
+@app.command()
+def logs(
+    repo: str = typer.Argument(..., help="owner/name"),
+    limit: int = typer.Option(200, help="Max jobs to queue for log fetch."),
+    failures_only: bool = typer.Option(
+        False, "--failures-only", help="Only queue jobs that failed."
+    ),
+) -> None:
+    """Queue job logs for fetch-and-store. Run `cadence worker run --until-empty` after
+    -- this only enqueues; a worker does the downloading, since log fetch is the
+    single biggest consumer of rate-limit budget and should never happen silently."""
+    try:
+        owner, name = repo.split("/", 1)
+    except ValueError:
+        console.print("[red]repo must be owner/name[/red]")
+        raise typer.Exit(1) from None
+
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT id FROM repo WHERE owner = %s AND name = %s", (owner, name)
+        ).fetchone()
+        if not row:
+            console.print(f"[yellow]{repo} not ingested yet[/yellow]")
+            raise typer.Exit(1)
+        repo_id = row["id"]
+
+        cond = "AND j.conclusion = 'failure'" if failures_only else ""
+        rows = conn.execute(
+            f"""
+            SELECT j.id FROM job j
+            LEFT JOIN log_chunk lc ON lc.job_id = j.id
+            WHERE j.repo_id = %s AND lc.job_id IS NULL {cond}
+            ORDER BY j.completed_at DESC NULLS LAST
+            LIMIT %s
+            """,
+            (repo_id, limit),
+        ).fetchall()
+
+        for r in rows:
+            enqueue(conn, "fetch_log", {"repo_id": repo_id, "job_id": r["id"]})
+        conn.commit()
+
+    console.print(f"[green]queued[/green] {len(rows)} log fetches for {repo}")
+
+
+@corpus_app.command("seed")
+def corpus_seed(
+    limit: int = typer.Option(40, help="Runs to pull per repo on the first poll."),
+) -> None:
+    """Queue a poll_repo job for every repo in the no-install corpus (docs/HELDOUT.md
+    repos are never in this list)."""
+    with connect() as conn:
+        for owner, name in CORPUS:
+            enqueue(conn, "poll_repo", {"owner": owner, "name": name, "limit": limit})
+        conn.commit()
+    console.print(f"[green]queued[/green] {len(CORPUS)} repos")
+
+
+@queue_app.command("status")
+def queue_status() -> None:
+    """What the ingest queue is holding, by kind and status."""
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT kind, status, count(*) AS n FROM ingest_job"
+            " GROUP BY kind, status ORDER BY kind, status"
+        ).fetchall()
+    table = Table(title="ingest queue")
+    table.add_column("kind", style="cyan")
+    table.add_column("status")
+    table.add_column("n", justify="right")
+    for r in rows:
+        table.add_row(r["kind"], r["status"], f"{r['n']:,}")
+    console.print(table)
+
+
+@worker_app.command("run")
+def worker_run(
+    concurrency: int = typer.Option(4, help="Concurrent claim-loops."),
+    until_empty: bool = typer.Option(
+        False, "--until-empty", help="Drain the current backlog, then exit."
+    ),
+    max_idle: int = typer.Option(
+        0, help="Exit after N idle polls found nothing claimable. 0 = run forever."
+    ),
+) -> None:
+    """Drain the ingest queue. Without a flag, runs forever -- this is the process a
+    real deployment keeps alive so corpus repos keep re-polling every 30 minutes."""
+    token = _require_token()
+
+    async def _run() -> None:
+        provider = GitHubProvider(token)
+        log_store = LocalLogStore(settings.log_store)
+        try:
+            await run_worker(
+                provider,
+                log_store,
+                concurrency=concurrency,
+                until_empty=until_empty,
+                max_idle_iterations=max_idle or None,
+            )
+        finally:
+            await provider.aclose()
+
+    asyncio.run(_run())
+
+
+@webhook_app.command("serve")
+def webhook_serve(
+    host: str = typer.Option("127.0.0.1"),
+    port: int = typer.Option(8787),
+) -> None:
+    """Run the webhook receiver. Dev/local only -- a real deployment sits this behind
+    a reverse proxy with TLS, since GitHub requires HTTPS for webhook delivery."""
+    import uvicorn
+
+    from cadence.webhook import app as webhook_asgi_app
+
+    uvicorn.run(webhook_asgi_app, host=host, port=port)
 
 
 if __name__ == "__main__":

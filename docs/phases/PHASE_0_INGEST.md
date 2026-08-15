@@ -116,7 +116,14 @@ analysis. This layer has to be built. It is also the least interesting part of t
 until there is a measured reason. One less thing to operate.
 
 **Object storage: R2 or B2**, not S3 — meaningfully cheaper egress for this workload. Gzip
-everything; CI logs compress ~20:1.
+everything, content-addressed by sha256 so a job's log is ever downloaded once
+(`LocalLogStore`, week 1 — local filesystem now, same key shape as an S3 object so the
+backend swap is later a config change, not a schema change).
+
+Measured on 25 real jobs from `astral-sh/ruff`: **5.2:1**, not the ~20:1 originally
+assumed — CI logs vary a lot in verbosity, and this sample is small. Re-measure once the
+corpus has meaningfully more logs stored and revise the storage-cost line in
+`PRODUCT.md` §12 if the gap holds.
 
 **Webhook receiver discipline.** HMAC-SHA256 signature verification, `X-GitHub-Delivery`
 stored for idempotency, **respond 200 in <500ms and process async.** GitHub disables
