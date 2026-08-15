@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import os
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -43,10 +45,18 @@ class LocalLogStore:
             return LogPutResult(digest, key, len(data), path.stat().st_size, already_stored=True)
 
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(".tmp")
-        with gzip.open(tmp, "wb", compresslevel=6) as f:
-            f.write(data)
-        tmp.replace(path)
+        # The temp name must be unique per writer, not per content: identical logs are
+        # exactly the case content-addressing invites (retries, matrix legs with the same
+        # output), so a digest-derived temp path guarantees a collision precisely when
+        # two workers race. They would interleave writes into one file and each rename it
+        # out from under the other, publishing a corrupt object.
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+        try:
+            with gzip.open(tmp, "wb", compresslevel=6) as f:
+                f.write(data)
+            tmp.replace(path)  # atomic within a filesystem
+        finally:
+            tmp.unlink(missing_ok=True)
         return LogPutResult(digest, key, len(data), path.stat().st_size, already_stored=False)
 
     def get(self, storage_key: str) -> bytes:
@@ -72,7 +82,9 @@ async def store_job_log(
 
     data = await provider.fetch_logs(repo, job_id)
     if data is None:
-        return "expired"  # past GitHub's 90-day retention, or never existed
+        # Past GitHub's 90-day retention, or never existed. Terminal -- the caller
+        # records this as done rather than failed, since no future attempt can succeed.
+        return "expired"
 
     result = log_store.put(data)
     conn.execute(

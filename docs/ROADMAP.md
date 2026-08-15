@@ -39,11 +39,18 @@ plan (GitHub retains logs 90 days).*
       on 266 prettier, 0.04% on 7,110 react jobs)
 - [x] 50 repos ingesting — see note below for what "continuously" means here
 
-**Note on "continuously":** each `poll_repo` job re-enqueues itself 30 minutes out on
-completion (`worker.py`), which is the actual mechanism of continuous ingest. Proving that
-mechanism keeps running for weeks needs a long-lived deployment (systemd unit, container,
-etc.) outside this session's scope — what's verified here is that the re-enqueue logic is
-correct (tested) and that a full backfill pass across the corpus completes cleanly.
+**Note on "continuously":** each `poll_repo` job re-enqueues itself 30 minutes out
+(`worker.py`), which is the actual mechanism of continuous ingest. Proving that mechanism
+keeps running for weeks needs a long-lived deployment (systemd unit, container, etc.)
+outside this session's scope — what's verified here is that the re-enqueue logic is correct
+(tested) and that a full backfill pass across the corpus completes cleanly.
+
+**Post-ship audit — 12 bugs found and fixed.** See [`AUDIT_PHASE_0.md`](AUDIT_PHASE_0.md).
+Four were silent data-fidelity losses that shipped under a green 66-test suite, the worst
+being that a re-run's earlier attempts were never ingested — dropping exactly the failing
+jobs that are Phase 3's gold labels (verified: 6 recovered from a single DRF run). Suite is
+now 82 tests. **Deploying a long-lived worker is now the top pre-Phase-1 task**, since
+every day without one is a permanently lost day of history.
 
 ---
 

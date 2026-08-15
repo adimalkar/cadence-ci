@@ -17,7 +17,7 @@ from cadence.db import connect
 from cadence.ingest import ensure_run_stub, ingest_repo, upsert_job, upsert_repo, upsert_run
 from cadence.logstore import LocalLogStore, store_job_log
 from cadence.models import Repo
-from cadence.providers.base import CIProvider, RateLimited
+from cadence.providers.base import AccessDenied, CIProvider, Expired, NotFound, RateLimited
 
 log = structlog.get_logger(__name__)
 
@@ -28,14 +28,32 @@ MAX_ATTEMPTS = 5
 async def _handle_poll_repo(provider: CIProvider, job: dict) -> None:
     payload = job["payload"]
     owner, name, limit = payload["owner"], payload["name"], payload.get("limit", 100)
+    try:
+        with connect() as conn:
+            stats = await ingest_repo(provider, conn, owner, name, limit=limit)
+            conn.commit()
+        log.info("worker.poll_repo.done", repo=f"{owner}/{name}", stats=str(stats))
+    finally:
+        # The recurring tail, scheduled in `finally` on purpose: this is what turns a
+        # single backfill into continuous ingest, and it has to survive failure. Chaining
+        # it only on success meant ~6 minutes of GitHub trouble exhausted the retry budget
+        # and that repo silently stopped being polled for good -- the worst kind of bug
+        # here, since the pipeline keeps looking healthy while quietly going blind.
+        _schedule_next_poll(payload)
+
+
+def _schedule_next_poll(payload: dict) -> None:
     with connect() as conn:
-        stats = await ingest_repo(provider, conn, owner, name, limit=limit)
-        # The recurring tail: re-enqueue the same repo 30 minutes out. This one line is
-        # what turns a single backfill into continuous ingest -- as long as a worker
-        # keeps running, history keeps accumulating with no further intervention.
-        queue.enqueue(conn, "poll_repo", payload, run_at=datetime.now(UTC) + POLL_INTERVAL)
+        already = conn.execute(
+            "SELECT 1 FROM ingest_job WHERE kind = 'poll_repo' AND status = 'pending'"
+            "   AND payload->>'owner' = %s AND payload->>'name' = %s",
+            (payload["owner"], payload["name"]),
+        ).fetchone()
+        # Guard against fan-out: a retried job would otherwise chain a second recurring
+        # poll for the same repo on every attempt.
+        if not already:
+            queue.enqueue(conn, "poll_repo", payload, run_at=datetime.now(UTC) + POLL_INTERVAL)
         conn.commit()
-    log.info("worker.poll_repo.done", repo=f"{owner}/{name}", stats=str(stats))
 
 
 async def _handle_webhook_event(provider: CIProvider, job: dict) -> None:
@@ -128,12 +146,26 @@ async def run_worker(
             idle = 0
             try:
                 await _dispatch(provider, log_store, job)
-            except RateLimited as exc:
+            except (AccessDenied, NotFound, Expired) as exc:
+                # Terminal by nature: a missing scope, a deleted repo, or a log past
+                # GitHub's 90-day retention will be exactly as missing in an hour.
+                # Retrying only burns budget and buries the real cause under attempts.
+                log.warning("worker.job_terminal", kind=job["kind"], id=job["id"], error=str(exc))
                 with connect() as conn:
-                    queue.fail(
-                        conn, job["id"], str(exc),
-                        retry_in=timedelta(seconds=exc.retry_after_seconds),
-                    )
+                    queue.fail(conn, job["id"], str(exc), retry_in=None)
+                    conn.commit()
+            except RateLimited as exc:
+                # Rate limits are retryable, but not unboundedly: a job that has been
+                # rate-limited MAX_ATTEMPTS times is hitting something structural (a
+                # token with no quota, a repo we can't afford to poll) and should stop
+                # rather than re-queue every 60s forever.
+                retry = (
+                    timedelta(seconds=exc.retry_after_seconds)
+                    if job["attempts"] < MAX_ATTEMPTS
+                    else None
+                )
+                with connect() as conn:
+                    queue.fail(conn, job["id"], str(exc), retry_in=retry)
                     conn.commit()
             except Exception as exc:  # one bad job must not kill the worker
                 log.warning("worker.job_failed", kind=job["kind"], id=job["id"], error=str(exc))

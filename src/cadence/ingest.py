@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 import psycopg
 import structlog
+from psycopg.rows import dict_row
 
 from cadence.models import Job, Repo, Run
 from cadence.providers.base import CIProvider, RateLimited
@@ -67,7 +68,15 @@ def upsert_run(conn: psycopg.Connection, run: Run) -> None:
             status = EXCLUDED.status,
             conclusion = EXCLUDED.conclusion,
             updated_at = EXCLUDED.updated_at,
-            run_attempt = GREATEST(run.run_attempt, EXCLUDED.run_attempt)
+            run_attempt = GREATEST(run.run_attempt, EXCLUDED.run_attempt),
+            -- A run first seen as `queued` has no run_started_at yet. Without this the
+            -- row keeps started_at NULL forever, because every later update omitted it.
+            -- coalesce in this direction so a real timestamp is never overwritten by a
+            -- NULL from a payload that simply didn't carry one.
+            started_at = coalesce(EXCLUDED.started_at, run.started_at),
+            tree_sha = coalesce(EXCLUDED.tree_sha, run.tree_sha),
+            pull_request_number =
+                coalesce(EXCLUDED.pull_request_number, run.pull_request_number)
         """,
         {
             "id": run.id,
@@ -89,6 +98,17 @@ def upsert_run(conn: psycopg.Connection, run: Run) -> None:
             "updated_at": run.updated_at,
         },
     )
+
+
+def _store_etag(conn: psycopg.Connection, repo_id: int, etag: str | None) -> None:
+    """Advance the delta-poll cursor. Call only after the window's jobs and steps are
+    durably written -- an ETag stored early silently skips them on the next poll."""
+    conn.execute(
+        "UPDATE repo SET runs_etag = coalesce(%s, runs_etag), last_polled_at = now()"
+        " WHERE id = %s",
+        (etag, repo_id),
+    )
+    conn.commit()
 
 
 def ensure_run_stub(conn: psycopg.Connection, run: Run) -> None:
@@ -126,23 +146,35 @@ def upsert_job(conn: psycopg.Connection, job: Job, repo_id: int) -> int:
     conn.execute(
         """
         INSERT INTO job (
-            id, run_id, repo_id, name, status, conclusion, runner_labels, runner_group,
-            created_at, started_at, completed_at, attempt, matrix
+            id, run_id, repo_id, name, name_base, status, conclusion, runner_labels,
+            runner_group, created_at, started_at, completed_at, attempt, matrix
         ) VALUES (
-            %(id)s, %(run_id)s, %(repo_id)s, %(name)s, %(status)s, %(conclusion)s,
-            %(runner_labels)s, %(runner_group)s, %(created_at)s, %(started_at)s,
-            %(completed_at)s, %(attempt)s, %(matrix)s
+            %(id)s, %(run_id)s, %(repo_id)s, %(name)s, %(name_base)s, %(status)s,
+            %(conclusion)s, %(runner_labels)s, %(runner_group)s, %(created_at)s,
+            %(started_at)s, %(completed_at)s, %(attempt)s, %(matrix)s
         )
         ON CONFLICT (id) DO UPDATE SET
             status = EXCLUDED.status,
             conclusion = EXCLUDED.conclusion,
-            completed_at = EXCLUDED.completed_at
+            completed_at = EXCLUDED.completed_at,
+            -- Webhooks deliver a job three times (queued -> in_progress -> completed),
+            -- and only the last two carry started_at. Omitting it here left every
+            -- webhook-ingested job with started_at NULL permanently, which silently
+            -- voids execution_time, queue_time, and every downstream billing figure.
+            started_at = coalesce(EXCLUDED.started_at, job.started_at),
+            runner_group = coalesce(EXCLUDED.runner_group, job.runner_group),
+            -- labels arrive empty on some queued payloads; don't let that erase them
+            runner_labels = CASE
+                WHEN EXCLUDED.runner_labels = '{}' THEN job.runner_labels
+                ELSE EXCLUDED.runner_labels END,
+            matrix = coalesce(EXCLUDED.matrix, job.matrix)
         """,
         {
             "id": job.id,
             "run_id": job.run_id,
             "repo_id": repo_id,
             "name": job.name,
+            "name_base": job.name_base,
             "status": job.status,
             "conclusion": job.conclusion,
             "runner_labels": job.runner_labels,
@@ -203,10 +235,15 @@ async def ingest_repo(
     upsert_repo(conn, repo)
     conn.commit()
 
-    row = conn.execute("SELECT runs_etag FROM repo WHERE id = %s", (repo.id,)).fetchone()
+    # Explicit row factory: ingest_repo accepts a caller's connection, so it must not
+    # depend on how that caller happened to configure it.
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT runs_etag FROM repo WHERE id = %s", (repo.id,))
+        row = cur.fetchone()
     etag = row["runs_etag"] if row else None
 
     collected: list[Run] = []
+    new_etag: str | None = None
     page = 1
     while len(collected) < limit:
         # Only the first page carries the ETag: it is the one that changes when new runs
@@ -220,11 +257,12 @@ async def ingest_repo(
             stats.not_modified = True
             return stats
 
-        if page == 1 and result.etag:
-            conn.execute(
-                "UPDATE repo SET runs_etag = %s, last_polled_at = now() WHERE id = %s",
-                (result.etag, repo.id),
-            )
+        # NOTE: the ETag is deliberately NOT persisted here. Storing it before the jobs
+        # below succeed means a failure mid-fetch still advances the cursor, and the next
+        # poll 304s and returns early -- permanently losing the step timings for these
+        # runs, with no way to notice and no way to backfill past 90-day retention.
+        if page == 1:
+            new_etag = result.etag
 
         if not result.runs:
             break
@@ -240,6 +278,7 @@ async def ingest_repo(
     conn.commit()
 
     if not fetch_jobs:
+        _store_etag(conn, repo.id, new_etag)
         return stats
 
     semaphore = asyncio.Semaphore(job_concurrency)
@@ -247,20 +286,41 @@ async def ingest_repo(
     async def _jobs_for(run: Run) -> tuple[Run, list[Job]]:
         async with semaphore:
             try:
-                return run, await provider.fetch_jobs(repo, run.id)
+                jobs = await provider.fetch_jobs(repo, run.id)
+                # A re-run's earlier attempts are the single strongest flaky label
+                # available ("retry succeeded, no intervening commit"), and
+                # filter=latest hides them -- so a rerun's failing jobs were being
+                # dropped entirely. Only reruns pay the extra calls (~0.6% of runs).
+                for attempt in range(1, run.run_attempt):
+                    jobs.extend(await provider.fetch_jobs(repo, run.id, attempt=attempt))
+                return run, jobs
             except RateLimited:
                 raise
             except Exception as exc:  # one bad run must not abort a 500-run backfill
                 log.warning("ingest.jobs_failed", run_id=run.id, error=str(exc))
                 return run, []
 
-    for coro in asyncio.as_completed([_jobs_for(r) for r in collected]):
-        run, jobs = await coro
-        for job in jobs:
-            stats.steps_written += upsert_job(conn, job, repo.id)
-            stats.jobs_written += 1
-        run.jobs = jobs
+    tasks = [asyncio.create_task(_jobs_for(r)) for r in collected]
+    try:
+        for coro in asyncio.as_completed(tasks):
+            run, jobs = await coro
+            for job in jobs:
+                stats.steps_written += upsert_job(conn, job, repo.id)
+                stats.jobs_written += 1
+            run.jobs = jobs
+    except BaseException:
+        # Without this, a raise here leaves the remaining tasks running against a client
+        # the caller is about to close, surfacing as unretrieved exceptions on a
+        # background task rather than as this error.
+        for t in tasks:
+            t.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
     conn.commit()
+
+    # Only now is the cursor safe to advance: every run in this window has its jobs and
+    # steps durably written.
+    _store_etag(conn, repo.id, new_etag)
 
     log.info("ingest.done", repo=repo.full_name, stats=str(stats))
     return stats

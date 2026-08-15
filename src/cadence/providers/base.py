@@ -30,6 +30,23 @@ class NotFound(Exception):
     """Repo or resource does not exist, or the token cannot see it."""
 
 
+class AccessDenied(Exception):
+    """A 403 that is *not* a rate limit -- missing scope, SAML enforcement, blocked repo.
+
+    Distinct from `RateLimited` because the correct response is opposite: a rate limit
+    should be retried after a wait, while a permission denial will still be denied in an
+    hour. Collapsing the two makes a permanently-forbidden repo retry forever.
+    """
+
+
+class Expired(Exception):
+    """The resource existed but the provider no longer retains it.
+
+    GitHub drops workflow logs after 90 days (HTTP 410). Terminal, never retryable --
+    which is precisely why it must not surface as a generic HTTP error.
+    """
+
+
 @runtime_checkable
 class CIProvider(Protocol):
     """Read-only access to a CI system's run history.

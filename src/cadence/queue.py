@@ -27,8 +27,14 @@ def enqueue(
         return cur.fetchone()["id"]
 
 
-def claim_next(conn: psycopg.Connection) -> dict | None:
-    """Atomically claim one runnable job.
+# A claim is a lease, not a lock. A worker killed mid-job (deploy, OOM, SIGKILL) leaves
+# its row in 'processing' with nobody to finish it; without expiry that row is stranded
+# forever and `--until-empty` never terminates, because it counts as in-flight work.
+LEASE = timedelta(minutes=15)
+
+
+def claim_next(conn: psycopg.Connection, *, lease: timedelta = LEASE) -> dict | None:
+    """Atomically claim one runnable job, or reclaim one whose lease expired.
 
     SKIP LOCKED lets any number of workers poll this table concurrently without
     blocking each other on a row another worker already holds -- the reason a job
@@ -40,13 +46,15 @@ def claim_next(conn: psycopg.Connection) -> dict | None:
             UPDATE ingest_job SET status = 'processing', updated_at = now()
             WHERE id = (
               SELECT id FROM ingest_job
-              WHERE status = 'pending' AND run_at <= now()
+              WHERE (status = 'pending' AND run_at <= now())
+                 OR (status = 'processing' AND updated_at < now() - %s)
               ORDER BY run_at
               FOR UPDATE SKIP LOCKED
               LIMIT 1
             )
             RETURNING *
-            """
+            """,
+            (lease,),
         )
         return cur.fetchone()
 
@@ -75,7 +83,7 @@ def fail(conn: psycopg.Connection, job_id: int, error: str, *, retry_in: timedel
         )
 
 
-def pending_or_processing_count(conn: psycopg.Connection) -> int:
+def pending_or_processing_count(conn: psycopg.Connection, *, lease: timedelta = LEASE) -> int:
     """Claimable-right-now work, deliberately excluding future-scheduled rows.
 
     A corpus repo's `poll_repo` job re-enqueues itself 30 minutes out on every
@@ -87,6 +95,11 @@ def pending_or_processing_count(conn: psycopg.Connection) -> int:
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             "SELECT count(*) AS n FROM ingest_job"
-            " WHERE status = 'processing' OR (status = 'pending' AND run_at <= now())"
+            " WHERE (status = 'pending' AND run_at <= now())"
+            # Only count leases still live: an expired one is reclaimable work, which
+            # claim_next will hand out, but a permanently-stranded row must not keep
+            # --until-empty spinning forever.
+            "    OR (status = 'processing' AND updated_at >= now() - %s)",
+            (lease,),
         )
         return cur.fetchone()["n"]

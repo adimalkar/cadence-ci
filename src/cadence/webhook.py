@@ -12,6 +12,7 @@ Two structural rules, both non-negotiable:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import json
@@ -56,25 +57,35 @@ async def github_webhook(
     except ValueError:
         raise HTTPException(400, "invalid json") from None
 
+    # psycopg's sync driver would block the event loop here, serializing every delivery
+    # against the sub-500ms budget this module exists to protect. Hand it to a thread.
+    await asyncio.to_thread(_record_delivery, x_github_delivery, x_github_event, payload)
+    return Response(status_code=200)
+
+
+def _record_delivery(delivery_id: str, event: str, payload: dict) -> None:
+    """Record the delivery and queue its work in one transaction.
+
+    Atomicity is the point: a delivery marked received but never enqueued is a silent,
+    permanent drop, and no later retry would re-send it because the ID is already known.
+    """
     with connect() as conn:
         row = conn.execute(
             "INSERT INTO webhook_delivery (delivery_id, event) VALUES (%s, %s)"
             " ON CONFLICT (delivery_id) DO NOTHING RETURNING delivery_id",
-            (x_github_delivery, x_github_event),
+            (delivery_id, event),
         ).fetchone()
 
         if row is None:
             # Already seen: GitHub redelivering after a timeout, or our own retry.
-            # 200 with no reprocessing is correct either way -- this is the guarantee
-            # the "zero duplicates" ship criterion is actually testing.
+            # Doing nothing is correct -- this is the guarantee the "zero duplicates"
+            # ship criterion actually tests.
             conn.commit()
-            return Response(status_code=200)
+            return
 
         enqueue(
             conn,
             "webhook_event",
-            {"event": x_github_event, "delivery_id": x_github_delivery, "body": payload},
+            {"event": event, "delivery_id": delivery_id, "body": payload},
         )
         conn.commit()
-
-    return Response(status_code=200)

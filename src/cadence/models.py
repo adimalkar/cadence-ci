@@ -31,7 +31,13 @@ class Step:
 class Job:
     id: int
     run_id: int
+    # Verbatim provider job name, e.g. "test (ubuntu-latest, 3.12)". Unique per matrix
+    # leg, which is what finding identity needs.
     name: str
+    # Parenthetical stripped, e.g. "test". Shared across legs, which is what
+    # "how long does this step usually take" needs. Both are kept because GitHub gives
+    # no way to tell a matrix leg from a name that merely contains parentheses.
+    name_base: str
     status: str | None
     conclusion: str | None
     runner_labels: list[str]

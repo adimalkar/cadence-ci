@@ -7,7 +7,7 @@ import pytest
 import respx
 
 from cadence.models import Job, Run, Step
-from cadence.providers.base import NotFound, RateLimited
+from cadence.providers.base import AccessDenied, Expired, NotFound, RateLimited
 from cadence.providers.github import API_ROOT, GitHubProvider, _parse_matrix
 
 REPO_JSON = {
@@ -161,7 +161,11 @@ class TestFetchJobs:
 
         assert len(jobs) == 1
         job = jobs[0]
-        assert job.name == "test"
+        # Verbatim name is preserved; the stripped form lives alongside it. Collapsing
+        # the two merged unrelated jobs (e.g. "deploy (staging)" and "deploy (production)")
+        # into one identity.
+        assert job.name == "test (ubuntu-latest, 3.12)"
+        assert job.name_base == "test"
         assert job.matrix == {"0": "ubuntu-latest", "1": "3.12"}
         assert len(job.steps) == 2
         assert job.queue_time == timedelta(seconds=30)
@@ -221,6 +225,76 @@ class TestRateLimiting:
         with pytest.raises(NotFound):
             await provider.get_repo("acme", "ghost")
 
+    @respx.mock
+    async def test_403_without_rate_limit_signals_is_access_denied(self, provider):
+        """GitHub 403s for missing scopes, SAML enforcement, and blocked repos as well
+        as for rate limits. Treating all of them as rate limits made a permanently
+        forbidden repo retry every 60 seconds forever."""
+        respx.get(f"{API_ROOT}/repos/acme/private").mock(
+            return_value=httpx.Response(
+                403,
+                headers={"x-ratelimit-remaining": "4980"},
+                json={"message": "Resource not accessible by personal access token"},
+            )
+        )
+        with pytest.raises(AccessDenied):
+            await provider.get_repo("acme", "private")
+
+    @respx.mock
+    async def test_403_with_exhausted_quota_is_still_rate_limited(self, provider):
+        respx.get(f"{API_ROOT}/repos/acme/widget").mock(
+            return_value=httpx.Response(
+                403,
+                headers={"x-ratelimit-remaining": "0", "x-ratelimit-reset": "99999999999"},
+                json={"message": "API rate limit exceeded"},
+            )
+        )
+        with pytest.raises(RateLimited):
+            await provider.get_repo("acme", "widget")
+
+    @respx.mock
+    async def test_403_secondary_limit_detected_from_body(self, provider):
+        respx.get(f"{API_ROOT}/repos/acme/widget").mock(
+            return_value=httpx.Response(
+                403, json={"message": "You have exceeded a secondary rate limit"}
+            )
+        )
+        with pytest.raises(RateLimited):
+            await provider.get_repo("acme", "widget")
+
+
+class TestFetchLogs:
+    @respx.mock
+    async def test_expired_logs_return_none_not_an_error(self, provider):
+        """410 means the log aged out of GitHub's 90-day window. It can never succeed,
+        so it must not raise -- previously it reached raise_for_status() and the job
+        burned its whole retry budget before landing as `failed`."""
+        respx.get(f"{API_ROOT}/repos/acme/widget").mock(
+            return_value=httpx.Response(200, json=REPO_JSON)
+        )
+        respx.get(f"{API_ROOT}/repos/acme/widget/actions/jobs/900/logs").mock(
+            return_value=httpx.Response(410)
+        )
+        repo = await provider.get_repo("acme", "widget")
+        assert await provider.fetch_logs(repo, 900) is None
+
+    @respx.mock
+    async def test_missing_logs_return_none(self, provider):
+        respx.get(f"{API_ROOT}/repos/acme/widget").mock(
+            return_value=httpx.Response(200, json=REPO_JSON)
+        )
+        respx.get(f"{API_ROOT}/repos/acme/widget/actions/jobs/900/logs").mock(
+            return_value=httpx.Response(404)
+        )
+        repo = await provider.get_repo("acme", "widget")
+        assert await provider.fetch_logs(repo, 900) is None
+
+    @respx.mock
+    async def test_410_on_a_non_log_endpoint_raises_expired(self, provider):
+        respx.get(f"{API_ROOT}/repos/acme/gone").mock(return_value=httpx.Response(410))
+        with pytest.raises(Expired):
+            await provider.get_repo("acme", "gone")
+
 
 class TestBillableVsWallClock:
     """Conflating billable time with wall clock is the most common error in CI cost
@@ -234,6 +308,7 @@ class TestBillableVsWallClock:
                 id=i,
                 run_id=1,
                 name=f"job{i}",
+                name_base=f"job{i}",
                 status="completed",
                 conclusion="success",
                 runner_labels=["ubuntu-latest"],
@@ -273,6 +348,7 @@ class TestBillableVsWallClock:
             id=1,
             run_id=1,
             name="slow-to-start",
+            name_base="slow-to-start",
             status="completed",
             conclusion="success",
             runner_labels=["ubuntu-latest"],
@@ -359,6 +435,7 @@ class TestProvisioningOverhead:
             id=1,
             run_id=1,
             name="test",
+            name_base="test",
             status="completed",
             conclusion="success",
             runner_labels=["ubuntu-latest"],
@@ -464,7 +541,8 @@ class TestNormalizeEvent:
         assert len(event.jobs) == 1
         job = event.jobs[0]
         # Same matrix-parsing behaviour as the REST path -- not reimplemented here.
-        assert job.name == "test"
+        assert job.name == "test (ubuntu-latest, 3.12)"
+        assert job.name_base == "test"
         assert job.matrix == {"0": "ubuntu-latest", "1": "3.12"}
         assert len(job.steps) == 2
 

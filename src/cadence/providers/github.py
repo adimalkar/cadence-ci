@@ -14,7 +14,7 @@ import httpx
 import structlog
 
 from cadence.models import Job, NormalizedEvent, Repo, Run, RunPage, Step
-from cadence.providers.base import NotFound, RateLimited
+from cadence.providers.base import AccessDenied, Expired, NotFound, RateLimited
 
 log = structlog.get_logger(__name__)
 
@@ -76,13 +76,33 @@ class GitHubProvider:
         headers = {"If-None-Match": etag} if etag else None
         resp = await self._client.get(path, params=params, headers=headers)
 
-        if resp.status_code in (403, 429):
+        # 429 is always a rate limit. 403 is overloaded: GitHub returns it for rate
+        # limits AND for missing scopes, SAML enforcement, and blocked repos -- which
+        # need opposite handling, since a permission denial will still be denied after
+        # any backoff. Distinguish on GitHub's own signals rather than assuming.
+        if resp.status_code == 429:
             raise RateLimited(self._retry_after(resp), resp.text[:200])
+        if resp.status_code == 403:
+            if self._is_rate_limit(resp):
+                raise RateLimited(self._retry_after(resp), resp.text[:200])
+            raise AccessDenied(f"{path}: {resp.text[:200]}")
         if resp.status_code == 404:
             raise NotFound(path)
+        # 410 Gone: logs past GitHub's 90-day retention. Terminal, not an error to retry.
+        if resp.status_code == 410:
+            raise Expired(path)
         if resp.status_code not in (200, 304):
             resp.raise_for_status()
         return resp
+
+    @staticmethod
+    def _is_rate_limit(resp: httpx.Response) -> bool:
+        if resp.headers.get("x-ratelimit-remaining") == "0":
+            return True
+        if "retry-after" in resp.headers:
+            return True
+        body = resp.text[:500].lower()
+        return "rate limit" in body or "abuse" in body or "secondary rate" in body
 
     @staticmethod
     def _retry_after(resp: httpx.Response) -> float:
@@ -206,7 +226,7 @@ class GitHubProvider:
 
     @staticmethod
     def _to_job(raw: dict, run_id: int) -> Job:
-        name, matrix = _parse_matrix(raw["name"])
+        name_base, matrix = _parse_matrix(raw["name"])
         steps = [
             Step(
                 number=s.get("number", i),
@@ -221,7 +241,8 @@ class GitHubProvider:
         return Job(
             id=raw["id"],
             run_id=run_id,
-            name=name,
+            name=raw["name"],  # verbatim -- never the stripped form
+            name_base=name_base,
             status=raw.get("status"),
             conclusion=raw.get("conclusion"),
             runner_labels=raw.get("labels") or [],
@@ -293,11 +314,14 @@ class GitHubProvider:
         )
 
     async def fetch_logs(self, repo: Repo, job_id: int) -> bytes | None:
-        """Job logs, or None once GitHub has expired them (410) or never had them (404)."""
+        """Job logs, or None once GitHub has expired them (410) or never had them (404).
+
+        Both are terminal and must return None rather than raise: a log that aged out of
+        the 90-day window will never come back, so retrying only burns the job's attempt
+        budget before it lands as `failed` for a non-failure.
+        """
         try:
             resp = await self._get(f"/repos/{repo.owner}/{repo.name}/actions/jobs/{job_id}/logs")
-        except NotFound:
-            return None
-        if resp.status_code == 410:
+        except (NotFound, Expired):
             return None
         return resp.content
