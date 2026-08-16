@@ -4,6 +4,11 @@ Adversarial review of the Phase 0 ingest platform, run after it shipped. Every f
 verified against real data or a failing test before being fixed; nothing here was accepted
 on the strength of the review alone.
 
+**Live verification against real GitHub data and a real worker process is below** — see
+[Live verification](#live-verification). Executed per
+[`VERIFY_PHASE_0_FIXES.md`](VERIFY_PHASE_0_FIXES.md): 11 of 12 fixes confirmed live, 1
+confirmed as unit-tested-only exactly as that plan predicted.
+
 **The pattern worth naming:** four of the top five are *silent* data-fidelity losses.
 Nothing raised, nothing logged, and the pipeline kept reporting success while dropping data
 GitHub deletes after 90 days. The test suite was green throughout. A pipeline that fails
@@ -99,3 +104,72 @@ drive the real `ingest_repo` against a provider fake that can fail mid-fetch and
 models `filter=latest` honestly, rather than asserting on hand-built rows.
 
 Suite is 82 tests after the audit, up from 66.
+
+---
+
+## Live verification
+
+Executed per [`VERIFY_PHASE_0_FIXES.md`](VERIFY_PHASE_0_FIXES.md). Unit tests establish a
+fix is *correct in isolation*; this establishes it holds against real GitHub data, a real
+worker process, and real concurrency — none of which a mocked test can fully stand in for.
+
+**Result: 11 of 12 verified live. 1 (F5) confirmed as unit-tested-only** — predicted by the
+plan itself, not a shortfall. One adjacent finding surfaced during F2 testing that is not
+one of the original 12 (see below).
+
+| Fix | Method | Evidence | Result |
+|---|---|---|---|
+| **F6** lease reclaim | Tier A, natural experiment | 6 rows genuinely stranded by a worker that died 5+ hrs earlier; a fresh worker reclaimed and completed all 6 (`stuck_processing: 6→0`), none reset by hand | ✅ verified live |
+| **F7** recurring poll survives failure | Tier A drain | `scheduled_future = 51`, exactly one pending poll per corpus repo, `0` duplicates — even with old and freshly-seeded jobs colliding for the same repos | ✅ verified live |
+| **F8** rerun attempts ingested | Tier A drain + direct API spot-check | `runs_multi_attempt` 5→7, `recovered_failures` 12→18. Spot-check against `encode/django-rest-framework` run `31117272395`: our DB shows attempt 1 = 7 jobs/4 failures; `gh api .../attempts/1/jobs` returns **4** failures independently — exact match | ✅ verified live |
+| **F12** job name preserved | Tier A drain | `name_differs` (verbatim ≠ base) 446→5,838 across the re-polled corpus | ✅ verified live |
+| **F1** expired logs return `None` | Tier B probe | Found a genuine 410 (not the 404 fallback) via `prettier/prettier`; `GitHubProvider.fetch_logs` returned `None`, raised nothing | ✅ verified live |
+| **F5** `AccessDenied` vs `RateLimited` on 403 | Tier B probe attempted, fell back to (b) | No reachable 403 path: GitHub 404s repos a token can't see rather than 403ing, by design, and no SAML-enforced org was available. All 3 relevant unit tests pass (`test_403_without_rate_limit_signals_is_access_denied` and siblings) | ⚠️ unit-tested only |
+| **F2** job `started_at` fills in, never regresses | Tier C, real webhook lifecycle | Sent `queued`→`in_progress`→`completed` as three separate signed deliveries: `started_at` was NULL after #1, non-NULL after #2. Re-sent the original NULL-`started_at` payload last (simulating late/out-of-order delivery): `started_at` **stayed set** | ✅ verified live |
+| **F3** run `started_at` fills in | Tier C, real webhook lifecycle | Same shape via `workflow_run` (`requested`→`completed`): NULL after event 1, correctly `2026-08-15 22:45:05-04` after event 2 | ✅ verified live |
+| — stub-run status | Tier C | A `workflow_job` webhook with no prior `workflow_run` created a stub run with `status`/`conclusion` both empty — never borrowed the job's outcome | ✅ verified live |
+| **F9** receiver doesn't block on DB | Tier C, 50 concurrent deliveries | p50 108ms, **p95 120ms**, max 122ms, 50/50 under the 500ms budget. Spread this tight across 50 concurrent requests would not be possible if sync `psycopg` were still serializing the event loop | ✅ verified live |
+| **F4** ETag cursor ordering | Tier D, real SIGKILL mid-poll | `SIGKILL`'d `cadence ingest astral-sh/ruff` ~1.5s in; `runs_etag` stayed `NULL` afterward. A subsequent clean pass set it correctly | ✅ verified live |
+| **F10** mid-flight failure orphans no tasks | Tier D, injected `RateLimited` at run 50/100 | Only 61/100 `fetch_jobs` calls made (not 100); 20 in-flight tasks (matching `job_concurrency=20`) observed `CancelledError`; **0** unretrieved-exception warnings; **0** tasks alive after `ingest_repo` returned | ✅ verified live |
+| **F11** concurrent identical log writes | Tier D, 20 threads, same bytes | Exactly 1 file on disk, correct `storage_key` agreement across all 20 writers, 0 leftover `.tmp` files, correct decompression, no `FileNotFoundError` | ✅ verified live |
+
+### Before / after (Tier A drain)
+
+| metric | before | after |
+|---|---|---|
+| `runs_multi_attempt` | 5 | 7 |
+| `recovered_failures` | 12 | 18 |
+| `name_differs` | 446 | 5,838 |
+| `reruns` | 23 | 23 |
+| jobs | 27,005 | 36,375 |
+| runs | 3,043 | 3,877 |
+| steps | 331,857 | 440,626 |
+| repos | 51 | 51 |
+
+### One adjacent finding — not one of the original 12
+
+While verifying F2 (§3.2), the out-of-order re-send that confirmed `started_at` survives
+also showed that `status` and `completed_at` **do** regress: the late `queued` payload (sent
+after `completed`) reverted `status` from `completed` back to `queued` and blanked
+`completed_at`. Only `started_at` is protected by `coalesce` — that was F2's specific scope,
+and it holds — but `status`/`conclusion`/`completed_at` are unconditionally overwritten by
+whatever event arrives most recently, with no ordering guarantee.
+
+This is not a regression of any audited fix and GitHub does not appear to redeliver stale
+states after a newer one in normal operation (only retries of the *same* failed delivery),
+so it is low-severity today. Worth a fast-follow before webhook ingest is depended on for
+anything status-sensitive: either drop truly-stale updates using `run_attempt` /
+`workflow_job.id` sequencing, or accept the risk and document it. Not fixed here — this
+verification pass scoped to the original 12.
+
+### What live verification could not cover, and why
+
+- **F7's "survives failure" property** was verified by structure (`finally` block,
+  duplicate-guard test) and by the fact that the fan-out guard held under real concurrent
+  seeding — not by directly killing GitHub's API mid-flight for 30+ minutes to watch a
+  specific repo go quiet and recover. That would require a much longer, more disruptive
+  session than this pass covered.
+- **F5**, as predicted — see table above.
+- **Continuous ingest across a real 30-minute interval boundary (Phase 5)** was started
+  as a long-running background observation and is reported separately once the window
+  closes, rather than delaying this write-up.
