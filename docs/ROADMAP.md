@@ -37,13 +37,15 @@ plan (GitHub retains logs 90 days).*
       (`react/react`, 500 runs / 7,524 jobs / 92,269 steps, 2:06)
 - [x] Step timings reconstruct their span within 2% (0.03% mean on 1,401 ruff jobs, 0.09%
       on 266 prettier, 0.04% on 7,110 react jobs)
-- [x] 50 repos ingesting — see note below for what "continuously" means here
+- [x] 50 repos ingesting continuously — demonstrated live, not just by structure: an
+      unattended worker crossed a real 30-minute interval boundary, processed all 51 corpus
+      repos in an 80-second burst with zero re-seeding, and rescheduled every one correctly
+      (`poll_repo` done 211→262, +51 unattended; `AUDIT_PHASE_0.md` Phase 5)
 
-**Note on "continuously":** each `poll_repo` job re-enqueues itself 30 minutes out
-(`worker.py`), which is the actual mechanism of continuous ingest. Proving that mechanism
-keeps running for weeks needs a long-lived deployment (systemd unit, container, etc.)
-outside this session's scope — what's verified here is that the re-enqueue logic is correct
-(tested) and that a full backfill pass across the corpus completes cleanly.
+**What's still not proven:** the mechanism firing correctly across one interval boundary is
+not the same as a deployment running for weeks unattended. That still needs a long-lived
+process (systemd unit, container, etc.) outside any single verification session's scope —
+see the top pre-Phase-1 item below.
 
 **Post-ship audit — 12 bugs found and fixed.** See [`AUDIT_PHASE_0.md`](AUDIT_PHASE_0.md).
 Four were silent data-fidelity losses that shipped under a green 66-test suite, the worst

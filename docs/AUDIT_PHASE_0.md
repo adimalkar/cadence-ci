@@ -170,6 +170,22 @@ verification pass scoped to the original 12.
   specific repo go quiet and recover. That would require a much longer, more disruptive
   session than this pass covered.
 - **F5**, as predicted — see table above.
-- **Continuous ingest across a real 30-minute interval boundary (Phase 5)** was started
-  as a long-running background observation and is reported separately once the window
-  closes, rather than delaying this write-up.
+
+## Phase 5 — continuous ingest across a real interval boundary
+
+A `worker run --concurrency 3` was left running unattended for 35 minutes with no
+re-seeding. Result:
+
+| | before | after |
+|---|---|---|
+| `poll_repo` completed | 211 | 262 (**+51**) |
+| `poll_repo` rescheduled (`pending`, future `run_at`) | 51 | 51 |
+
+All +51 completions landed inside an 80-second burst (`03:01:37`–`03:02:57`) **inside** the
+observation window — confirmed via `updated_at`, ruling out leftover momentum from Tier A —
+and every one of the 51 rescheduled jobs has `run_at` within the next 35 minutes, meaning
+the `POLL_INTERVAL` re-enqueue fired correctly for the entire corpus, unattended, with zero
+human intervention.
+
+This closes the last open item from `ROADMAP.md`: "50 repos ingesting *continuously*" is now
+demonstrated rather than merely asserted from the fix's structure.
