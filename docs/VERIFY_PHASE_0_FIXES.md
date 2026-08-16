@@ -32,6 +32,59 @@ Fix numbers below match `AUDIT_PHASE_0.md`.
 
 ---
 
+## Read this first — orientation
+
+### Where to focus
+
+If time is short, this is the priority order. Tiers A and C are worth more than B and D
+combined.
+
+1. **Phase 1.4 — the F7 check** (`scheduled_future = 51`, exactly one per repo). The
+   highest-severity criterion in this document. If F7 has regressed, corpus repos silently
+   stop being polled *forever*, and nothing about the system looks wrong while it happens —
+   no error, no failed job, just a repo that quietly stops accumulating history. Against a
+   90-day retention window that loss is permanent.
+2. **Phase 1.4 — the F8 API spot-check.** The most valuable single assertion here, because
+   it is the only one that compares our database against **GitHub** rather than against
+   itself. Everything else checks internal consistency; this checks truth.
+3. **Phase 3 — Tier C (webhooks).** Highest value after Tier A, and the least intuitive:
+   F2/F3 show **0 affected rows today** and will keep showing 0 until the first real App
+   install, at which point they begin silently corrupting every timing and billing figure.
+   Do not skip this because nothing looks broken — nothing looking broken *is* the bug.
+4. Tiers B and D last.
+
+### Judgment calls already made — do not undo these
+
+These look like mistakes or mess. They are deliberate.
+
+| Do not | Why |
+|---|---|
+| **Do not reset or delete the ~6 rows stuck in `processing`** (§1.1) | A real worker died mid-job and left them. That is a free, perfectly-formed natural experiment for the F6 lease-reclaim fix. "Cleaning up" first destroys the only live evidence for F6 you are likely to get without staging a crash yourself. Let a live worker reclaim them. |
+| **Do not treat a green drain as verification of all 12 fixes** | It exercises 4. See the tier table above. |
+| **Do not manufacture a pass for F5** (§2.2) | GitHub returns 404, not 403, for repos a token cannot see — by design, to avoid leaking existence. Real 403s need SAML or org policy that may not be available. `⚠️ unit-tested only` is the correct, expected outcome. |
+| **Do not skip the baseline snapshot** (Phase 0) | Every criterion is a *delta*. Without `before.txt` the run is unfalsifiable — you cannot tell a fix working from a number that was already there. |
+| **Do not run two workers during Tier A** | Racing is *safe* (`SKIP LOCKED` exists for this) but it destroys attribution — you cannot tell which process handled which row. Kill the existing one first. |
+| **Do not hand-fix data mid-run to make a criterion pass** | If a criterion fails, that is the deliverable. Record it. |
+
+### A note on the running worker
+
+At the time of writing a `worker run --until-empty` process from an earlier session is
+still draining. The Preconditions section kills it. Expect the queue counts you observe to
+differ from the reference values in Phase 0 — diff against **your own** captured baseline,
+not against the numbers printed here.
+
+### How to report
+
+The deliverable is a table with one row per fix (see [Deliverable](#deliverable)). Three
+outcomes are valid: `✅ verified live`, `⚠️ unit-tested only`, `❌ regressed`.
+
+**A `⚠️` is a good outcome and belongs in the table.** A `✅` awarded to a probe that did
+not actually exercise the path is worse than no row at all — that is precisely how twelve
+bugs cleared a green suite. If a probe was inconclusive, say it was inconclusive and say
+why.
+
+---
+
 ## Preconditions
 
 ```bash
@@ -417,18 +470,23 @@ point the ROADMAP caveat can be removed.
 ## Deliverable
 
 Append a "Live verification" section to [`AUDIT_PHASE_0.md`](AUDIT_PHASE_0.md) with one row
-per fix:
+per fix — all twelve, including the ones that could not be reproduced:
 
 | Fix | Method | Evidence | Result |
 |---|---|---|---|
-| F8 | Tier A + API spot-check | attempt 1 shows 4/7 failures, matches API | ✅ |
-| F5 | unit test only | not reproducible live — see 2.2 | ⚠️ |
+| F8 | Tier A + API spot-check | attempt 1 shows 4/7 failures, matches API | ✅ verified live |
+| F6 | Tier A, natural experiment | 6 stranded rows reclaimed by a live worker | ✅ verified live |
+| F5 | unit test only | 403 not reproducible — GitHub 404s instead (§2.2) | ⚠️ unit-tested only |
+| F9 | Tier C load test | p95 142 ms across 50 concurrent deliveries | ✅ verified live |
 
-Then commit with the before/after snapshots attached.
+Attach the Phase 0 `before.txt` and its after-state counterpart, and commit.
 
-**Report honestly.** `⚠️ unit-tested only` is a fine outcome and belongs in the table. A row
-marked ✅ on the strength of a probe that did not actually exercise the path is worse than
-no row — that is precisely how 12 bugs cleared a green suite.
+**Report honestly** — see [How to report](#how-to-report). `⚠️` is a fine outcome. A `✅`
+awarded to a probe that did not actually exercise the path is worse than no row at all.
+
+If any fix comes back `❌ regressed`, stop and report rather than fixing it inline: a
+regression this soon after `8f00588` means the fix was wrong rather than merely incomplete,
+and that is worth understanding before patching over.
 
 ---
 
