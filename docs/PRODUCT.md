@@ -16,6 +16,8 @@
 | [`phases/PHASE_2_FIX_PRS.md`](phases/PHASE_2_FIX_PRS.md) | Remediation PRs, weeks 11–13 |
 | [`phases/PHASE_3_FLAKE.md`](phases/PHASE_3_FLAKE.md) | Flaky build intelligence, weeks 14–20 |
 | [`phases/PHASE_4_OBSERVABILITY.md`](phases/PHASE_4_OBSERVABILITY.md) | Observability + calibration, weeks 21–24 |
+| [`phases/PHASE_5_REVIEW.md`](phases/PHASE_5_REVIEW.md) | Merge readiness + grounded BYO-key review |
+| [`phases/PHASE_6_SECURITY.md`](phases/PHASE_6_SECURITY.md) | Security — AI-specific first, then SCA + reachability |
 | [`EXPANSION.md`](EXPANSION.md) | Researched feature candidates, ranked, with a do-not-build tier |
 | [`PRODUCT_PLAN.md`](PRODUCT_PLAN.md) | Engineering appendix — schema, normalization, sandbox |
 
@@ -154,27 +156,55 @@ These four rules define the product. Every design argument resolves against them
 
 ---
 
-## 3. What we are NOT building
+## 3. Scope
 
-Stated explicitly, because scope creep here is what made the earlier plan confusing.
+### Revised 2026-08-16 — we now review diffs
 
-- **Not a code review bot.** We never comment on the code in your diff. CodeRabbit,
-  Greptile, and Qodo do that; we don't compete with them and we don't plug into them.
+This section previously read *"Not a code review bot. We never comment on the code in your
+diff."* That is reversed, deliberately, and the reversal is recorded rather than quietly
+edited because it costs something real.
+
+**What it costs.** §4's coexistence was *structural* — different trigger, different tab,
+different file, often a different person — so it was free. Commenting on diffs forfeits
+that: we now compete in the PR timeline, and every "too many bot comments" complaint in
+this category lands on us too. It also un-defers the KMS envelope-encryption vault, one of
+the two hardest items pushed out of Phase 0.
+
+**Why it's still defensible.** Only if the review is *grounded in CI evidence nobody else
+has*. A bot that reads a diff and opines is commodity — three funded incumbents already do
+it, and it commoditizes again every time a frontier model ships. A bot that says *"you
+changed `parse_header`, which appears in the stack trace of 7 flaky failures this month,
+and this file caused 11 red builds in 90 days"* cannot be built without months of run
+history. That is the only version worth building, and it is the one specified in
+[`PHASE_5_REVIEW.md`](phases/PHASE_5_REVIEW.md).
+
+**The rule that keeps it honest:** if the LLM has no Cadence evidence to attach to a hunk,
+it stays silent on that hunk. We do not ship generic style commentary.
+
+### Still not building
+
 - **Not a CI runner.** We don't execute your builds. Depot and Blacksmith do that.
 - **Not a build system.** We don't ask you to migrate to Bazel or Nx.
-- **Not a merge queue.** GitHub ships one free.
+- **Not a merge queue.** GitHub ships one free. We *predict* conflicts as findings; we do
+  not sequence or gate merges.
 - **Not a test framework or a coverage tool.**
-
-The tool we sit next to is **GitHub Actions itself.** Our output targets your
-`.github/workflows/` directory, not your source code.
+- **Not a gate, ever.** Check runs stay `neutral` (§2 rule 4), including review findings.
+  Nothing Cadence emits can turn someone's PR red.
 
 ---
 
 ## 4. Positioning: peer, not plugin
 
-We are complementary to review bots by construction — different trigger
-(`workflow_run.completed` vs `pull_request.opened`), different tab, different file, often
-a different person (pipelines are usually owned by whoever set up CI, not the PR author).
+For the pipeline modules (§5–§7) we remain complementary to review bots by construction —
+different trigger (`workflow_run.completed` vs `pull_request.opened`), different tab,
+different file, often a different person (pipelines are usually owned by whoever set up
+CI, not the PR author).
+
+**For the review module (§3, Phase 5) that is no longer true**, and pretending otherwise
+would be the expensive kind of self-deception. There we occupy the same surface, at the
+same moment, as CodeRabbit and Greptile. Coexistence there has to be *engineered* — see
+mechanism 2 below, which stops being hygiene and becomes the feature that decides whether
+an install survives.
 
 Coexistence is **hygiene, not growth**. It removes an objection that would have killed an
 install; it creates zero pull on its own. Nobody adopts a tool because it's polite to
@@ -185,9 +215,13 @@ Four mechanisms, built as infrastructure rather than marketing:
 1. **Check Run as primary surface.** Renders markdown, carries native file/line
    annotations, appears in the Checks tab, notifies nobody. The PR conversation timeline
    is the contested surface; the Checks tab is empty.
-2. **At most one PR comment**, for the single highest-value finding, edited in place
-   across pushes. Never a new comment per push. Default off when another review bot is
-   detected on the repo.
+2. **Deference, now load-bearing.** Pipeline findings: at most one PR comment, for the
+   single highest-value finding, edited in place across pushes, never a new comment per
+   push. Review findings (Phase 5): **hard-capped at 3 inline comments per PR**, and the
+   whole review module defaults **off** when `coderabbitai[bot]`, `greptile-apps[bot]`, or
+   `qodo-merge-pro[bot]` is active on the repo. If another bot has already commented
+   within ±5 lines of our evidence range, we drop ours. Nobody in this category defers;
+   it is ~2 days of work and it is the difference between coexisting and being uninstalled.
 3. **SARIF output from day one.** Findings land in GitHub's Security tab for free and any
    other tool can consume them. An afternoon if built into the `Finding` serializer, a
    week if retrofitted.
