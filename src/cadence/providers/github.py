@@ -7,6 +7,7 @@ whole corpus, which is what makes pre-install analysis possible.
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 from datetime import UTC, datetime
 
@@ -254,6 +255,48 @@ class GitHubProvider:
             steps=steps,
             matrix=matrix,
         )
+
+    async def fetch_workflow_files(self, repo: Repo, ref: str | None = None) -> dict[str, str]:
+        """Every `.github/workflows/*.yml` as {path: content}.
+
+        Config analysis needs the YAML the runs were actually produced by. Returns {} for
+        a repo with no workflows rather than raising -- that is a normal state, not an
+        error, and an audit of such a repo should simply find nothing.
+        """
+        params = {"ref": ref} if ref else None
+        try:
+            resp = await self._get_with_backoff(
+                f"/repos/{repo.owner}/{repo.name}/contents/.github/workflows", params=params
+            )
+        except NotFound:
+            return {}
+
+        listing = resp.json()
+        if not isinstance(listing, list):
+            return {}
+
+        out: dict[str, str] = {}
+        for entry in listing:
+            if entry.get("type") != "file":
+                continue
+            path = entry.get("path", "")
+            if not path.endswith((".yml", ".yaml")):
+                continue
+            # The listing omits content for anything non-trivial, so fetch per file.
+            try:
+                file_resp = await self._get_with_backoff(
+                    f"/repos/{repo.owner}/{repo.name}/contents/{path}", params=params
+                )
+            except NotFound:
+                continue
+            payload = file_resp.json()
+            content = payload.get("content")
+            if content and payload.get("encoding") == "base64":
+                try:
+                    out[path] = base64.b64decode(content).decode("utf-8", errors="replace")
+                except (ValueError, TypeError):
+                    continue
+        return out
 
     def normalize_event(self, event: str, payload: dict) -> NormalizedEvent | None:
         repo_json = payload.get("repository")

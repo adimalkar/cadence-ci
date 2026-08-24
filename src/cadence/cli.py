@@ -6,8 +6,10 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from cadence.audit import build_context, run_audit, summarize_pipeline
 from cadence.config import settings
 from cadence.corpus import CORPUS
+from cadence.cost import render_saving
 from cadence.db import apply_migrations, connect
 from cadence.ingest import ingest_repo
 from cadence.logstore import LocalLogStore
@@ -332,6 +334,139 @@ def worker_run(
             await provider.aclose()
 
     asyncio.run(_run())
+
+
+@app.command()
+def audit(
+    repo: str = typer.Argument(..., help="owner/name"),
+    window: int = typer.Option(90, help="Days of history to analyse."),
+    limit: int = typer.Option(200, help="Max runs to analyse."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Report without writing findings."),
+) -> None:
+    """Audit a repo's CI for recoverable waste. Read-only against GitHub."""
+    token = _require_token()
+    try:
+        owner, name = repo.split("/", 1)
+    except ValueError:
+        console.print("[red]repo must be owner/name[/red]")
+        raise typer.Exit(1) from None
+
+    async def _run() -> None:
+        provider = GitHubProvider(token)
+        try:
+            gh_repo = await provider.get_repo(owner, name)
+            with console.status(f"reading {repo} workflows…"):
+                workflow_files = await provider.fetch_workflow_files(gh_repo)
+        finally:
+            await provider.aclose()
+
+        if not workflow_files:
+            console.print(f"[yellow]{repo}: no workflow files found[/yellow]")
+            raise typer.Exit(1)
+
+        with connect() as conn:
+            ctx = build_context(
+                conn, gh_repo.id, workflow_files, window_days=window, limit_runs=limit
+            )
+            if not ctx.runs:
+                console.print(
+                    f"[yellow]{repo}: no ingested runs in the last {window} days. "
+                    f"Run [cyan]cadence ingest {repo}[/cyan] first.[/yellow]"
+                )
+                raise typer.Exit(1)
+
+            summary = summarize_pipeline(ctx)
+            result = run_audit(conn, ctx, commit_sha="HEAD", persist=not dry_run)
+
+        _render_audit(repo, ctx, summary, result, dry_run=dry_run)
+
+    asyncio.run(_run())
+
+
+def _fmt(seconds: float | None) -> str:
+    if not seconds:
+        return "—"
+    return f"{int(seconds // 60)}:{int(seconds % 60):02d}"
+
+
+def _render_audit(repo, ctx, summary, result, *, dry_run: bool) -> None:
+    drafts = result["drafts"]
+
+    if summary:
+        wall = summary["wall_seconds"]
+        floor = summary["floor_seconds"]
+        cp = summary["critical_path_seconds"]
+        console.print(
+            f"\n[bold]{repo}[/bold]  ·  {summary['workflow']}  ·  {summary['runs']} runs · "
+            f"{summary['jobs']} jobs/run · {'private' if ctx.is_private else 'public'}"
+        )
+        coverage = summary.get("coverage", 0.0)
+        well_mapped = coverage >= 0.8
+
+        line = f"  median wall clock [bold]{_fmt(wall)}[/bold]"
+        # Only present the critical path against wall clock when most jobs actually
+        # mapped. Otherwise the gap between them is unmeasured work, not recoverable
+        # time, and showing it would invent a saving that does not exist.
+        if cp and well_mapped:
+            line += f" · critical path {_fmt(cp)} · floor (slowest job) {_fmt(floor)}"
+        console.print(line)
+
+        if well_mapped and summary["critical_path"]:
+            console.print(f"  [dim]critical path: {' → '.join(summary['critical_path'])}[/dim]")
+        elif not well_mapped:
+            console.print(
+                f"  [yellow]partial analysis[/yellow]: only {coverage:.0%} of jobs map to "
+                f"this workflow's config [dim](reusable workflows rename their jobs) — "
+                f"critical path withheld[/dim]"
+            )
+        if summary["queue_bound"]:
+            # The opposite of every other tool's advice, and only sayable because queue
+            # and execution are measured separately.
+            console.print(
+                "  [yellow]queue-bound[/yellow]: runners wait longer than jobs run — "
+                "[dim]more parallelism would make this slower, not faster[/dim]"
+            )
+
+    if not drafts:
+        console.print("\n[green]No recoverable waste found.[/green] Pipeline is tight.\n")
+        return
+
+    table = Table(title=f"\n{len(drafts)} findings · ranked by time recovered")
+    table.add_column("finding", style="cyan", no_wrap=False)
+    table.add_column("saving", justify="right")
+    table.add_column("basis")
+    table.add_column("conf", justify="right")
+
+    total_replay = 0.0
+    for d in drafts:
+        s = d.savings
+        if s is None:
+            saving, basis = "—", "config"
+        else:
+            saving = s.render().split(" (")[0]
+            basis = "replay" if s.basis.is_replay else "projection"
+            if s.basis.is_replay:
+                total_replay += s.seconds_per_run
+        table.add_row(d.title, saving, basis, f"{d.confidence:.0%}")
+    console.print(table)
+
+    if total_replay > 0:
+        # Only replay figures are summed. Adding a projection into this total is the one
+        # arithmetic mistake that would undermine every number the product prints.
+        console.print(
+            f"[bold]Measured (replay) total:[/bold] {_fmt(total_replay)}/run · "
+            f"{render_saving(ctx.cost, total_replay)}"
+        )
+        console.print("[dim]Projection-based findings are excluded from this total.[/dim]")
+
+    if dry_run:
+        console.print("\n[dim]--dry-run: nothing written[/dim]")
+    elif result["persisted"]:
+        p = result["persisted"]
+        console.print(
+            f"\n[green]persisted[/green] {p['new']} new · {p['updated']} updated · "
+            f"{p['regressed']} regressed · {result['resolved']} resolved"
+        )
 
 
 @webhook_app.command("serve")

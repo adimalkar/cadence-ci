@@ -16,6 +16,9 @@ dependencies = [
     "rich>=13.7",
     "fastapi>=0.111",
     "uvicorn>=0.30",
+    # round-trip mode carries line/col on every node, which is what `code_range`
+    # evidence needs -- and Phase 2's comment-preserving fixers need the same loader.
+    "ruamel.yaml>=0.18",
 ]
 
 [project.optional-dependencies]

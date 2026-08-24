@@ -61,20 +61,35 @@ every day without one is a permanently lost day of history.
 *The product. First user-facing surface.*
 
 **Weeks 4–5 — prove the path on three rules before widening**
-- [ ] `no_dependency_cache` · `no_run_cancellation` · `false_needs_edge`
-- [ ] finding → evidence → savings → check run, end to end
-- [ ] Versioned rate-card table (`rate_card_version` on every finding)
+- [x] `no_dependency_cache` · `no_run_cancellation` · `false_needs_edge`
+      (+ `cache_key_never_hits`, which fell out of the cache rule for free)
+- [x] finding → evidence → savings, end to end, persisted and idempotent
+- [ ] …→ **check run** — needs App write scope; CLI + report is the current surface
+- [x] Versioned rate-card table (`rate_card_version` stamped on every finding)
 
 **Week 6 — the simulator**
-- [ ] Job DAG build + levelling from `needs:`
-- [ ] Critical path vs wall-clock vs theoretical minimum
-- [ ] Queue time computed separately (queue-bound repos get the opposite advice)
-- [ ] Replay engine over stored step timings
+- [x] Job DAG build + levelling from `needs:` (`dag.py`, cycle-safe)
+- [x] Critical path vs wall-clock vs theoretical floor
+- [x] Queue time computed separately (queue-bound repos get the opposite advice)
+- [x] Replay engine over stored step timings (`simulate.py`)
+- [x] Replay/projection kept structurally apart — no code path sums them
 
-**Week 7** — catalog classes A–C complete
-**Week 8** — cost model, two-currency reporting · **start cold pitches**
-**Week 9** — classes D–E; projection engine with corpus priors
+**Week 7** — catalog classes A–C complete *(4 of ~14 rules done)*
+**Week 8** — [x] cost model, two-currency reporting · [ ] start cold pitches
+**Week 9** — classes D–E; [x] projection engine · [ ] corpus priors
 **Week 10** — eval harness, calibration measurement
+
+**Verified against real corpus data** (`cadence audit <repo> [--dry-run]`):
+ruff, prettier, requests, flask, gin, django, numpy, vite, deno, cargo, terraform.
+Findings are sparse (0–2/repo) with no misfires; the empty state reads
+"No recoverable waste found. Pipeline is tight."
+
+**Known limitation — reusable workflows.** `jobs.x.uses: ./.github/workflows/_build.yml`
+renames runtime jobs to `x / <inner>`, matching nothing in the calling file. Config↔runtime
+mapping coverage therefore ranges 18–100% across the corpus. Where coverage is <80% the
+critical path is **withheld** rather than shown, because the wall-clock-vs-critical-path
+gap would otherwise read as recoverable time when it is really unmeasured work.
+Resolving this is the highest-value next task in Phase 1.
 
 **F0 + F1 — the audit report (weeks 8–10)** · design in [`FRONTEND.md`](FRONTEND.md)
 
