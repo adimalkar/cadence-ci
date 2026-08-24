@@ -511,6 +511,67 @@ def _render_audit(repo, ctx, summary, result, *, dry_run: bool) -> None:
         )
 
 
+@app.command()
+def calibration(
+    repo: str = typer.Option(None, help="Limit to one repo (owner/name)."),
+) -> None:
+    """Predicted vs realized savings, reported separately per basis.
+
+    The public trust artifact from PRODUCT.md section 9. Replay and projection are never
+    combined -- replay should be near-exact, and projection is where the error lives.
+    """
+    from cadence.calibration import collect, report
+
+    repo_id = None
+    with connect() as conn:
+        if repo:
+            try:
+                owner, name = repo.split("/", 1)
+            except ValueError:
+                console.print("[red]repo must be owner/name[/red]")
+                raise typer.Exit(1) from None
+            row = conn.execute(
+                "SELECT id FROM repo WHERE owner=%s AND name=%s", (owner, name)
+            ).fetchone()
+            if not row:
+                console.print(f"[yellow]{repo} not ingested[/yellow]")
+                raise typer.Exit(1)
+            repo_id = row["id"]
+        observations = collect(conn, repo_id=repo_id)
+
+    if not observations:
+        console.print("[yellow]no findings with a savings estimate yet[/yellow]")
+        return
+
+    rep = report(observations)
+    table = Table(title="savings calibration (±25% band)")
+    table.add_column("basis", style="cyan")
+    table.add_column("measured", justify="right")
+    table.add_column("pending", justify="right")
+    table.add_column("within band", justify="right")
+    table.add_column("over", justify="right")
+    table.add_column("under", justify="right")
+    table.add_column("median error", justify="right")
+
+    for basis in sorted(rep):
+        r = rep[basis]
+        cal = r.calibration
+        # None, not 0% -- "not yet checked" is a different claim from "checked and wrong".
+        cal_s = f"{cal:.0%}" if cal is not None else "—"
+        err_s = f"{r.median_signed_error:+.0%}" if r.median_signed_error is not None else "—"
+        table.add_row(basis, str(r.measured), str(r.pending), cal_s,
+                      str(r.overestimated), str(r.underestimated), err_s)
+    console.print(table)
+
+    total_pending = sum(r.pending for r in rep.values())
+    if total_pending and not any(r.measured for r in rep.values()):
+        console.print(
+            f"[dim]{total_pending} findings awaiting a realized measurement. "
+            f"Calibration needs applied fixes — Phase 2 writes them back after a "
+            f"30-day post-merge window.[/dim]"
+        )
+
+
 @webhook_app.command("serve")
 def webhook_serve(
     host: str = typer.Option("127.0.0.1"),
