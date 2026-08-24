@@ -59,6 +59,26 @@ class Job:
     matrix: dict[str, list[Any]] = field(default_factory=dict)
     services: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+    # `jobs.<key>.uses:` — this job calls a reusable workflow instead of running steps.
+    # GitHub names the resulting runtime jobs `<caller> / <inner>`, which matches nothing
+    # in the calling file. Left unhandled this is 25.7% of all observed jobs.
+    uses: str | None = None
+
+    @property
+    def is_reusable_call(self) -> bool:
+        return self.uses is not None
+
+    @property
+    def has_dynamic_name(self) -> bool:
+        """`name:` is entirely an expression, e.g. `${{ matrix.name || matrix.python }}`.
+
+        Nothing static survives, so the runtime name (`3.10`, `Windows`, `PyPy`) is
+        unpredictable from config and can never be matched literally. Common in Python
+        matrix projects.
+        """
+        if not self.name:
+            return False
+        return not _EXPR.sub("", self.name).strip()
 
     @property
     def runtime_names(self) -> set[str]:
@@ -142,6 +162,25 @@ class Workflow:
             matches = [j for j in self.jobs.values() if name_base in j.runtime_names_stripped]
             if len(matches) == 1:
                 return matches[0]
+
+        # Reusable-workflow call: GitHub renders `<caller> / <inner>`. The caller is one
+        # node in *this* graph -- the inner workflow's own jobs are that node's internal
+        # structure, not siblings of it -- so every `X / *` job resolves to caller X.
+        for candidate in (name, name_base):
+            if not candidate or " / " not in candidate:
+                continue
+            caller = candidate.split(" / ", 1)[0].strip()
+            for job in self.jobs.values():
+                if caller in job.runtime_names or caller in job.runtime_names_stripped:
+                    return job
+
+        # Last resort, by elimination: a job whose `name:` is a pure expression cannot be
+        # matched literally, so an otherwise-unmatched observation belongs to it -- but
+        # only when exactly one such job exists in the workflow. More than one and we
+        # cannot tell them apart, so we decline rather than guess.
+        dynamic = [j for j in self.jobs.values() if j.has_dynamic_name]
+        if len(dynamic) == 1:
+            return dynamic[0]
         return None
 
 
@@ -252,6 +291,7 @@ def parse_workflow(path: str, content: str) -> Workflow:
                 matrix=_parse_matrix(raw.get("strategy")),
                 services=list(services.keys()) if isinstance(services, dict) else [],
                 raw=dict(raw),
+                uses=raw.get("uses"),
             )
 
     return Workflow(

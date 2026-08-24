@@ -12,7 +12,7 @@ import structlog
 
 from cadence.config import settings
 from cadence.cost import CostContext, load_rate_card
-from cadence.dag import aggregate_legs, critical_path, theoretical_floor
+from cadence.dag import aggregate_spans, critical_path, theoretical_floor
 from cadence.detectors.cache import DependencyCacheDetector
 from cadence.detectors.cancellation import NoRunCancellationDetector
 from cadence.detectors.context import AuditContext, RunObservation, StepSeries
@@ -66,9 +66,8 @@ def build_context(
             cur.execute(
                 """
                 SELECT run_id, name, name_base,
-                       extract(epoch FROM (started_at - created_at)) AS queue_s,
-                       extract(epoch FROM (completed_at - started_at)) AS exec_s,
                        extract(epoch FROM created_at) AS created_epoch,
+                       extract(epoch FROM started_at) AS started_epoch,
                        extract(epoch FROM completed_at) AS completed_epoch
                 FROM job
                 WHERE run_id = ANY(%s)
@@ -136,13 +135,13 @@ def _observations(run_rows, jobs_by_run, workflows: list[Workflow]) -> list[RunO
         if not job_rows:
             continue
 
-        triples: list[tuple[str, float, float]] = []
+        spans: list[tuple[str, float | None, float | None, float | None]] = []
         for jr in job_rows:
             key = _config_key_for(jr["name"], jr["name_base"], workflows)
             if key is None:
                 continue
-            triples.append(
-                (key, max(0.0, float(jr["queue_s"] or 0)), max(0.0, float(jr["exec_s"] or 0)))
+            spans.append(
+                (key, jr["created_epoch"], jr["started_epoch"], jr["completed_epoch"])
             )
 
         starts = [float(j["created_epoch"]) for j in job_rows if j["created_epoch"]]
@@ -156,8 +155,8 @@ def _observations(run_rows, jobs_by_run, workflows: list[Workflow]) -> list[RunO
                 conclusion=row["conclusion"],
                 workflow_path=row["workflow_path"],
                 jobs_total=len(job_rows),
-                jobs_mapped=len(triples),
-                timings=aggregate_legs(triples),
+                jobs_mapped=len(spans),
+                timings=aggregate_spans(spans),
             )
         )
     return out

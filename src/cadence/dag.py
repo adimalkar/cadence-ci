@@ -129,6 +129,41 @@ def theoretical_floor(timings: dict[str, NodeTiming]) -> float:
     return max(t.total_seconds for t in timings.values())
 
 
+def aggregate_spans(
+    rows: list[tuple[str, float | None, float | None, float | None]],
+) -> dict[str, NodeTiming]:
+    """Collapse observed jobs into node timings by **elapsed span**.
+
+    `rows` is (node_key, created_epoch, started_epoch, completed_epoch).
+
+    Span rather than max-of-durations, because a node can contain jobs that run
+    *sequentially*: a reusable-workflow call (`X / a`, `X / b`, …) has its own internal
+    `needs:` graph, so taking the longest inner job would understate the time the caller
+    node actually occupied. For matrix legs, which do start together, span and max agree.
+
+    The decomposition stays additive: queue is the wait before anything started, exec is
+    from first start to last finish, and the two sum to the span.
+    """
+    grouped: dict[str, list[tuple[float | None, float | None, float | None]]] = {}
+    for key, created, started, completed in rows:
+        grouped.setdefault(key, []).append((created, started, completed))
+
+    out: dict[str, NodeTiming] = {}
+    for key, entries in grouped.items():
+        created = [c for c, _, _ in entries if c is not None]
+        started = [s for _, s, _ in entries if s is not None]
+        completed = [x for _, _, x in entries if x is not None]
+        if not started or not completed:
+            continue
+        first_start = min(started)
+        queue = max(0.0, first_start - min(created)) if created else 0.0
+        exec_s = max(0.0, max(completed) - first_start)
+        out[key] = NodeTiming(
+            key=key, queue_seconds=queue, exec_seconds=exec_s, leg_count=len(entries)
+        )
+    return out
+
+
 def aggregate_legs(rows: list[tuple[str, float, float]]) -> dict[str, NodeTiming]:
     """Collapse per-leg job rows into per-node timings.
 

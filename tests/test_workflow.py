@@ -147,7 +147,48 @@ jobs:
 
     def test_unmatched_name_returns_none(self):
         wf = parse_workflow("ci.yml", HAND_WRITTEN_PARENS)
-        assert wf.job_for_runtime_name("build / inner", "build / inner") is None
+        assert wf.job_for_runtime_name("totally-unknown", "totally-unknown") is None
+
+
+REUSABLE = """\
+jobs:
+  build:
+    name: Build
+    uses: ./.github/workflows/_build.yml
+  test:
+    needs: [build]
+    steps:
+      - run: pytest
+"""
+
+
+class TestReusableWorkflows:
+    """A reusable-workflow call is ONE node in the calling graph -- the called
+    workflow's own jobs are its internal structure, not siblings. GitHub renders them
+    `<caller> / <inner>`, which is 25.7% of all observed jobs corpus-wide and matched
+    nothing before this.
+    """
+
+    def test_uses_marks_the_job_as_a_reusable_call(self):
+        wf = parse_workflow("ci.yml", REUSABLE)
+        assert wf.jobs["build"].is_reusable_call
+        assert wf.jobs["build"].uses == "./.github/workflows/_build.yml"
+        assert not wf.jobs["test"].is_reusable_call
+
+    def test_inner_jobs_resolve_to_the_calling_job(self):
+        wf = parse_workflow("ci.yml", REUSABLE)
+        for observed in ("Build / Build", "Build / lint", "Build / test (3.12)"):
+            job = wf.job_for_runtime_name(observed, observed.split(" (")[0])
+            assert job is not None, observed
+            assert job.key == "build"
+
+    def test_matches_on_the_caller_key_too(self):
+        wf = parse_workflow("ci.yml", "jobs:\n  build:\n    uses: ./x.yml\n")
+        assert wf.job_for_runtime_name("build / inner", "build / inner").key == "build"
+
+    def test_unrelated_slash_name_still_unmatched(self):
+        wf = parse_workflow("ci.yml", REUSABLE)
+        assert wf.job_for_runtime_name("Other / thing", "Other / thing") is None
 
 
 class TestRobustness:
@@ -176,3 +217,54 @@ class TestRobustness:
         wf = parse_workflow("empty.yml", "name: nothing\non: push\n")
         assert wf.parse_error is None
         assert wf.jobs == {}
+
+
+DYNAMIC_NAME = """\
+jobs:
+  tests:
+    name: ${{ matrix.name || matrix.python }}
+    strategy:
+      matrix:
+        include:
+          - {python: '3.12'}
+          - {name: Windows, python: '3.12'}
+    steps: []
+"""
+
+TWO_DYNAMIC = """\
+jobs:
+  a:
+    name: ${{ matrix.x }}
+    steps: []
+  b:
+    name: ${{ matrix.y }}
+    steps: []
+"""
+
+
+class TestDynamicJobNames:
+    """`name: ${{ matrix.python }}` yields runtime names like `3.10` that no static
+    analysis can predict. Matching by elimination is safe only when unambiguous."""
+
+    def test_pure_expression_name_is_flagged_dynamic(self):
+        wf = parse_workflow("ci.yml", DYNAMIC_NAME)
+        assert wf.jobs["tests"].has_dynamic_name
+
+    def test_partially_static_name_is_not_dynamic(self):
+        wf = parse_workflow("ci.yml",
+                            'jobs:\n  t:\n    name: test ${{ matrix.os }}\n    steps: []\n')
+        assert not wf.jobs["t"].has_dynamic_name
+
+    def test_sole_dynamic_job_absorbs_unmatched_observations(self):
+        wf = parse_workflow("ci.yml", DYNAMIC_NAME)
+        for observed in ("3.12", "Windows", "PyPy", "Minimum Versions"):
+            assert wf.job_for_runtime_name(observed, observed).key == "tests"
+
+    def test_two_dynamic_jobs_refuse_to_guess(self):
+        """Attributing one job's timings to another would corrupt the DAG silently."""
+        wf = parse_workflow("ci.yml", TWO_DYNAMIC)
+        assert wf.job_for_runtime_name("3.12", "3.12") is None
+
+    def test_exact_match_still_wins_over_the_dynamic_fallback(self):
+        wf = parse_workflow("ci.yml", DYNAMIC_NAME + "  lint:\n    steps: []\n")
+        assert wf.job_for_runtime_name("lint", "lint").key == "lint"

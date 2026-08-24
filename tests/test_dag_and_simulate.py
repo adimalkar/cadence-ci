@@ -168,3 +168,36 @@ class TestFlatness:
 
     def test_too_few_samples_is_not_flat(self):
         assert duration_is_flat([100, 100]) is False
+
+
+class TestAggregateSpans:
+    """Span-based aggregation, needed because a reusable-workflow node contains jobs
+    that may run sequentially -- max-of-durations would understate the node."""
+
+    def test_sequential_inner_jobs_use_the_full_span(self):
+        from cadence.dag import aggregate_spans
+
+        # two inner jobs, back to back: 0-50 then 50-120
+        rows = [("build", 0.0, 0.0, 50.0), ("build", 0.0, 50.0, 120.0)]
+        node = aggregate_spans(rows)["build"]
+        assert node.exec_seconds == 120.0  # not 70 (the longest single job)
+        assert node.leg_count == 2
+
+    def test_parallel_legs_agree_with_max(self):
+        from cadence.dag import aggregate_spans
+
+        rows = [("test", 0.0, 0.0, 100.0), ("test", 0.0, 0.0, 300.0)]
+        assert aggregate_spans(rows)["test"].exec_seconds == 300.0
+
+    def test_queue_and_exec_sum_to_the_span(self):
+        from cadence.dag import aggregate_spans
+
+        node = aggregate_spans([("a", 0.0, 20.0, 120.0)])["a"]
+        assert node.queue_seconds == 20.0
+        assert node.exec_seconds == 100.0
+        assert node.total_seconds == 120.0
+
+    def test_incomplete_rows_are_dropped_not_guessed(self):
+        from cadence.dag import aggregate_spans
+
+        assert aggregate_spans([("a", 0.0, None, None)]) == {}
