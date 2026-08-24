@@ -7,7 +7,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from cadence.audit import build_context, run_audit, summarize_pipeline
+from cadence.audit import (
+    build_context,
+    enrich_changed_paths,
+    run_audit,
+    summarize_pipeline,
+)
 from cadence.config import settings
 from cadence.corpus import CORPUS
 from cadence.cost import render_saving
@@ -350,6 +355,11 @@ def audit(
     window: int = typer.Option(90, help="Days of history to analyse."),
     limit: int = typer.Option(200, help="Max runs to analyse."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report without writing findings."),
+    paths: bool = typer.Option(
+        False, "--paths",
+        help="Fetch changed files per commit to enable the path-trigger rule "
+             "(1 API request per commit).",
+    ),
     html_out: str = typer.Option(
         None, "--html", help="Write the shareable HTML report here (the cold-pitch artifact)."
     ),
@@ -364,13 +374,16 @@ def audit(
         raise typer.Exit(1) from None
 
     async def _run() -> None:
-        provider = GitHubProvider(token)
+        provider2 = GitHubProvider(token)
         try:
-            gh_repo = await provider.get_repo(owner, name)
+            gh_repo = await provider2.get_repo(owner, name)
             with console.status(f"reading {repo} workflows…"):
-                workflow_files = await provider.fetch_workflow_files(gh_repo)
+                workflow_files = await provider2.fetch_workflow_files(gh_repo)
+            await _audit_body(provider2, gh_repo, repo, workflow_files)
         finally:
-            await provider.aclose()
+            await provider2.aclose()
+
+    async def _audit_body(provider2, gh_repo, repo, workflow_files) -> None:
 
         if not workflow_files:
             console.print(f"[yellow]{repo}: no workflow files found[/yellow]")
@@ -388,6 +401,9 @@ def audit(
                 raise typer.Exit(1)
 
             summary = summarize_pipeline(ctx)
+            if paths:
+                n = await enrich_changed_paths(provider2, gh_repo, ctx)
+                console.print(f"[dim]changed-path data for {n} runs[/dim]")
             result = run_audit(conn, ctx, commit_sha="HEAD", persist=not dry_run)
 
         _render_audit(repo, ctx, summary, result, dry_run=dry_run)
@@ -412,6 +428,11 @@ def _fmt(seconds: float | None) -> str:
 
 def _render_audit(repo, ctx, summary, result, *, dry_run: bool) -> None:
     drafts = result["drafts"]
+
+    # A detector that raised produced no findings, which is indistinguishable from a
+    # detector that found nothing. Say which it was.
+    for detector_id, error in result.get("failed", []):
+        console.print(f"[red]detector failed[/red] {detector_id}: {error}")
 
     if summary:
         wall = summary["wall_seconds"]

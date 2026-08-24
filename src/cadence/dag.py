@@ -144,9 +144,16 @@ def aggregate_spans(
     The decomposition stays additive: queue is the wait before anything started, exec is
     from first start to last finish, and the two sum to the span.
     """
+    # Coerce at the boundary: psycopg returns `extract(epoch ...)` as Decimal, and a
+    # Decimal reaching NodeTiming poisons every downstream float sum with a TypeError.
+    # A detector that raises is caught and logged upstream, which means this failure mode
+    # silently disables a rule rather than announcing itself -- so normalise here, once.
+    def _f(v: object) -> float | None:
+        return None if v is None else float(v)  # type: ignore[arg-type]
+
     grouped: dict[str, list[tuple[float | None, float | None, float | None]]] = {}
     for key, created, started, completed in rows:
-        grouped.setdefault(key, []).append((created, started, completed))
+        grouped.setdefault(key, []).append((_f(created), _f(started), _f(completed)))
 
     out: dict[str, NodeTiming] = {}
     for key, entries in grouped.items():

@@ -298,6 +298,20 @@ class GitHubProvider:
                     continue
         return out
 
+    async def fetch_commit_paths(self, repo: Repo, sha: str) -> list[str]:
+        """Files changed by one commit. Empty list if unavailable.
+
+        One request per commit, so callers must budget it — this is opt-in enrichment for
+        a single-repo audit, not something the corpus sweep can afford.
+        """
+        try:
+            resp = await self._get_with_backoff(f"/repos/{repo.owner}/{repo.name}/commits/{sha}")
+        except (NotFound, Expired):
+            return []
+        payload = resp.json()
+        files = payload.get("files") or []
+        return [f["filename"] for f in files if isinstance(f, dict) and f.get("filename")]
+
     def normalize_event(self, event: str, payload: dict) -> NormalizedEvent | None:
         repo_json = payload.get("repository")
         if not repo_json:

@@ -16,7 +16,10 @@ from cadence.dag import aggregate_spans, critical_path, theoretical_floor
 from cadence.detectors.cache import DependencyCacheDetector
 from cadence.detectors.cancellation import NoRunCancellationDetector
 from cadence.detectors.context import AuditContext, RunObservation, StepSeries
+from cadence.detectors.longtail import LongTailStepDetector
+from cadence.detectors.matrix import NonDiscriminatingMatrixLegDetector
 from cadence.detectors.serialization import FalseNeedsEdgeDetector
+from cadence.detectors.triggers import IrrelevantPathTriggerDetector
 from cadence.findings import persist_findings, resolve_missing
 from cadence.workflow import Workflow, parse_workflow
 
@@ -26,6 +29,9 @@ DETECTORS = [
     NoRunCancellationDetector(),
     FalseNeedsEdgeDetector(),
     DependencyCacheDetector(),
+    NonDiscriminatingMatrixLegDetector(),
+    IrrelevantPathTriggerDetector(),
+    LongTailStepDetector(),
 ]
 
 
@@ -49,7 +55,7 @@ def build_context(
 
         cur.execute(
             """
-            SELECT id, head_branch, conclusion, workflow_path,
+            SELECT id, head_branch, conclusion, workflow_path, head_sha,
                    extract(epoch FROM created_at) AS created_epoch
             FROM run
             WHERE repo_id = %s AND created_at > now() - make_interval(days => %s)
@@ -102,6 +108,28 @@ def build_context(
                     series.durations.append(float(row["dur"]))
                     series.run_ids.append(row["run_id"])
 
+        # Per-leg outcomes and durations for the matrix rule. Keyed on the verbatim
+        # name, since that is exactly what distinguishes one leg from another.
+        leg_outcomes: dict[str, dict[str, list[tuple[int, str | None]]]] = {}
+        leg_durations: dict[tuple[str, str], list[float]] = {}
+        if run_ids:
+            cur.execute(
+                """
+                SELECT r.workflow_path, j.name, j.run_id, j.conclusion,
+                       extract(epoch FROM (j.completed_at - j.started_at)) AS exec_s
+                FROM job j JOIN run r ON r.id = j.run_id
+                WHERE j.run_id = ANY(%s) AND r.workflow_path IS NOT NULL
+                """,
+                (run_ids,),
+            )
+            for row in cur.fetchall():
+                wf_path, leg = row["workflow_path"], row["name"]
+                leg_outcomes.setdefault(wf_path, {}).setdefault(leg, []).append(
+                    (row["run_id"], row["conclusion"])
+                )
+                if row["exec_s"] is not None:
+                    leg_durations.setdefault((wf_path, leg), []).append(float(row["exec_s"]))
+
     workflows = [parse_workflow(path, content) for path, content in workflow_files.items()]
     runs = _observations(run_rows, jobs_by_run, workflows)
 
@@ -124,6 +152,8 @@ def build_context(
         step_series=step_series,
         cost=cost,
         window_days=window_days,
+        leg_outcomes=leg_outcomes,
+        leg_durations=leg_durations,
     )
 
 
@@ -154,6 +184,7 @@ def _observations(run_rows, jobs_by_run, workflows: list[Workflow]) -> list[RunO
                 completed_epoch=max(ends) if ends else None,
                 conclusion=row["conclusion"],
                 workflow_path=row["workflow_path"],
+                head_sha=row["head_sha"],
                 jobs_total=len(job_rows),
                 jobs_mapped=len(spans),
                 timings=aggregate_spans(spans),
@@ -197,20 +228,46 @@ def _dominant_labels(conn, repo_id: int) -> list[str]:
     return [row["label"]] if row else ["ubuntu-latest"]
 
 
+async def enrich_changed_paths(provider, repo, ctx: AuditContext, *, max_runs: int = 150) -> int:
+    """Populate `ctx.changed_paths` for the path-trigger rule.
+
+    One API request per distinct commit, so it is capped and opt-in. Without this the
+    trigger rule has no data and stays silent -- which is correct behaviour, but means the
+    rule only ever fires when a caller has paid for the enrichment.
+    """
+    seen: dict[str, list[str]] = {}
+    ordered = [r for r in ctx.runs if r.head_sha][:max_runs]
+    for run in ordered:
+        sha = run.head_sha
+        if sha not in seen:
+            try:
+                seen[sha] = await provider.fetch_commit_paths(repo, sha)
+            except Exception:  # enrichment is best-effort; never fail the audit for it
+                seen[sha] = []
+        if seen[sha]:
+            ctx.changed_paths[run.run_id] = seen[sha]
+    return len(ctx.changed_paths)
+
+
 def run_audit(conn, ctx: AuditContext, *, commit_sha: str, persist: bool = True) -> dict:
     drafts = []
+    failed: list[tuple[str, str]] = []
     for detector in DETECTORS:
         try:
             found = detector.run(ctx)
             drafts.extend(found)
         except Exception as exc:  # one bad detector must not void the whole audit
+            # Reported to the caller, not just logged: a silently disabled rule looks
+            # identical to a repo with nothing to find, which is how a broken detector
+            # survives a whole corpus sweep unnoticed.
+            failed.append((detector.id, str(exc)[:200]))
             log.warning("audit.detector_failed", detector=detector.id, error=str(exc))
 
     drafts.sort(
         key=lambda d: (d.savings.seconds_per_run if d.savings else 0.0), reverse=True
     )
 
-    result = {"drafts": drafts, "persisted": None, "resolved": 0}
+    result = {"drafts": drafts, "persisted": None, "resolved": 0, "failed": failed}
     if persist and drafts:
         result["persisted"] = persist_findings(
             conn, ctx.repo_id, drafts, commit_sha=commit_sha, cost=ctx.cost

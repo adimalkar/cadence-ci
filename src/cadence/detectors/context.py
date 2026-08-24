@@ -27,6 +27,7 @@ class RunObservation:
     # `concurrency` is declared per file, so repo-wide waste attributed to every file
     # would multiply the same seconds by the number of workflows.
     workflow_path: str | None = None
+    head_sha: str | None = None
     # Observed jobs vs jobs we could map to a config node. Reusable workflows
     # (`jobs.x.uses: ./.github/workflows/_build.yml`) rename their jobs to
     # `x / <inner>`, which matches nothing in the calling file — so coverage can be low
@@ -69,6 +70,20 @@ class AuditContext:
     step_series: dict[tuple[str, str], StepSeries]
     cost: CostContext
     window_days: int
+    # Per-matrix-leg outcomes, keyed by workflow path: {leg_name: [(run_id, conclusion)]}.
+    # Legs are the verbatim job name, since that is what distinguishes one leg from
+    # another -- name_base deliberately collapses them.
+    leg_outcomes: dict[str, dict[str, list[tuple[int, str | None]]]] = field(
+        default_factory=dict
+    )
+    # (workflow_path, leg_name) -> observed execution seconds
+    leg_durations: dict[tuple[str, str], list[float]] = field(default_factory=dict)
+    # Files changed per run, for the path-trigger rule: {run_id: [paths]}
+    changed_paths: dict[int, list[str]] = field(default_factory=dict)
+    # NOTE: class E (runner fit) is deliberately NOT built. Detecting "single-threaded
+    # job on an 8-core runner" needs CPU utilisation, which the Actions API does not
+    # expose -- only labels. Inferring it from duration alone would be a guess presented
+    # as a measurement, so the rule is left out rather than approximated.
 
     @property
     def full_name(self) -> str:

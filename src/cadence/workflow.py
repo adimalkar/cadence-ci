@@ -184,6 +184,16 @@ class Workflow:
         return None
 
 
+def strip_matrix_suffix(name: str) -> str:
+    """`test (ubuntu-latest)` -> `test`. Mirrors what ingest stores as `name_base`.
+
+    Exposed so callers holding a verbatim runtime name (the matrix rule works per leg)
+    can derive the base form without re-implementing the regex and drifting from it.
+    """
+    match = _MATRIX_SUFFIX.match(name)
+    return match.group("base").strip() if match else name
+
+
 def _line_of(node: Any, key: Any, default: int = 1) -> int:
     """1-based line for `key` within a ruamel mapping, or `default`."""
     lc = getattr(node, "lc", None)
