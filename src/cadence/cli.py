@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -15,6 +16,13 @@ from cadence.ingest import ingest_repo
 from cadence.logstore import LocalLogStore
 from cadence.providers import GitHubProvider
 from cadence.queue import enqueue
+from cadence.report import (
+    build_model,
+    report_json,
+)
+from cadence.report import (
+    write_report as write_html_report,
+)
 from cadence.worker import run_worker
 
 app = typer.Typer(no_args_is_help=True, help="Evidence-grounded CI intelligence.")
@@ -342,6 +350,10 @@ def audit(
     window: int = typer.Option(90, help="Days of history to analyse."),
     limit: int = typer.Option(200, help="Max runs to analyse."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report without writing findings."),
+    html_out: str = typer.Option(
+        None, "--html", help="Write the shareable HTML report here (the cold-pitch artifact)."
+    ),
+    json_out: str = typer.Option(None, "--json", help="Write machine-readable results here."),
 ) -> None:
     """Audit a repo's CI for recoverable waste. Read-only against GitHub."""
     token = _require_token()
@@ -379,6 +391,15 @@ def audit(
             result = run_audit(conn, ctx, commit_sha="HEAD", persist=not dry_run)
 
         _render_audit(repo, ctx, summary, result, dry_run=dry_run)
+
+        if html_out or json_out:
+            model = build_model(ctx, summary, result["drafts"])
+            if html_out:
+                write_html_report(model, html_out)
+                console.print(f"[green]report[/green] → {html_out}")
+            if json_out:
+                Path(json_out).write_text(report_json(model), encoding="utf-8")
+                console.print(f"[green]json[/green] → {json_out}")
 
     asyncio.run(_run())
 

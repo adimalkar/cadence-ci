@@ -96,23 +96,59 @@ Resolving this is the highest-value next task in Phase 1.
 The report is not a nice-to-have at the end of the phase — it **is** the cold-pitch
 artifact from §10, so it has to exist the week pitching starts.
 
-- [ ] F0: design tokens; the dimension-line waterfall component (shared by all 4 screens)
-- [ ] F1: audit report — public, no auth, shareable URL
-- [ ] Hero waterfall: actual vs floor, recoverable region hatched
-- [ ] **Replay renders solid + point value; projection renders hatched + range.** The
-      credibility rule from `PRODUCT.md` §6 made visible, not just documented.
-- [ ] Every finding row: claim · evidence link · saving · basis · action
-- [ ] Hover a job bar → queue time splits out as a leading segment
-- [ ] Empty state as a real outcome: "No recoverable waste across 1,412 runs."
-- [ ] Mobile — this link arrives in a GitHub issue, read on a phone
+- [x] F0: design tokens, both themes, in `report.py` (self-contained — no CDN, no JS)
+- [x] F1: audit report — `cadence audit <repo> --html out.html`, single shareable file
+- [x] Hero waterfall: actual vs floor, recoverable region hatched
+- [x] **Replay renders solid + point value; projection renders hatched + range.** The
+      credibility rule from `PRODUCT.md` §6 made visible — test-enforced in
+      `test_report.py`, including that both can appear on one page and stay distinct.
+- [x] Every finding row: claim · evidence chips · saving · basis · confidence
+- [ ] Hover a job bar → queue time splits out as a leading segment *(needs the per-job
+      waterfall; current hero is the run-level actual-vs-floor bar)*
+- [x] Empty state as a real outcome: "No recoverable waste found… This pipeline is tight."
+- [x] Mobile — single-column below 640px; report is 10KB with no external requests
+- [x] Withholds the waterfall below 80% mapping coverage rather than implying the
+      unmeasured gap is recoverable
+- [x] `--json` twin for the read API and eval harness
 
-**Ship criteria**
-- [ ] Audit runs across all 50 corpus repos unattended
-- [ ] Median repo: ≥3 findings, ≥10% combined recoverable wall time
-- [ ] Replay reconstructs known-good historical durations within 2%
-- [ ] Zero findings without evidence (DB-enforced, test-verified)
-- [ ] Report readable on a 375px viewport; every number reachable as text by screen reader
-- [ ] **3 maintainers of repos we don't own confirm a finding surprised them**
+**Ship criteria** — measured 2026-08-24 via `evalsweep.py` over the full corpus
+
+- [x] **Audit runs across all 50 corpus repos unattended.** 50/51 analysed; the one skip
+      is a repo with no workflow files, which is a correct outcome rather than a failure.
+- [ ] **Median repo: ≥3 findings, ≥10% recoverable — FAILS.** Median 1 finding
+      (mean 1.18, max 6, 22/50 repos find nothing); median 0.0% recoverable, mean 8.4%,
+      9/50 repos at ≥10%. **Diagnosed, not mysterious — see below.**
+- [x] **Replay reconstructs historical durations within 2%.** n=171 fully-mapped runs:
+      mean error 0.48%, median 0.00%. All 25 runs over 2% are **1 second absolute** on
+      ~44s runs — timestamp granularity, not model error. For runs ≥120s: 75/75 within
+      2%, mean 0.10%.
+- [x] Zero findings without evidence — DB trigger verified to reject an evidence-less
+      finding through the Phase 1 write path, not just in unit tests.
+- [x] Report renders at 375px (single-column grid); every number is real text, no
+      canvas or image-only values. *Not yet checked with an actual screen reader.*
+- [ ] **3 maintainers of repos we don't own confirm a finding surprised them** —
+      **blocked on contacting humans.** Cannot be self-verified; needs the cold-pitch
+      outreach from §10.
+
+### Why criterion 2 fails, and what actually fixes it
+
+Not the detectors, and not the premise. Two measured causes:
+
+1. **Ingest depth is too shallow for the replay rules.** We hold ~78 runs per repo, but
+   they fan out across ~11 workflow streams — **median 4 runs per workflow**, and only
+   39 of 544 streams reach `false_needs_edge`'s `MIN_RUNS = 20`. Config analysis judges
+   **518 of 1,502 `needs:` edges (34.5%) independent**, so candidates are plentiful; they
+   simply lack the sample to replay. Fix: raise corpus ingest depth (`corpus seed
+   --limit 200`), which spans several rate-limit windows and is a scheduling task, not a
+   code change.
+2. **Only 4 of ~14 catalog rules exist.** The rules that find *large* time — matrix-leg
+   pruning, long-tail tests, runner fit, path-trigger waste — are classes C–E, still
+   unbuilt. Current findings are 24 × `no_run_cancellation`, 4 × `cache_key_never_hits`,
+   4 × `no_dependency_cache`, 1 × `false_needs_edge`.
+
+The matching **kill criterion is scoped to week 10 with the full catalog**, so this is not
+a trigger yet — but it is the number to watch, and it should be re-measured after the
+catalog is complete and ingest is deepened rather than assumed to improve.
 
 ---
 

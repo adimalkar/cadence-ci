@@ -1,0 +1,165 @@
+<title>Cadence — psf/requests</title>
+<style>
+:root {
+  --ground:#E8E8E3; --panel:#F1F1EE; --rule:#C6CAC6; --rule-hi:#A9AFAC;
+  --text:#1F272D; --muted:#5E6A71; --spent:#8B979D; --recover:#0E7C86;
+  --warn:#8A5A00;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground:#131A1F; --panel:#1A232A; --rule:#2B3843; --rule-hi:#3C4C58;
+    --text:#C7D1D8; --muted:#7B8994; --spent:#55666F; --recover:#3FD0D8;
+    --warn:#D9A441;
+  }
+}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--text);
+  font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:0 clamp(16px,4vw,40px)}
+.mono{font-family:ui-monospace,"SF Mono","Cascadia Mono",Menlo,monospace}
+.rail{border-bottom:1px solid var(--rule);font-size:.6875rem;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted)}
+.rail__in{display:flex;flex-wrap:wrap;gap:8px 20px;align-items:baseline;padding:14px 0}
+.rail__mark{color:var(--text);font-weight:600;letter-spacing:.16em}
+.hero{padding:clamp(28px,5vw,48px) 0 8px}
+.eyebrow{font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);margin:0 0 18px}
+.verdict{font-weight:600;font-size:clamp(1.5rem,5vw,2.5rem);line-height:1.12;
+  letter-spacing:-.02em;margin:0 0 10px;text-wrap:balance}
+.verdict em{font-style:normal;color:var(--recover)}
+.sub{margin:0;color:var(--muted);max-width:62ch}
+.note{margin:16px 0 0;padding:10px 14px;border:1px solid var(--rule);border-radius:2px;
+  background:var(--panel);color:var(--muted);font-size:.8125rem;max-width:70ch}
+.note strong{color:var(--warn)}
+.chart{margin:32px 0 0;overflow-x:auto}
+.chart__in{min-width:480px}
+.bars{display:grid;gap:6px}
+.row{display:grid;grid-template-columns:104px 1fr;align-items:center;gap:0}
+.row__k{font-size:.6875rem;color:var(--muted);text-align:right;padding-right:12px;
+  text-transform:uppercase;letter-spacing:.06em}
+.track{position:relative;height:16px}
+.bar{position:absolute;top:3px;height:10px;border-radius:1px;background:var(--spent)}
+.bar--floor{background:var(--recover)}
+.hatch{position:absolute;top:3px;height:10px;border-radius:1px;
+  border:1px solid var(--recover);
+  background-image:repeating-linear-gradient(-45deg,var(--recover) 0 1px,transparent 1px 5px)}
+.val{position:absolute;top:-1px;font-size:.6875rem;color:var(--muted);padding-left:8px}
+.val--rec{color:var(--recover)}
+.ledger{padding:34px 0 0}
+.lhead{display:flex;align-items:baseline;gap:12px;border-top:1px solid var(--rule);
+  padding-top:14px}
+.ltitle{font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);margin:0}
+.f{border-bottom:1px solid var(--rule);padding:20px 0;display:grid;gap:14px;
+  grid-template-columns:1fr minmax(150px,auto)}
+.f__claim{font-size:1.125rem;font-weight:500;margin:0 0 8px;line-height:1.35;
+  text-wrap:balance}
+.f__body{margin:0 0 12px;color:var(--muted);max-width:64ch;white-space:pre-wrap}
+.ev{display:flex;flex-wrap:wrap;gap:6px}
+.ev__i{font-size:.6875rem;color:var(--muted);border:1px solid var(--rule);
+  border-radius:2px;padding:3px 8px;background:var(--panel)}
+.f__side{text-align:right;display:flex;flex-direction:column;gap:5px;align-items:flex-end}
+.save{font-weight:600;font-size:1.25rem;letter-spacing:-.02em;color:var(--recover);
+  line-height:1.15}
+.save--range{font-size:1rem}
+.basis{font-size:.6875rem;letter-spacing:.04em;color:var(--muted);
+  display:inline-flex;align-items:center;gap:6px}
+.sw{width:22px;height:9px;border-radius:1px;flex:none}
+.sw--replay{background:var(--recover)}
+.sw--proj{border:1px solid var(--recover);
+  background-image:repeating-linear-gradient(-45deg,var(--recover) 0 1px,transparent 1px 5px)}
+.empty{padding:40px 0;text-align:left}
+.empty h2{font-size:1.5rem;margin:0 0 8px;font-weight:600}
+.method{margin:32px 0 56px;padding:16px 18px;border:1px solid var(--rule);
+  border-radius:2px;background:var(--panel);color:var(--muted);font-size:.8125rem;
+  max-width:72ch}
+.method h2{font-size:.6875rem;letter-spacing:.1em;text-transform:uppercase;
+  margin:0 0 8px;color:var(--text)}
+.method p{margin:0 0 8px}.method p:last-child{margin:0}
+@media (max-width:640px){.f{grid-template-columns:1fr}
+  .f__side{text-align:left;align-items:flex-start}.row{grid-template-columns:78px 1fr}}
+</style>
+<header class="rail"><div class="wrap rail__in">
+  <span class="rail__mark">Cadence</span><span>/</span><span>audit</span><span>·</span>
+  <span class="mono">psf/requests</span>
+  <span style="margin-left:auto">5 runs read · no install</span>
+</div></header>
+<main class="wrap">
+  <section class="hero">
+    <p class="eyebrow mono">public ·
+      .github/workflows/run-tests.yml</p>
+    <h1 class="verdict">4:59 to a signal.<br><em>1:10 of it is recoverable.</em></h1>
+    <p class="sub">5 findings across 5 runs of <span class='mono'>.github/workflows/run-tests.yml</span>. Measured recoverable: <strong>24%</strong> of median wall clock — 0.3 hrs/month (would be $0/month on a private repo).</p>
+    
+    <div class="chart"><div class="chart__in"><div class="bars"><div class="row"><span class="row__k">actual</span><span class="track"><span class="bar" style="left:0;width:100%"></span><span class="val mono" style="left:100%">4:59</span></span></div><div class="row"><span class="row__k">floor</span><span class="track"><span class="bar bar--floor" style="left:0;width:100.00%"></span><span class="hatch" style="left:100.00%;right:0"></span><span class="val val--rec mono" style="left:100.00%">4:59</span></span></div></div><p class="sub mono" style="margin-top:10px;font-size:.75rem">hatched = — between the slowest single job and the whole run</p></div></div>
+  </section>
+  <section class="ledger"><div class="lhead"><h2 class="ltitle">Findings</h2><span class="ltitle mono">5 · ranked by time recovered</span></div><article class="f">
+  <div>
+    <h3 class="f__claim">1 superseded runs finished anyway — no cancel-in-progress in .github/workflows/run-tests.yml</h3>
+    <p class="f__body mono" style="font-size:.8125rem">1 superseded runs wasted 4:52 total across 5 runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true</p>
+    <div class="ev"><span class="ev__i mono">run-tests.yml : 1</span><span class="ev__i mono">1 runs cited</span><span class="ev__i mono">counterfactual</span></div>
+  </div>
+  <div class="f__side"><span class="save mono">0:58<span class="basis" style="font-weight:400"> /run</span></span><span class="basis"><span class="sw sw--replay"></span>replay · measured (n=5)</span>
+    <span class="basis">confidence 95%</span>
+  </div>
+</article><article class="f">
+  <div>
+    <h3 class="f__claim">`lint` installs dependencies cold on every run — no cache configured</h3>
+    <p class="f__body mono" style="font-size:.8125rem">cold install p50 0:14 across 6 runs; assumes 90% hit rate
+Add actions/cache keyed on `${{ runner.os }}-${{ hashFiles(&#x27;&lt;lockfile&gt;&#x27;) }}`, or set `cache:` on the setup action for this ecosystem.</p>
+    <div class="ev"><span class="ev__i mono">lint.yml : 21</span><span class="ev__i mono">6 timings</span><span class="ev__i mono">counterfactual</span></div>
+  </div>
+  <div class="f__side"><span class="save save--range mono">0:10–0:11<span class="basis" style="font-weight:400"> /run</span></span><span class="basis"><span class="sw sw--proj"></span>projection · estimated</span>
+    <span class="basis">confidence 75%</span>
+  </div>
+</article><article class="f">
+  <div>
+    <h3 class="f__claim">2 superseded runs finished anyway — no cancel-in-progress in .github/workflows/lint.yml</h3>
+    <p class="f__body mono" style="font-size:.8125rem">2 superseded runs wasted 0:35 total across 6 runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true</p>
+    <div class="ev"><span class="ev__i mono">lint.yml : 1</span><span class="ev__i mono">2 runs cited</span><span class="ev__i mono">counterfactual</span></div>
+  </div>
+  <div class="f__side"><span class="save mono">0:05<span class="basis" style="font-weight:400"> /run</span></span><span class="basis"><span class="sw sw--replay"></span>replay · measured (n=6)</span>
+    <span class="basis">confidence 95%</span>
+  </div>
+</article><article class="f">
+  <div>
+    <h3 class="f__claim">1 superseded runs finished anyway — no cancel-in-progress in .github/workflows/typecheck.yml</h3>
+    <p class="f__body mono" style="font-size:.8125rem">1 superseded runs wasted 0:18 total across 5 runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true</p>
+    <div class="ev"><span class="ev__i mono">typecheck.yml : 1</span><span class="ev__i mono">1 runs cited</span><span class="ev__i mono">counterfactual</span></div>
+  </div>
+  <div class="f__side"><span class="save mono">0:03<span class="basis" style="font-weight:400"> /run</span></span><span class="basis"><span class="sw sw--replay"></span>replay · measured (n=5)</span>
+    <span class="basis">confidence 95%</span>
+  </div>
+</article><article class="f">
+  <div>
+    <h3 class="f__claim">1 superseded runs finished anyway — no cancel-in-progress in .github/workflows/close-issues.yml</h3>
+    <p class="f__body mono" style="font-size:.8125rem">1 superseded runs wasted 0:06 total across 2 runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true</p>
+    <div class="ev"><span class="ev__i mono">close-issues.yml : 1</span><span class="ev__i mono">1 runs cited</span><span class="ev__i mono">counterfactual</span></div>
+  </div>
+  <div class="f__side"><span class="save mono">0:03<span class="basis" style="font-weight:400"> /run</span></span><span class="basis"><span class="sw sw--replay"></span>replay · measured (n=2)</span>
+    <span class="basis">confidence 95%</span>
+  </div>
+</article></section>
+  <section class="method">
+    <h2>How these numbers were made</h2>
+    <p>Read-only, from 5 workflow runs through the public GitHub API. No install,
+      no agent, no change to your repository.</p>
+    <p><strong>Replay</strong> figures are arithmetic over timings we observed — the run is
+      recomputed with the change applied. <strong>Projection</strong> figures estimate a
+      state we never observed, so they are given as a range. The two are never added
+      together, and only replay figures appear in any total.</p>
+  </section>
+</main>
