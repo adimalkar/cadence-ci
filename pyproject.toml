@@ -27,6 +27,7 @@ dev = [
     "pytest-asyncio>=0.23",
     "respx>=0.21",
     "ruff>=0.5",
+    "mypy>=1.11",
 ]
 
 [project.scripts]
@@ -45,6 +46,33 @@ src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src"]
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+# Ratchet, not a blanket. Every module not listed below is type-checked in CI, so new
+# code lands clean. These eight carry 25 pre-existing errors from before the checker
+# existed -- annotation gaps, mostly Optional narrowing. Delete entries as they are
+# fixed; do not add new ones. Two of the errors look like genuine defects rather than
+# annotation noise and are tracked separately:
+#   - evalsweep.py:75  CIProvider protocol is missing fetch_workflow_files
+#   - github.py:203/368 created_at can be None but Run.created_at is non-optional
+[[tool.mypy.overrides]]
+module = [
+    "cadence.audit",
+    "cadence.dag",
+    "cadence.evalsweep",
+    "cadence.findings",
+    "cadence.ingest",
+    "cadence.models",
+    "cadence.providers.github",
+    "cadence.queue",
+]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
