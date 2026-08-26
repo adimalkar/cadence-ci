@@ -6,6 +6,13 @@ the checklist. 24 weeks, ~15 hrs/week. Tick items as they land.
 **Slip rule:** any phase over 150% of budget gets cut to its deterministic core. Do not
 extend.
 
+**Field research, 2026-08-26** — [`PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md)
+carries the evidence behind the items added below: 1,546 HN comments, the r/devops
+frustration thread (96 comments), primary GitHub pricing and deprecation sources, and scans
+of our own corpus. Two things in it change existing plans rather than adding to them — the
+rate card is wrong in shipped output (Phase 1), and both audiences rank flakiness far below
+cost and debuggability (Phase 3).
+
 ---
 
 ## Phase 0 — Ingest platform · weeks 1–3
@@ -78,6 +85,42 @@ every day without one is a permanently lost day of history.
 **Week 8** — [x] cost model, two-currency reporting · [ ] start cold pitches
 **Week 9** — classes D–E; [x] projection engine · [ ] corpus priors
 **Week 10** — eval harness, calibration measurement
+
+### Correctness bug in shipped output — the rate card is stale
+
+**Do this before any Phase 2 fixer quotes a dollar figure.** Found 2026-08-26; detail in
+[`PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md) §C0.
+
+[`cost.py`](../src/cadence/cost.py) reasons that the self-hosted per-minute charge is "a
+shelved self-hosted charge may yet return." It is not shelved — it took effect
+**2026-03-01**. GitHub now applies a **$0.002/min Actions platform charge** to all
+workflows including self-hosted; hosted rates fell up to 39% on 2026-01-01 (which the card
+*does* reflect); public repos stay free; private-repo self-hosted minutes consume the free
+quota.
+
+- [ ] Add self-hosted / unknown-label rows at $0.002 with `free_on_public`; bump
+      `rate_card_version`; re-run `evalsweep`
+- [ ] Reconcile the two disagreeing fallbacks — `usd_per_minute` returns `0.0` for unknown
+      labels while `hypothetical_dollars_per_month` uses `rates.get(label, 0.006)`, the
+      hosted-Linux rate. **One runner, two prices, both able to appear in one report.**
+
+Not hypothetical for the corpus: `depot-ubuntu-24.04-*`, `depot-ubuntu-22.04-*`,
+`ubuntu-latest-8core`, `ubuntu-slim` and `codspeed-macro` are all in use and none are in the
+card. The audience most likely to buy a minute-reduction tool is the one that moved to
+self-hosted to escape per-minute billing; they now pay again, and today we quote them **$0**.
+**The `rate_card_version` design is what makes this cheap — this is that decision paying
+off.**
+
+### New catalog candidate — pipeline-fix churn
+
+- [ ] `pipeline_fix_churn` — workflow-only commits in consecutive streaks, summed as billed
+      minutes. *"47 runs last month existed only to debug the pipeline: 3.2 hrs, $N."*
+
+The dominant r/devops complaint (22 of 96 comments on YAML/debugging, 10 on the local-repro
+loop), it needs **no new ingest**, and nobody else prices it. Caveat carried from the
+research: it is a **measurement finding, not a fixer** — the remedy is `act` or pre-flight
+validation, neither of which we ship — so it may belong in the report's context section
+rather than the findings list. Same replay-vs-projection question as `no_job_timeout` below.
 
 **Verified against real corpus data** (`cadence audit <repo> [--dry-run]`):
 ruff, prettier, requests, flask, gin, django, numpy, vite, deno, cargo, terraform.
@@ -158,12 +201,50 @@ catalog is complete and ingest is deepened rather than assumed to improve.
 
 - [ ] Comment-preserving YAML round-trip editor
 - [ ] **Round-trip test: 200 corpus workflows, byte-identical when no fix applied**
+      *(not reproducible as written — see the config-persistence prerequisite below)*
 - [ ] Fixers: `cache.*`, `cache.key`, `cache.run_id_bug`, `concurrency.cancel`
 - [ ] `preview()` returns `None` on unfamiliar shapes — declining is always correct
 - [ ] Opt-in `pull_requests:write` / `contents:write`, separate from read scopes
 - [ ] Anti-spam: 1 open PR max → 3 after first merge; report-first; closed = suppressed;
       **never an unsolicited PR on a read-only-ingested repo**
 - [ ] Realized-savings writeback (30-day post-merge window)
+
+**Prerequisite — persist workflow config.** [`cli.py`](../src/cadence/cli.py) fetches
+workflow files live at audit time and the schema has no config table. Three consequences,
+and the second is a ship criterion:
+
+- [ ] Store workflow-file snapshots per run (schema addition)
+- Without it, "200 corpus workflows, byte-identical" re-fetches from HEAD, so the corpus
+  shifts under the test and a failure cannot be told apart from an upstream edit
+- Without it there is no config history, so "the workflow changed here and waste started"
+  is unanswerable — and Phase 3 blame loses a strong feature
+
+Cheapest before Phase 2 starts, expensive to retrofit after.
+
+**New fixers from field research** — evidence in
+[`PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md)
+
+- [ ] `no_job_timeout` → `timeout.add`. GitHub's default job timeout is 6 hours; a hung job
+      bills silently until killed. Corpus sample: **~145 job blocks, 31 `timeout-minutes`
+      declarations — four in five unprotected.** A linter says "add a timeout"; we hold p99
+      step timings and can say *"your p99 is 4m12s across 87 runs; set 15."*
+- [ ] `cache_evicted_before_reuse` — sibling of the shipped `cache_key_never_hits`: the key
+      is right, the entry was evicted first. GitHub's docs name this "cache thrashing"; the
+      eviction sweep moved from daily to **hourly**. Evidence is hit-rate decay and total
+      footprint against the 10 GB ceiling, and the fix is scope reduction, not a key change.
+
+**Decide before building `no_job_timeout`:** its saving is *contingent* — it only
+materialises when a hang occurs. `PRODUCT.md` §6 admits exactly two render classes, replay
+(solid, point) and projection (hatched, range). **Risk avoided is neither.** Either add a
+third class or forbid quoting dollars unless a historical hang exists in the window. The
+same question governs `pipeline_fix_churn`.
+
+**Considered and ranked last: action/runner version rot.** Real and dated —
+`ubuntu-22.04` brownouts begin 2026-09-17, retirement 2027-04-17 — but a scan of 55 corpus
+repos found **zero exposed** (`ubuntu-latest` ×56, `ubuntu-24.04` ×2; the only 22.04 strings
+are Depot's third-party labels, unaffected). Dependabot and Renovate already own this, and
+the threads show pinning is contested rather than settled. Recorded so it is not
+re-litigated.
 
 **F2 — findings console (weeks 12–13)**
 - [ ] Authenticated list: filter, sort, suppress with a reason
@@ -186,8 +267,24 @@ catalog is complete and ingest is deepened rather than assumed to improve.
 
 - [ ] **Week 14 first task: query the corpus for gold-label count.** Expect ~30 reruns per
       1,000 builds, ~68% flaky. If under a few hundred, extend ingest before training.
+- [ ] **Retry-to-green as the bootstrap label.** A same-commit re-run flipping fail → pass
+      is the strongest flakiness signal obtainable *without instrumenting anyone's test
+      framework*. The Phase 0 audit already restored the earlier-attempt ingest this
+      depends on, so it costs nothing and gives week 14 a second source to cross-check the
+      gold-label count against.
 - [ ] F1 build-level taxonomy: network · registry · rate-limit · OOM · concurrency ·
       external service (weeks 14–15)
+- [ ] **Split OOM into guest-OOM vs host-eviction.** Exit 137 is two different failures
+      sharing one code: the kernel OOM killer ("your build needs more memory") and a
+      host-level SIGKILL where the container's own diagnostics show no pressure at all —
+      ~500 MB used, 1.8 GB free, nothing in `dmesg`. Opposite remediation; classing both as
+      OOM sends developers hunting memory for an infrastructure problem.
+- [ ] **`platform_incident` class.** GitHub is the external service that matters most, and
+      the only one attributable from an authoritative third-party record rather than
+      inferred from logs: the public GitHub Status Atom feed. Failures inside a declared
+      Actions incident window should be **excluded from flake statistics entirely** rather
+      than diluting precision. Cheap, and it was the highest-scoring comment in the
+      r/devops thread by roughly 2×.
 - [ ] F2 log normalization + signature + clustering (16–17)
 - [ ] **Golden corpus: 300 real failure logs → expected signature**
 - [ ] F3 classifier: GBT, calibrated (isotonic/Platt) (18–19)
@@ -201,6 +298,25 @@ catalog is complete and ingest is deepened rather than assumed to improve.
 - [ ] ≥85% flaky precision on ≥10 held-out repos
 - [ ] Calibration within ±10% per decile
 - [ ] Blame ≥70% precision, or emits nothing
+
+### Demand signal is weaker than this phase assumes — read before committing 7 weeks
+
+Flakiness is **15 of 1,546 HN comments and 6 of 96 r/devops comments**; matrix waste is 11
+and 0. Both audiences are exercised about other things: cost (288) and runner performance
+(309) on HN, YAML/debugging (22) and the local-repro loop (10) on r/devops. There is also an
+explicit scope rejection in-thread — *"Flaky tests… A Dev team problem, not CI/CD."*
+
+Three readings, and they are not exclusive: (1) sampling bias, since those threads were
+framed around pricing and general frustration, and the literature is clear that ~59% of
+developers hit flakiness monthly; (2) flakiness is suffered privately as a re-run click
+while cost arrives as a bill someone defends in public, so low complaint volume is not low
+incidence; (3) Phase 3 is genuinely further from felt pain than Phases 1–2.
+
+**This does not justify cutting Phase 3, and should not be used that way.** It does mean
+the kill criteria above deserve to be read literally rather than as formalities, and that
+the debuggability cluster — the largest signal in both datasets — may be the more
+commercially loaded half of the same data. Phase 4's feedback-loop decomposition and
+`pipeline_fix_churn` both sit in that cluster.
 
 ---
 
@@ -323,6 +439,16 @@ are the ones that earn their weeks.
 - [ ] Weekly publish: calibration, precision, n, date, detector SHA
 - [ ] **Week 8: re-verify Kleore's feature set.** If they ship config rules + fix PRs, only
       the simulator differentiates and this plan needs revisiting.
+- [ ] **Watch two more, found 2026-08-26.** [costops.dev](https://costops.dev/guides) is
+      publishing our catalog as prose — "caching, tuning what runs on each push, separating
+      unit tests vs e2e, separating test from build." Two of those four are shipped rules
+      and one is planned path-trigger work, which is useful external confirmation; the
+      fourth is **structural advice we do not cover**, and whether the catalog extends to
+      job-splitting is an open call. Semaphore is running our arithmetic for the opposite
+      conclusion — *"same Rails app, matched hardware: Semaphore 5:01, GitHub Actions 9:44…
+      ~6.5 engineer hours lost daily"* — recommending migration where we recommend repair.
+      **The audit report should be able to answer "would switching beat fixing?"** rather
+      than leaving it implicit.
 
 ---
 
