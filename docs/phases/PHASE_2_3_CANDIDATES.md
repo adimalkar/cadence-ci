@@ -10,7 +10,7 @@ Nothing here is committed work. Ranking is at the bottom.
 
 ---
 
-## Method, and what it could not reach
+## Method
 
 - **Hacker News** — 1,546 comments across the three highest-signal threads, pulled via
   the Algolia API and classified by topic:
@@ -22,28 +22,44 @@ Nothing here is committed work. Ranking is at the bottom.
   (490 pts, 341 comments).
 - **Primary GitHub sources** — pricing page, Actions limits and caching docs, changelogs,
   `actions/runner-images` deprecation issues, community discussions.
+- **Reddit** — [r/devops, "What's your biggest frustration with GitHub Actions (or CI/CD in
+  general)?"](https://www.reddit.com/r/devops/comments/1rdrpzz/whats_your_biggest_frustration_with_github/)
+  (2026-02-24, score 55, upvote ratio 0.77, 96 usable comments). Reddit blocks direct
+  access from this environment; the thread was retrieved through the
+  [Arctic Shift](https://arctic-shift.photon-reddit.com) public archive, with Reddit's own
+  `.rss` endpoint as a second route. Recording the method because it will be needed again.
 - **Our own corpus** — runner labels and `timeout-minutes` coverage sampled directly from
   the workflow files of corpus repos.
 
-**Not reached: Reddit.** `r/devops` was requested as a source and is fully gated to this
-environment — both the HTML and `.json` endpoints return an interstitial rather than the
-thread. No Reddit content is represented below. If those threads matter, they need to be
-pasted in by hand; nothing here should be read as covering them.
+### The two audiences do not agree, and the disagreement is the finding
 
-**Comment-volume distribution across the 1,546 HN comments**, which is the closest thing
-to a demand signal available:
+| Topic | HN (1,546) | Topic | Reddit (96) |
+|---|---|---|---|
+| runner performance / queue | 309 | **YAML / syntax / debugging** | **22** |
+| billing / minutes / cost | 288 | secrets / environments | 18 |
+| debugging + logs | 229 | runner / self-hosted | 10 |
+| timeouts / hangs | 143 | **local repro / feedback loop** | **10** |
+| self-hosted + third-party | 129 | cost / minutes | 9 |
+| YAML / expressions | 115 | flaky / rerun | 6 |
+| caching | 74 | monorepo / triggers | 5 |
+| flakiness / retries | 15 | caching | 4 |
+| matrix | 11 | reliability / outage | 4 |
 
-| Topic | Comments |
-|---|---|
-| runner performance / queue time | 309 |
-| billing / minutes / cost | 288 |
-| debugging + logs | 229 |
-| timeouts / hangs | 143 |
-| self-hosted + third-party runners | 129 |
-| YAML / expressions / config | 115 |
-| caching | 74 |
-| flakiness / retries | 15 |
-| matrix | 11 |
+HN ranks **cost** first; r/devops ranks **debuggability and the edit-test loop** first and
+puts cost fifth. Same platform, same year, opposite orderings. The most likely explanation
+is audience: HN threads were framed around a pricing announcement and skew toward people
+who own a bill, while r/devops skews toward people who own a pipeline day to day.
+
+For Cadence this matters directly, because **the audit report is priced in the HN currency
+and read by the Reddit audience.** One r/devops comment states the resulting go-to-market
+problem better than our own docs do:
+
+> CI/CD pain is mostly ignored until it becomes too expensive — slow pipelines, flaky
+> tests, wasted compute — everyone kind of knows it's there, but nobody really touches it.
+> Then one day the bill or wait time gets bad enough and suddenly it's urgent.
+
+That is the cold-pitch thesis from §10, written by a stranger. It also implies the trigger
+is *the bill*, not the report — so the report's job is to arrive before the bill does.
 
 ---
 
@@ -197,6 +213,49 @@ ground, and the HN threads show the pinning question is *contested* rather than 
 Anything we build here argues with an existing tool on its own turf, using a corpus that
 shows no instances.
 
+### P2-D · Pipeline-fix-loop churn — the "fix: just make it work" runs
+
+**New candidate, straight out of the r/devops thread, and the clearest measurable waste in
+it.** There is no local way to test a workflow, so the edit-test loop *is* the CI pipeline.
+Every attempt at fixing a workflow is a commit, and every commit is a billed run.
+
+The thread says it plainly. Second-highest-scoring reply in the whole discussion:
+
+> "fix: yaml syntax error" · "fix: typo" · "fix: just make it work" · "fix: please god no"
+> · "fuck: my life"
+
+and, separately:
+
+> It works on my local machine (e.g. with `act`) but the real pipeline fails and the only
+> way to change something is to make a commit. I am not a huge fan of hundreds of commits
+> that are just something like "trying to fix the pipeline".
+
+> The feedback loop is definitely up there. Waiting 6–10 minutes just to find out you
+> missed a comma somewhere is painful.
+
+22 of 96 comments touch YAML/syntax/debugging and 10 touch the local-repro loop, making
+this the **dominant complaint on r/devops** — where it ranks above cost.
+
+**Why this is ours and not a linter's.** Nobody can price this today. We can, exactly, with
+data already ingested: a run whose commit touches *only* `.github/workflows/**`, in a
+consecutive streak against the same branch, is config churn. Sum the billed minutes across
+the streak and the finding writes itself — *"47 runs last month existed only to debug the
+pipeline: 3.2 hours, $N. Here are the three workflows responsible."*
+
+That is a report line no competitor is producing, it needs no new ingest, and it lands in
+the Reddit audience's top complaint while being denominated in the HN audience's currency.
+
+**Caveats, both real.** The saving is not recoverable by a YAML fix — the remedy is
+`act`, better local validation, or pre-flight checks, none of which we ship. So this is a
+*measurement* finding, not a fixer, and it collides with the same
+replay-vs-projection question as P2-A. It may belong in the audit report's context section
+rather than the findings list. Second, attribution needs care: a workflow edit bundled with
+code changes is ordinary work, not churn. The signal is **workflow-only commits in
+consecutive streaks**, and the streak length is what makes it churn rather than maintenance.
+
+- Detector: `pipeline_fix_churn`
+- Evidence: commit → files changed → run → billed minutes, grouped into per-branch streaks
+
 ---
 
 ## Phase 3 candidates — failure → taxonomy → signature → blame
@@ -238,6 +297,64 @@ environment / drift, so that "the right person is looped in rather than everyone
 — turning a wall of failures into a short list of decisions. Adjacent to F4 blame but
 cheaper: routing to the right *category* does not need blame-candidate precision.
 
+### P3-D · Platform incidents are not the developer's fault, and we can prove it
+
+**New candidate, and the single highest-scoring comment in the r/devops thread** (40 points,
+roughly double the next reply) is this:
+
+> They're at an amazing 92.7% uptime. They can't even keep 2 nines of uptime.
+
+The figure is the commenter's claim and is not independently verified here, but the
+underlying dataset is real, public and open source:
+[`mrshu/github-statuses`](https://github.com/mrshu/github-statuses) reconstructs
+per-component GitHub uptime by replaying snapshots of the **public GitHub Status Atom
+feed** (`history.atom`). That feed is free, historical, and directly consumable.
+
+The F1 taxonomy lists "external service" as a class. This says the most important external
+service is **GitHub itself**, and that it is uniquely attributable: when Actions is in a
+declared incident window, jobs fail for reasons that have nothing to do with the commit
+under test. Every other failure class we assign is a claim about the developer's code or
+config. This one is a claim about the platform, and it is the only class we can establish
+from an authoritative third-party record rather than by inference from logs.
+
+Cheap to build, high credibility, and it protects the classifier's precision: failures
+inside a declared incident window should be excluded from flake statistics entirely rather
+than diluting them. Note that HN corroborates the theme independently — GitHub Actions
+outages account for two of the six highest-scoring Actions stories in the sample
+(655 and 509 points).
+
+- Taxonomy class: `platform_incident`
+- Evidence: job failure timestamp ∩ GitHub Status incident window for the Actions component
+
+---
+
+## Competitive and positioning notes
+
+Not candidates, but they change how candidates should be framed.
+
+**Someone is already writing our catalog as prose.** A commenter promoting
+[costops.dev](https://costops.dev/guides) summarises the fixes for slow/expensive GHA as:
+
+> caching, tuning what runs on each push, separating out unit tests vs e2e, separating test
+> from build.
+
+Two of those four are shipped Cadence rules and one is planned path-trigger work — external
+confirmation that the catalog targets the right things. The fourth, **separating test from
+build and unit from e2e**, is *not* in the catalog: it is a job-splitting recommendation
+rather than a config toggle, and it sits near the class D/E long-tail work. Worth deciding
+whether the catalog covers structural advice or only mechanical fixes.
+
+**A vendor is already doing our arithmetic, for migration instead of optimisation.** A
+Semaphore representative in-thread:
+
+> same Rails app, 10 runs, matched hardware: Semaphore 5:01, GitHub Actions 9:44. At 100
+> builds/day that's ~6.5 engineer hours lost daily just waiting.
+
+Identical unit economics, opposite conclusion — their recommendation is *switch platforms*,
+ours is *fix the pipeline you have*. Cadence's advantage is that the second requires no
+migration; the risk is that the comparison makes the first look decisive. The audit report
+should be able to answer "would switching beat fixing?" rather than leaving it implicit.
+
 ---
 
 ## Cross-cutting — workflow config is never persisted
@@ -263,9 +380,20 @@ Small schema addition, and much cheaper before Phase 2 than retrofitted after.
 Recorded because it cuts against our own roadmap, and negative results are worth as much as
 positive ones.
 
-**Flakiness is 15 of 1,546 HN comments. Matrix waste is 11.** Phase 3 is a seven-week
-investment aimed at flaky build intelligence; this audience is overwhelmingly exercised
-about *cost* (288), *runner performance* (309) and *debuggability* (229) instead.
+**Flakiness is 15 of 1,546 HN comments and 6 of 96 Reddit comments. Matrix waste is 11 on
+HN, 0 on Reddit.** Phase 3 is a seven-week investment aimed at flaky build intelligence;
+both audiences are exercised about other things — cost and runner performance on HN,
+debuggability and the edit-test loop on r/devops.
+
+Worse than low volume, there is an explicit **scope rejection**. The r/devops OP listed
+flaky tests as a candidate frustration, and a reply pushed back directly:
+
+> "Flaky tests that pass 'most of the time' and constant re-running by dev teams" — A Dev
+> team problem, not CI/CD.
+
+That is one commenter, lightly upvoted, and it is not evidence that flakiness is unimportant.
+It *is* evidence that some practitioners do not consider it their CI tool's job to solve —
+which is a positioning problem for Phase 3 independent of how good the classifier is.
 
 Three honest readings, and they are not mutually exclusive:
 
@@ -292,11 +420,16 @@ commercially-loaded half of the same data.
 |---|---|---|---|
 | 1 | **C0** rate card stale | Bug, shipped code | Under-reports savings for the exact audience most likely to buy; rate-card versioning already exists to absorb this |
 | 2 | **P2-A** `no_job_timeout` | New fixer | Uses data we already hold; exact fixer shape; ~4 in 5 corpus jobs unprotected |
-| 3 | **Config persistence** | Schema | Unblocks a Phase 2 ship criterion; cheapest now |
-| 4 | **P3-A** exit-137 split | Taxonomy | Sharpens F1 where being wrong misleads |
-| 5 | **P2-B** cache eviction | New detector | Natural sibling of a shipped rule |
-| 6 | **P3-B** retry-to-green | Labelling | Mostly making explicit what the data already supports |
-| 7 | **P2-C** version rot | New fixer | Real, but Dependabot-adjacent and zero corpus instances |
+| 3 | **P2-D** pipeline-fix churn | New detector | Dominant r/devops complaint; nobody prices it; needs no new ingest |
+| 4 | **Config persistence** | Schema | Unblocks a Phase 2 ship criterion; cheapest now |
+| 5 | **P3-D** platform incidents | Taxonomy | Top-voted thread comment; free authoritative source; protects classifier precision |
+| 6 | **P3-A** exit-137 split | Taxonomy | Sharpens F1 where being wrong misleads |
+| 7 | **P2-B** cache eviction | New detector | Natural sibling of a shipped rule |
+| 8 | **P3-B** retry-to-green | Labelling | Mostly making explicit what the data already supports |
+| 9 | **P2-C** version rot | New fixer | Real, but Dependabot-adjacent and zero corpus instances |
+
+Items 1–4 need no new data source. Item 5 needs one public feed. That grouping, rather than
+the strict ordering, is the useful decision boundary.
 
 ---
 
@@ -313,6 +446,8 @@ commercially-loaded half of the same data.
 - [Exit code 137 on ubuntu-24.04](https://github.com/orgs/community/discussions/169191)
 
 **Developer threads**
+- [r/devops — What's your biggest frustration with GitHub Actions (or CI/CD in general)?](https://www.reddit.com/r/devops/comments/1rdrpzz/whats_your_biggest_frustration_with_github/) — 2026-02-24, score 55, 96 usable comments (retrieved via [Arctic Shift](https://arctic-shift.photon-reddit.com))
+- [`mrshu/github-statuses`](https://github.com/mrshu/github-statuses) — historical GitHub component uptime from the public status Atom feed
 - [Pricing Changes for GitHub Actions](https://news.ycombinator.com/item?id=46291156) — 802 pts, 819 comments
 - [The Pain That Is GitHub Actions](https://news.ycombinator.com/item?id=43419701) — 704 pts, 562 comments
 - [I hate GitHub Actions with passion](https://news.ycombinator.com/item?id=46614558) — 490 pts, 341 comments
