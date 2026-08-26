@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Superseded runs finish for nobody's benefit. This is the cancellation rule Cadence
+# reports on other people's pipelines, applied to our own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  UV_FROZEN: "1"
+
+jobs:
+  # lint and test share no artifacts, so they are not chained through `needs:`.
+  # Serializing them would be exactly the waste the serialization detector reports.
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: ruff check
+        run: uv run ruff check src tests
+
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # The declared floor and the version development actually runs on. Nothing
+        # in between earns its minutes.
+        python-version: ["3.12", "3.14"]
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cadence_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      CADENCE_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cadence_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: uv sync --extra dev --python ${{ matrix.python-version }}
+
+      # The DB-backed tests skip themselves when Postgres is unreachable. That is right
+      # locally and a silent green build here, so prove the connection before trusting
+      # the result -- six of thirteen test files depend on it.
+      - name: Assert Postgres is reachable
+        run: |
+          uv run python - <<'PY'
+          import os, sys
+          import psycopg
+
+          url = os.environ["CADENCE_TEST_DATABASE_URL"]
+          try:
+              with psycopg.connect(url, connect_timeout=5) as conn:
+                  conn.execute("SELECT 1")
+          except Exception as exc:
+              sys.exit(f"Postgres unreachable, DB tests would skip silently: {exc}")
+          print("postgres reachable")
+          PY
+
+      # One pytest invocation, checked twice. Running the suite again just to inspect
+      # skips would double the job for no new information.
+      - name: pytest
+        run: |
+          set -o pipefail
+          uv run pytest -q -rs 2>&1 | tee pytest.out
+          if grep -qE '[0-9]+ skipped' pytest.out; then
+            echo "::error::Tests were skipped -- CI must run the full suite."
+            grep -E '^SKIPPED' pytest.out || true
+            exit 1
+          fi
