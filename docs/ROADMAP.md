@@ -358,10 +358,15 @@ commercially loaded half of the same data. Phase 4's feedback-loop decomposition
       **Two guards are mandatory**: only same-repo branches can be a parent, and the
       default branch is never a parent — without both, a fork PR whose head branch is named
       `master` makes the detector label 96–99 of 100 PRs as stacked.
-      *The finding is not the badge* — it is blame misattribution (a child's failure can
-      originate in a parent's commits) and rebase churn (a merged parent retargets every
-      descendant, so a 3-deep stack pays for CI 3+ times). Reasoning in
-      [`EXPANSION.md`](EXPANSION.md) §3.3.
+      **Ships in two units, and the first has no prerequisite beyond PR ingest:**
+  - [ ] *(a)* The stacked badge + chain view. Needs only `/pulls?state=open`.
+        Tool-agnostic, so unlike Graphite's it also covers hand-rolled stacks — and it
+        serves the **reviewer**, who never chose the author's tooling.
+  - [ ] *(b)* The CI findings, once PR→branch→run linkage exists: blame misattribution (a
+        child's failure can originate in a parent's commits) and rebase churn (a merged
+        parent retargets every descendant, so a 3-deep stack pays for CI 3+ times).
+        (b) is the priced finding; **do not hold (a) for it.** Reasoning in
+        [`EXPANSION.md`](EXPANSION.md) §3.3.
 
 **5C — weeks 35–40** (BYO-key review; un-defers the KMS vault)
 - [ ] Vault: envelope encryption, per-installation DEK under a KMS CMK, decrypt only in

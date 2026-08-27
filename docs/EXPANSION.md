@@ -213,9 +213,22 @@ branches can be a stack parent, and the default branch is never a parent. This i
 the class of misfire the `preview()` returns `None` rule exists to prevent, and it fails
 loudly across an entire repo rather than quietly on one PR.
 
-**Why it is ours and not just a nicer badge.** A label duplicates what Graphite already
-gives its own users. What nobody measures is what stacks cost in CI, and both effects are
-squarely in our lane:
+**The badge is a deliverable in its own right.** An earlier draft of this entry treated it
+as merely the delivery mechanism for the CI findings below. That undersells it, for three
+reasons:
+
+1. **Graphite's badge only helps people who adopted Graphite.** Detection from the PR list
+   is tool-agnostic — it works on stacks built with plain `git` and manual base retargeting,
+   which is what most stacks outside Graphite shops actually are.
+2. **The person who needs the warning is the reviewer**, who has no say in the author's
+   tooling. Today they get no signal at all that they are reviewing mid-stack, or that merge
+   order matters.
+3. **It ships earlier and cheaper than the findings below.** The badge needs only
+   `/pulls?state=open`. The CI effects need PR→branch→run linkage. These are two units of
+   work, not one, and the first has no prerequisite beyond Phase 5 ingesting PRs.
+
+**And the CI effects are what make it more than a badge.** Nobody measures what stacks cost,
+and both effects are squarely in our lane:
 
 1. **Blame misattribution.** A child branch contains its parents' commits, so a failing job
    on the child may originate in a parent's code. Phase 3 blame candidates will point at the
@@ -225,9 +238,9 @@ squarely in our lane:
    nobody attributes to stacking — the same shape as `pipeline_fix_churn`: real waste that
    is invisible because no one aggregates it.
 
-Effect 2 is the finding; the badge is the delivery mechanism for it. Both need PR→branch→run
-linkage that does not exist today, which is why this waits for Phase 5 rather than being
-retrofitted into Phase 1.
+**Sequencing.** The badge lands as soon as Phase 5 ingests PR data — one call, no run
+linkage. The two CI effects follow once PR→branch→run linkage exists, and effect 2 is the
+one that becomes a priced finding. Ship the badge without waiting for them.
 
 ### 3.4 Preview environment *provisioning*
 
