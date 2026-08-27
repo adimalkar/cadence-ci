@@ -1,0 +1,49 @@
+name: CodeQL
+
+# Static security analysis. ruff catches style and mypy catches types; neither follows a
+# tainted value from an HTTP body to a sink. This repo parses untrusted webhook payloads
+# and third-party workflow YAML, and Phase 5C will decrypt customer API keys in the
+# worker -- that is dataflow analysis territory.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so newly published queries reach existing code rather than only new commits.
+    - cron: "27 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      security-events: write   # upload results to the Security tab
+      actions: read
+      contents: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          languages: python
+          # security-extended trades some false positives for recall. Worth it on a
+          # codebase whose roadmap includes holding other people's credentials.
+          queries: security-extended
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          category: "/language:python"

@@ -1,0 +1,46 @@
+name: OpenSSF Scorecard
+
+# Scores this repository's supply-chain posture against the OpenSSF checks: pinned
+# dependencies, branch protection, token permissions, dangerous workflow patterns, and
+# more. Results land in the Security tab.
+#
+# Publishing it is deliberate and matches the Phase 4 rule about the calibration
+# dashboard -- publish whether or not it flatters us. Anyone evaluating an Apache-2.0
+# tool that wants read access to their CI history can check our posture without asking.
+on:
+  branch_protection_rule:
+  schedule:
+    - cron: "41 5 * * 1"
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      security-events: write   # upload SARIF to the Security tab
+      id-token: write          # publish the signed result to the public dashboard
+      contents: read
+      actions: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload SARIF to the Security tab
+        uses: github/codeql-action/upload-sarif@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        with:
+          sarif_file: results.sarif

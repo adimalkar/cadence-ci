@@ -28,6 +28,18 @@ dev = [
     "respx>=0.21",
     "ruff>=0.5",
     "mypy>=1.11",
+    "pytest-cov>=5.0",
+    # Order-dependent tests are exactly the failure mode Phase 3 exists to diagnose.
+    # Running our own suite shuffled keeps us honest -- it already caught one.
+    "pytest-randomly>=3.15",
+]
+
+# CI-only tooling, kept out of `dev` so a local install stays lean. Pinned through the
+# lockfile rather than resolved fresh in CI, which is the whole point of locking.
+ci = [
+    "pip-audit>=2.7",
+    "zizmor>=1.0",
+    "cyclonedx-bom>=4.5",
 ]
 
 [project.scripts]

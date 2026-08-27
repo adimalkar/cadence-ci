@@ -57,7 +57,14 @@ def _configure(monkeypatch):
 
 @pytest.fixture
 def conn():
+    # Clean on the way in as well as out. TestReplayAtScale asserts on whole-table counts,
+    # so it only means "zero drops" if the table starts empty -- and test_queue.py and
+    # test_worker.py write ingest_job too. Teardown-only cleanup made that hold by file
+    # order alone, which randomised ordering breaks.
     with psycopg.connect(TEST_DB) as c:
+        c.execute("DELETE FROM ingest_job")
+        c.execute("DELETE FROM webhook_delivery")
+        c.commit()
         yield c
         c.execute("DELETE FROM ingest_job")
         c.execute("DELETE FROM webhook_delivery")

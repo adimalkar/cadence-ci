@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # Superseded runs finish for nobody's benefit. This is the cancellation rule Cadence
 # reports on other people's pipelines, applied to our own.
@@ -11,23 +12,27 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege at the top; jobs that need more declare it themselves.
 permissions:
   contents: read
 
 env:
+  # A stale lockfile fails the build instead of silently re-resolving.
   UV_FROZEN: "1"
 
+# Every action is pinned to a commit SHA, not a tag. Tags are mutable: the tj-actions
+# compromise moved a tag to point at malicious code, and every workflow tracking that tag
+# executed it. Dependabot bumps these SHAs and keeps the trailing version comment.
 jobs:
-  # lint and test share no artifacts, so they are not chained through `needs:`.
-  # Serializing them would be exactly the waste the serialization detector reports.
   lint:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -45,10 +50,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -59,22 +65,23 @@ jobs:
       - name: Install dependencies
         run: uv sync --extra dev
 
-      # Config lives in pyproject.toml, including the per-module baseline. Eight
-      # modules are exempt while their pre-existing errors are burned down; every
-      # other module is gated here, so new code cannot land untyped.
+      # Config and the per-module baseline live in pyproject.toml. Eight modules are
+      # exempt while their pre-existing errors are burned down; everything else is gated,
+      # so new code cannot land untyped.
       - name: mypy
         run: uv run mypy
 
-  # Nothing else proves the package still builds and installs. `[project.scripts]`
-  # and the hatchling wheel target break silently until someone tries to install it.
-  build:
+  # This project will hold customer KMS-encrypted API keys in Phase 5C and ships a webhook
+  # receiver today. Supply chain and workflow hardening are not optional extras here.
+  security:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -82,24 +89,106 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
-      - name: Build sdist and wheel
-        run: uv build
+      - name: Install dependencies
+        run: uv sync --extra dev --extra ci
 
-      - name: Install the wheel into a clean venv and run the entrypoint
+      # Not --strict: it fails on any package it cannot audit, and `cadence` itself is not
+      # on PyPI. That would be a permanently red check rather than a signal.
+      - name: pip-audit — known CVEs in the dependency tree
+        run: uv run pip-audit
+
+      # zizmor is the tool our own docs name as owning workflow hardening (EXPANSION 3.1).
+      # Running it against ourselves is the cheapest possible consistency check.
+      - name: zizmor — workflow hardening
+        run: uv run zizmor --min-severity low .github/workflows/
+
+  # Migrations are applied by apply_migrations() with a schema_migration table and sorted
+  # filenames -- deliberately minimal, and therefore worth proving rather than assuming.
+  # Nothing else checks that a fresh database reaches the intended schema, or that a
+  # second apply is a no-op.
+  migrations:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: cadence_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      CADENCE_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cadence_migrations
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Apply migrations to an empty database
         run: |
           set -euo pipefail
-          uv venv /tmp/wheelcheck
-          VIRTUAL_ENV=/tmp/wheelcheck uv pip install dist/*.whl
-          # Exercises the console script, which is what `pip install cadence` gives a user.
-          /tmp/wheelcheck/bin/cadence --help > /dev/null
-          echo "wheel installs and the cadence entrypoint runs"
+          uv run cadence db init | tee first.out
+          grep -q "applied" first.out || { echo "::error::no migrations applied to an empty DB"; exit 1; }
 
-      - name: Upload distributions
-        uses: actions/upload-artifact@v7
-        with:
-          name: dist
-          path: dist/
-          retention-days: 7
+      - name: Re-apply — must be a no-op, not an error
+        run: |
+          set -euo pipefail
+          uv run cadence db init | tee second.out
+          if grep -q "applied" second.out; then
+            echo "::error::migrations are not idempotent -- the second run applied something"
+            cat second.out
+            exit 1
+          fi
+          echo "second run was a no-op, as it should be"
+
+      - name: Every migration file is recorded, and the core tables exist
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import os, pathlib, sys
+          import psycopg
+
+          url = os.environ["CADENCE_DATABASE_URL"]
+          files = sorted(p.name for p in
+                         pathlib.Path("src/cadence/db/migrations").glob("*.sql"))
+          with psycopg.connect(url) as conn:
+              applied = {r[0] for r in conn.execute("SELECT name FROM schema_migration")}
+              tables = {r[0] for r in conn.execute(
+                  "SELECT table_name FROM information_schema.tables"
+                  " WHERE table_schema = 'public'")}
+
+          missing = set(files) - applied
+          if missing:
+              sys.exit(f"migrations on disk but not recorded: {sorted(missing)}")
+
+          required = {"repo", "run", "job", "step", "log_chunk", "finding",
+                      "evidence", "ingest_job", "webhook_delivery", "rate_card"}
+          absent = required - tables
+          if absent:
+              sys.exit(f"expected tables missing after migration: {sorted(absent)}")
+
+          print(f"{len(files)} migrations recorded; {len(required)} core tables present")
+          PY
 
   test:
     runs-on: ubuntu-latest
@@ -130,10 +219,11 @@ jobs:
       CADENCE_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/cadence_test
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v10.0.1
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -162,14 +252,117 @@ jobs:
           print("postgres reachable")
           PY
 
-      # One pytest invocation, checked twice. Running the suite again just to inspect
-      # skips would double the job for no new information.
+      # pytest-randomly shuffles order every run with a fresh seed, printed in the header
+      # for reproduction via --randomly-seed=N. A product built to diagnose flaky builds
+      # should not exempt its own suite from order-dependence -- this already caught a real
+      # isolation bug in the webhook replay test, which had been asserting on whole-table
+      # counts and passing only because of file ordering.
+      #
+      # One invocation, checked twice: a skipped DB test is indistinguishable from a
+      # passing one in the summary line, so fail loudly rather than shipping green.
       - name: pytest
         run: |
           set -o pipefail
-          uv run pytest -q -rs 2>&1 | tee pytest.out
+          uv run pytest -q -rs \
+            --cov=cadence --cov-report=term-missing --cov-report=xml \
+            --cov-fail-under=60 2>&1 | tee pytest.out
           if grep -qE '[0-9]+ skipped' pytest.out; then
             echo "::error::Tests were skipped -- CI must run the full suite."
             grep -E '^SKIPPED' pytest.out || true
             exit 1
           fi
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-${{ matrix.python-version }}
+          path: coverage.xml
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Nothing else proves the package still builds and installs. `[project.scripts]`
+  # and the hatchling wheel target break silently until someone tries to install it.
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      - name: Install the wheel into a clean venv and run the entrypoint
+        run: |
+          set -euo pipefail
+          uv venv /tmp/wheelcheck
+          VIRTUAL_ENV=/tmp/wheelcheck uv pip install dist/*.whl
+          # Exercises the console script, which is what `pip install cadence` gives a user.
+          /tmp/wheelcheck/bin/cadence --help > /dev/null
+          echo "wheel installs and the cadence entrypoint runs"
+
+      # Phase 6C plans CycloneDX SBOMs as a product feature. Producing our own is both a
+      # rehearsal and the artifact a downstream consumer would ask us for.
+      - name: Generate CycloneDX SBOM
+        run: |
+          set -euo pipefail
+          uv sync --extra dev --extra ci
+          uv run cyclonedx-py environment -o sbom.json
+          uv run python -c "import json; d=json.load(open('sbom.json')); print('SBOM', d['specVersion'], len(d.get('components', [])), 'components')"
+
+      - name: Upload distributions and SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dist
+          path: |
+            dist/
+            sbom.json
+          retention-days: 7
+
+  # Flags a PR that introduces a dependency carrying a known advisory, before it merges.
+  # PR-only: it diffs the manifest against the base branch.
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+
+  # The single required status check. Branch protection points at this one job, so adding
+  # or renaming a job above never means editing branch-protection settings -- a rule that
+  # silently stops being enforced is worse than no rule at all.
+  #
+  # `skipped` is acceptable: dependency-review does not run on push.
+  ci-gate:
+    if: always()
+    needs: [lint, typecheck, security, migrations, test, build, dependency-review]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Require every upstream job to have succeeded
+        run: |
+          set -euo pipefail
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "upstream results: $results"
+          for r in $results; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::a required job reported '$r'"; exit 1 ;;
+            esac
+          done
+          echo "all required jobs succeeded"
