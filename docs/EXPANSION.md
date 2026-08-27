@@ -154,6 +154,11 @@ pipeline intelligence. Deferred because it needs the sandbox and a call graph. D
 
 Knowing why these are rejected is worth more than the list.
 
+**One entry has since been split rather than reversed:** §3.3 rejected stacked-PR
+*management* and *detection* together, and only management still belongs here. Re-reading a
+rejection when its stated reasoning stops holding is the point of writing the reasoning
+down; the rest of this tier stands.
+
 ### 3.1 Workflow security scanning
 
 **Rejected: comprehensively served, by better-positioned tools.**
@@ -177,11 +182,52 @@ Graphite compete hard above it with batching, priority lanes, speculative checks
 queue freeze. Building a sixth is pure cost. *We should integrate*: a queue is a rich
 source of wait-time data for 1.4.
 
-### 3.3 Stacked PRs
+### 3.3 Stacked PRs — *management* rejected, *detection* promoted to 5B
 
-**Rejected: Graphite owns the category**, with Aviator's OSS CLI beneath it. It is a
-workflow product requiring a CLI, a desktop app, and habit change — orthogonal to
-everything we do and sharing no substrate.
+**Stack management stays rejected: Graphite owns the category**, with Aviator's OSS CLI
+beneath it. It is a workflow product requiring a CLI, a desktop app, and habit change —
+orthogonal to everything we do.
+
+**Stack detection is a different product, and it is now a Phase 5B candidate.** Revised
+2026-08-26. The original entry rejected both under one heading and said the category shares
+no substrate with us. The second half is no longer true: 5B already does no-clone PR-graph
+work — hunk-overlap conflict prediction, lockfile semantic overlap, a symmetric PR-pair
+dedupe key — and stack detection is a cheaper query than any of them.
+
+**Verified working, read-only, one paginated call to `/pulls?state=open`.** Match each open
+PR's `base.ref` against every other open PR's `head.ref`. Measured live on 2026-08-26:
+
+| Repo | Open PRs sampled | Stacks found |
+|---|---|---|
+| `vercel/next.js` | 100 | **8**, including a 3-deep chain |
+| `golang/go` · `kubernetes/kubernetes` · `pytorch/pytorch` · `pola-rs/polars` | 100 each | 0 |
+
+Stacking is team culture, not a universal — the feature is worthless on four of those five
+repos and immediately useful on the fifth. Any pitch has to account for that.
+
+**The naive implementation misfires catastrophically, which is why this is worth writing
+down.** Keying the head map on the bare ref name reports **96–99 stacks per 100 PRs**: a
+contributor opens a PR from a fork whose head branch is named `master`, and every PR
+targeting the default branch then "matches" it. Two conditions fix it — only same-repo
+branches can be a stack parent, and the default branch is never a parent. This is precisely
+the class of misfire the `preview()` returns `None` rule exists to prevent, and it fails
+loudly across an entire repo rather than quietly on one PR.
+
+**Why it is ours and not just a nicer badge.** A label duplicates what Graphite already
+gives its own users. What nobody measures is what stacks cost in CI, and both effects are
+squarely in our lane:
+
+1. **Blame misattribution.** A child branch contains its parents' commits, so a failing job
+   on the child may originate in a parent's code. Phase 3 blame candidates will point at the
+   wrong PR unless the stack is known.
+2. **Rebase churn.** When a parent merges, every descendant is retargeted and re-runs its
+   full pipeline. A 3-deep stack pays for its CI three or more times, through a mechanism
+   nobody attributes to stacking — the same shape as `pipeline_fix_churn`: real waste that
+   is invisible because no one aggregates it.
+
+Effect 2 is the finding; the badge is the delivery mechanism for it. Both need PR→branch→run
+linkage that does not exist today, which is why this waits for Phase 5 rather than being
+retrofitted into Phase 1.
 
 ### 3.4 Preview environment *provisioning*
 

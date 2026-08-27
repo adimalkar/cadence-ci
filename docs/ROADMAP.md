@@ -350,6 +350,18 @@ commercially loaded half of the same data. Phase 4's feedback-loop decomposition
       `git merge-tree` only if hunk overlap proves imprecise
 - [ ] Lockfile semantic overlap (compare package entries, not text lines)
 - [ ] Symmetric PR-pair dedupe key, or the same conflict reports twice
+- [ ] **Stacked-PR detection** — match open PRs' `base.ref` against other open PRs'
+      `head.ref`; one paginated call, **no clone**. GitHub surfaces this nowhere: the PR
+      list gives no signal and reviewers get no warning they are mid-stack. Verified
+      2026-08-26 — 8 stacks in 100 open `vercel/next.js` PRs including a 3-deep chain, 0 in
+      go/k8s/pytorch/polars, so it is team culture rather than a universal.
+      **Two guards are mandatory**: only same-repo branches can be a parent, and the
+      default branch is never a parent — without both, a fork PR whose head branch is named
+      `master` makes the detector label 96–99 of 100 PRs as stacked.
+      *The finding is not the badge* — it is blame misattribution (a child's failure can
+      originate in a parent's commits) and rebase churn (a merged parent retargets every
+      descendant, so a 3-deep stack pays for CI 3+ times). Reasoning in
+      [`EXPANSION.md`](EXPANSION.md) §3.3.
 
 **5C — weeks 35–40** (BYO-key review; un-defers the KMS vault)
 - [ ] Vault: envelope encryption, per-installation DEK under a KMS CMK, decrypt only in
@@ -474,9 +486,16 @@ orchestration (now 6B/6C).
 Still deferred, ranked in [`EXPANSION.md`](EXPANSION.md): preview-env cost attribution
 (2wk), PR wait decomposition (2wk), test-impact advice (4wk).
 
-Still explicitly rejected — see EXPANSION Tier 3 for the reasoning: merge queues, stacked
-PRs, preview-env provisioning, runner hosting, build caching, and per-person velocity
-metrics. Note that **workflow security scanning** stays rejected even though Phase 6 adds
+Still explicitly rejected — see EXPANSION Tier 3 for the reasoning: merge queues, stacked-PR
+**management**, preview-env provisioning, runner hosting, build caching, and per-person
+velocity metrics.
+
+**Narrowed 2026-08-26: stacked-PR *detection* is no longer rejected** and moved to 5B above.
+The original entry rejected management and detection under one heading, on the grounds that
+the category "shares no substrate" with us. 5B's no-clone PR-graph work makes that false —
+detection is a cheaper query than the conflict prediction already committed to, and the CI
+consequences of stacking (blame misattribution, rebase churn) are ours whether or not we
+ever draw the stack. Graphite still owns the workflow product; we are not building a CLI. Note that **workflow security scanning** stays rejected even though Phase 6 adds
 security: zizmor, poutine, and StepSecurity's Harden-Runner already own *workflow*
 hardening, and Harden-Runner has an agent inside the runner with strictly more data than
 our read-only position can reach. Phase 6 scans your **source and dependencies**, not your
