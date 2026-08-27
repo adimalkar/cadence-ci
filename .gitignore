@@ -14,3 +14,9 @@ build/
 logs/
 data/
 *.log.gz
+
+# coverage + build artifacts from local runs
+.coverage
+coverage.xml
+htmlcov/
+sbom.json
