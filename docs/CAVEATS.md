@@ -24,8 +24,9 @@ on.** An entry is cheap to write and expensive to rediscover.
 | # | Item | Severity | Status |
 |---|---|---|---|
 | 1 | Ingest has been stopped since 2026-08-24 | **Critical** | Open |
-| 2 | Rate card is stale — self-hosted charge is live | **High** | Open |
-| 3 | Two cost fallbacks disagree for the same runner | **High** | Open |
+| 2 | Rate card is stale — self-hosted charge is live | **High** | ✅ Resolved 2026-08-26 |
+| 3 | Two cost fallbacks disagree for the same runner | **High** | ✅ Resolved 2026-08-26 |
+| 24 | Self-hosted pricing is unvalidated — corpus is 100% public | Medium | Open |
 | 4 | `CIProvider` protocol missing `fetch_workflow_files` | Medium *(suspected)* | Open |
 | 5 | `Run.created_at` non-optional vs nullable payload | Medium *(suspected)* | Open |
 | 6 | Worker deployment shape undecided | **Blocker** | Awaiting decision |
@@ -65,7 +66,23 @@ detectors while ingest is stopped produces rules with no sample to fire on.
 **Closes when.** A long-lived worker runs unattended across multiple interval boundaries.
 Blocked by item 6.
 
-### 2. The rate card is stale, in the direction that understates us · High
+### 24. Self-hosted pricing is correct but unvalidated · Medium
+
+**What.** Item 2's fix is covered by 15 unit tests, but **all 55 corpus repos are public**,
+and public repos pay nothing on self-hosted runners either way. So no corpus figure changes
+and no end-to-end evidence exists that the new rate resolves correctly on real ingested
+data.
+
+**Why it matters.** The commercial case for item 2 rests on private repos on self-hosted
+runners — precisely the population the corpus does not contain. The fix is right by
+construction and by unit test, not by observation.
+
+**Closes when.** Either a private repo enters the corpus, or an `evalsweep` run is done
+against a synthetic private-repo fixture that exercises the self-hosted path end to end.
+
+---
+
+### 2. ~~The rate card is stale~~ · RESOLVED 2026-08-26 · High
 
 **What.** [`cost.py`](../src/cadence/cost.py) reasons the self-hosted per-minute charge is
 "a shelved self-hosted charge may yet return." It is not shelved — it took effect
@@ -80,11 +97,12 @@ labels — `depot-ubuntu-24.04-*`, `depot-ubuntu-22.04-*`, `ubuntu-latest-8core`
 moved to self-hosted to escape per-minute billing; they now pay again and we quote them
 **$0**.
 
-**Closes when.** Self-hosted rows added at $0.002 with `free_on_public`,
-`rate_card_version` bumped, `evalsweep` re-run. Detail in
-[`PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md) §C0.
+**Closed by** `rate_card` version **20260301** (migration `004`): hosted rows copied
+unchanged, plus a `__self_hosted__` sentinel at $0.002 with `free_on_public`. Version 2026
+is left intact, so the one existing finding stamped with it still reproduces its original
+figure. See item 24 for what this fix does *not* prove.
 
-### 3. Two cost fallbacks disagree about the same runner · High
+### 3. ~~Two cost fallbacks disagree about the same runner~~ · RESOLVED 2026-08-26 · High
 
 **What.** `usd_per_minute` returns `0.0` for an unknown label; `hypothetical_dollars_per_month`
 uses `rates.get(label, 0.006)` — the hosted-Linux rate, 3× the real $0.002 charge.
@@ -93,7 +111,9 @@ uses `rates.get(label, 0.006)` — the hosted-Linux rate, 3× the real $0.002 ch
 `0.0` is documented as a deliberate "never fabricate" rule; the `0.006` silently violates
 it.
 
-**Closes when.** Fixed together with item 2.
+**Closed by** routing `hypothetical_dollars_per_month` through `usd_per_minute` with
+`is_private=True`, deleting the hard-coded 0.006. `tests/test_cost.py` asserts the two
+paths agree for hosted, larger and self-hosted runners.
 
 ---
 
@@ -268,6 +288,7 @@ PR→run linkage that does not exist until Phase 5.
 | 2026-08-26 | zizmor reported 20 findings / 9 high against our own workflows (`unpinned-uses`, `artipacked`) | `eb6fb5a` — SHA-pinned all 11 actions, `persist-credentials: false`, caching off on the release path |
 | 2026-08-26 | CI could report green while silently skipping the 6 DB-backed test files | `eb6fb5a` — Postgres service, explicit reachability assert, and a skip guard |
 | 2026-08-26 | Nothing verified migrations applied cleanly or idempotently | `eb6fb5a` — `migrations` job: fresh apply, no-op re-apply, every file recorded, core tables present |
+| 2026-08-26 | Rate card understated self-hosted minutes; two cost paths disagreed for one runner | `b631bf6` — rate card 20260301 + reconciled fallback, 15 tests |
 | 2026-08-26 | No security policy (Scorecard `SecurityPolicyID`) | `4278066` — [`SECURITY.md`](../SECURITY.md) |
 | 2026-08-26 | Node 20 deprecation warnings on 3 actions | `eb6fb5a` — superseded by SHA pinning at current majors |
 | 2026-08-26 | Adding a CI job silently weakened branch protection | `eb6fb5a` — protection requires only `ci-gate`, which aggregates every job |

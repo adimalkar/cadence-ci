@@ -19,10 +19,12 @@ class Settings(BaseSettings):
     # webhook endpoint that accepts unsigned payloads accepts payloads from anyone.
     webhook_secret: str = ""
 
-    # Current rate card. Bumped when GitHub changes prices -- which happened on
-    # 2026-01-01 (hosted runners cut up to 39%) and may happen again, so every finding
-    # records the version that produced its dollar figure.
-    rate_card_version: int = 2026
+    # Current rate card, versioned YYYYMMDD of its effective date. Bumped when GitHub
+    # changes prices: hosted runners were cut up to 39% on 2026-01-01 (version 2026, named
+    # for the year before a mid-year change made that scheme untenable), and on 2026-03-01
+    # the $0.002/min platform charge reached self-hosted runners (version 20260301).
+    # Every finding records the version that produced its dollar figure.
+    rate_card_version: int = 20260301
 
 
 settings = Settings()

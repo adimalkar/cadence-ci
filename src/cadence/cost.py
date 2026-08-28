@@ -5,8 +5,9 @@ maintainer who knows their CI costs nothing is the fastest way to lose the pitch
 headline currency is chosen from the repo, not from what sounds impressive.
 
 Rates are versioned rows in `rate_card`, never constants: GitHub cut hosted prices up to
-39% on 2026-01-01, and a shelved self-hosted charge may yet return. Every finding records
-the `rate_card_version` that produced its figure so historical claims stay auditable.
+39% on 2026-01-01, and on 2026-03-01 extended a $0.002/min platform charge to self-hosted
+runners as well. Every finding records the `rate_card_version` that produced its figure so
+historical claims stay auditable.
 """
 
 from __future__ import annotations
@@ -23,6 +24,11 @@ class Currency(StrEnum):
     DOLLARS = "dollars"
 
 
+# Sentinel label carrying the rate for any runner the card does not name. Self-hosted and
+# third-party pools cannot be enumerated -- the label is whatever the repo chose.
+SELF_HOSTED = "__self_hosted__"
+
+
 @dataclass(slots=True)
 class RateCard:
     version: int
@@ -32,16 +38,24 @@ class RateCard:
     def usd_per_minute(self, labels: list[str], *, is_private: bool) -> float:
         """Billed rate for a job, or 0.0 when the runner is free for this repo.
 
-        Unknown labels (self-hosted, custom pools) bill at 0.0 rather than guessing --
-        a made-up rate would silently fabricate the dollar column.
+        An unknown label means a self-hosted or third-party pool. Until 2026-03-01 those
+        were genuinely free and billing them at 0.0 was correct; since then GitHub applies
+        its platform charge to them too, so they resolve to the card's SELF_HOSTED rate.
+        Cards predating that row keep the old behaviour and return 0.0, which is what makes
+        an old `rate_card_version` still reproduce the figure it originally published.
         """
         for label in labels:
             key = label.strip()
             if key in self.rates:
-                if not is_private and self.free_on_public.get(key, False):
-                    return 0.0
-                return self.rates[key]
+                return self._rate(key, is_private=is_private)
+        if SELF_HOSTED in self.rates:
+            return self._rate(SELF_HOSTED, is_private=is_private)
         return 0.0
+
+    def _rate(self, key: str, *, is_private: bool) -> float:
+        if not is_private and self.free_on_public.get(key, False):
+            return 0.0
+        return self.rates[key]
 
 
 def load_rate_card(conn: psycopg.Connection, version: int) -> RateCard:
@@ -106,8 +120,13 @@ class CostContext:
 
         The honest way to give an OSS maintainer a money figure: label it explicitly as
         hypothetical rather than presenting a bill they do not receive.
+
+        Resolved through the same path as the real bill, with is_private forced true. It
+        previously fell back to a hard-coded 0.006 -- the hosted-Linux rate -- for unknown
+        labels, while usd_per_minute returned 0.0 for the very same runner. One runner, two
+        prices, and both could appear in one report.
         """
-        rate = self.rate_card.rates.get(self.dominant_labels[0], 0.006)
+        rate = self.rate_card.usd_per_minute(self.dominant_labels, is_private=True)
         minutes = (seconds_saved_per_run / 60.0) * parallel_jobs
         return minutes * rate * self.runs_per_month
 
