@@ -29,6 +29,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 24 | Self-hosted pricing is unvalidated — corpus is 100% public | Medium | Open |
 | 25 | Worker deployment is laptop-bound and unproven over weeks | Medium | Open |
 | 26 | A space in the project path breaks systemd unit settings | Low | Documented |
+| 27 | Worker shares the user's personal token and its rate limit | **High** | Open |
 | 4 | `CIProvider` protocol missing `fetch_workflow_files` | Medium *(suspected)* | Open |
 | 5 | `Run.created_at` non-optional vs nullable payload | Medium *(suspected)* | Open |
 | 6 | Worker deployment shape undecided | **Blocker** | ✅ Resolved 2026-08-28 |
@@ -277,6 +278,33 @@ the value and rejects it as non-absolute.
 **Why it matters.** Two settings in one file with opposite quoting rules, failing in
 different ways. Any new path-valued setting added to the unit needs this checked.
 `systemd-analyze --user verify <unit>` catches it before a start attempt.
+
+### 27. The worker runs on the user's personal token, and shares its rate limit · High
+
+**What.** `deploy/install.sh` seeds `CADENCE_GITHUB_TOKEN` from `gh auth token`, so the
+ingest worker authenticates as the user. Observed 2026-08-28: the worker deep-backfilling
+51 corpus repos plus interactive `gh` use exhausted the shared **5,000 requests/hour**
+budget to zero.
+
+**Why it matters, in two separate ways.**
+
+1. **Contention.** Ingest and interactive work compete for one quota. Whichever runs first
+   starves the other, and neither is aware of the other. The worker degrades correctly --
+   it backs off and retries, and it recorded zero failures through the exhaustion -- but it
+   simply stops making progress, which is the thing item 1 exists to prevent.
+2. **Scope.** A `gh` CLI token carries `repo`, `workflow`, `gist` and `read:org`. The worker
+   needs **read access to public repositories and nothing else**. A credential sitting on
+   disk in a long-lived service should carry the least authority that does the job, and this
+   one carries enough to push to any repository the user owns.
+
+**Closes when.** The worker gets its own credential: a fine-grained PAT scoped to
+read-only Actions and metadata on the corpus repos, or -- better, and required for Phase 2
+anyway -- a GitHub App installation token, which has a separate 5,000/hour budget per
+installation and can be scoped per repository. `install.sh` should stop defaulting to
+`gh auth token`, or at minimum warn that it is doing so.
+
+**Interim mitigation.** None applied. Worth knowing that a run of heavy `gh` use will
+stall ingest until the hour rolls over.
 
 ## Environmental and tooling notes
 
