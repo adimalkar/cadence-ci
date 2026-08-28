@@ -1,0 +1,68 @@
+# Cadence ingest worker -- systemd *user* unit.
+#
+# Installed by deploy/install.sh, which substitutes @PROJECT_DIR@ and @CADENCE_BIN@ and
+# writes the credential file. Do not install this file directly; the placeholders are
+# not systemd syntax.
+#
+# Why this exists: every day without a running worker is a permanently lost day of
+# history, because GitHub retains Actions logs for 90 days. Running `cadence worker run`
+# in a terminal does not survive a logout.
+
+[Unit]
+Description=Cadence ingest worker
+Documentation=https://github.com/adimalkar/cadence-ci
+After=network-online.target
+Wants=network-online.target
+
+# A crash loop caused by a bad config should give up rather than hammer the GitHub API
+# and burn the rate limit. Five failures inside ten minutes stops the unit;
+# `systemctl --user reset-failed cadence-worker` clears it once the cause is fixed.
+StartLimitIntervalSec=600
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=@PROJECT_DIR@
+
+# Credentials live outside the repository, 0600, and are never committed.
+EnvironmentFile=%h/.config/cadence/worker.env
+
+ExecStart="@CADENCE_BIN@" worker run --concurrency 4
+
+# Transient failures are the normal case here: a dropped network, a GitHub 5xx, a
+# secondary rate limit. Restart rather than page anyone; 30s so a hard outage does not
+# spin.
+Restart=always
+RestartSec=30
+
+# SIGINT rather than the default SIGTERM. The worker runs under asyncio.run(), where
+# SIGINT surfaces as KeyboardInterrupt and unwinds through the `finally` that closes the
+# provider's HTTP client. SIGTERM would kill it mid-claim.
+KillSignal=SIGINT
+TimeoutStopSec=60
+
+# Nothing needs compiling at runtime, and a source tree should not be written to.
+Environment=PYTHONDONTWRITEBYTECODE=1
+
+# Hardening. ProtectSystem=full leaves /usr, /boot and /etc read-only; the worker still
+# needs its own project directory writable for gzipped log storage under data/.
+#
+# Quoting here is not cosmetic: this project's directory name contains a space.
+# ReadWritePaths= and ExecStart= are parsed as whitespace-separated lists and MUST be
+# quoted -- unquoted, ReadWritePaths silently kept only "/mnt/.../Cadence" and the unit
+# died at 226/NAMESPACE. WorkingDirectory= takes a single path and must NOT be quoted;
+# it treats the quotes as part of the path and rejects it as non-absolute.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelTunables=true
+RestrictSUIDSGID=true
+ReadWritePaths="@PROJECT_DIR@"
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=cadence-worker
+
+[Install]
+WantedBy=default.target

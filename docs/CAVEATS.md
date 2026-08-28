@@ -23,13 +23,15 @@ on.** An entry is cheap to write and expensive to rediscover.
 
 | # | Item | Severity | Status |
 |---|---|---|---|
-| 1 | Ingest has been stopped since 2026-08-24 | **Critical** | Open |
+| 1 | Ingest has been stopped since 2026-08-24 | **Critical** | ✅ Resolved 2026-08-28 |
 | 2 | Rate card is stale — self-hosted charge is live | **High** | ✅ Resolved 2026-08-26 |
 | 3 | Two cost fallbacks disagree for the same runner | **High** | ✅ Resolved 2026-08-26 |
 | 24 | Self-hosted pricing is unvalidated — corpus is 100% public | Medium | Open |
+| 25 | Worker deployment is laptop-bound and unproven over weeks | Medium | Open |
+| 26 | A space in the project path breaks systemd unit settings | Low | Documented |
 | 4 | `CIProvider` protocol missing `fetch_workflow_files` | Medium *(suspected)* | Open |
 | 5 | `Run.created_at` non-optional vs nullable payload | Medium *(suspected)* | Open |
-| 6 | Worker deployment shape undecided | **Blocker** | Awaiting decision |
+| 6 | Worker deployment shape undecided | **Blocker** | ✅ Resolved 2026-08-28 |
 | 7 | PyPI Trusted Publishing not configured | Medium | Awaiting action |
 | 8 | mypy baseline exempts 8 modules | Medium | Accepted, burn down |
 | 9 | `ruff format` not adopted | Low | Deliberate |
@@ -52,7 +54,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 
 ## Wrong right now
 
-### 1. Ingest has been stopped since 2026-08-24 · Critical
+### 1. ~~Ingest has been stopped since 2026-08-24~~ · RESOLVED 2026-08-28 · Critical
 
 **What.** No worker process, no systemd unit, no container. Last `run.ingested_at` is
 2026-08-24 02:00. 214 jobs are queued: 132 `poll_repo` overdue 3 days, 57 `webhook_event`
@@ -63,8 +65,15 @@ days, so this is permanently lost history, not deferred work. It also blocks the
 fix for item 18 — Phase 1's failing criterion is an ingest-depth problem, so building more
 detectors while ingest is stopped produces rules with no sample to fire on.
 
-**Closes when.** A long-lived worker runs unattended across multiple interval boundaries.
-Blocked by item 6.
+**Closed by** a systemd *user* unit (`deploy/`), installed and running. Ingest resumed
+immediately: staleness went from 2d 23h to 14 seconds, ~1,000 runs ingested in the first
+five minutes, `fetch_log` and `webhook_event` queues fully drained, `poll_repo` draining,
+**zero failures**. `loginctl enable-linger` makes it survive logout and start at boot.
+
+**Correction to the original measurement above:** the "214 queued, some overdue 11 days"
+figure counted `done` rows as well as `pending` — `ingest_job` retains completed jobs. The
+genuine pending backlog was smaller. The staleness figure was accurate; the queue figure
+was not. See item 25 for what this still does not prove.
 
 ### 24. Self-hosted pricing is correct but unvalidated · Medium
 
@@ -138,11 +147,13 @@ Phase 0 audit found four of.
 
 ## Blocked on a decision or an external step
 
-### 6. Worker deployment shape undecided · Blocker
+### 6. ~~Worker deployment shape undecided~~ · RESOLVED 2026-08-28 · Blocker
 
-systemd user unit (simplest here, survives logout with `loginctl enable-linger`) versus
-Dockerfile + compose (portable to a VPS later). Recommendation was systemd now, container
-when it leaves this machine. **Item 1 cannot close until this is answered.**
+Decided: **systemd user unit**, on the reasoning that it runs today and a container is a
+clean follow-up when this leaves the laptop. `deploy/cadence-worker.service` is a template
+with placeholders; `deploy/install.sh` substitutes paths, writes a 0600 credential file
+outside the repo, enables linger, and starts the unit. Re-runnable after a code change or
+token rotation.
 
 ### 7. PyPI Trusted Publishing not configured · Medium
 
@@ -242,6 +253,31 @@ rest of this project avoids.
 
 ---
 
+### 25. The worker is laptop-bound and unproven over weeks · Medium
+
+**What.** The unit runs on this machine only. Linger survives logout and reboot, but not a
+powered-off laptop, and the Postgres it writes to is local.
+
+**Why it matters.** ROADMAP's Phase 0 note is explicit that "the mechanism firing correctly
+across one interval boundary is not the same as a deployment running for weeks unattended."
+That is still true — this closes the *stopped* problem, not the *durable* one. History
+accrues only while the machine is on.
+
+**Closes when.** The worker runs somewhere always-on. The container option from item 6 is
+the intended path, and `deploy/` is deliberately structured so that is additive.
+
+### 26. A space in the project path breaks systemd unit settings · Low
+
+**What.** The directory is `Cadence System`. systemd parses `ReadWritePaths=` and
+`ExecStart=` as whitespace-separated lists, so unquoted they kept only
+`/mnt/.../Cadence` and the unit died at `226/NAMESPACE`. `WorkingDirectory=` is the
+opposite — a single path that must **not** be quoted, since it treats the quotes as part of
+the value and rejects it as non-absolute.
+
+**Why it matters.** Two settings in one file with opposite quoting rules, failing in
+different ways. Any new path-valued setting added to the unit needs this checked.
+`systemd-analyze --user verify <unit>` catches it before a start attempt.
+
 ## Environmental and tooling notes
 
 ### 20. Reddit is unreachable directly · Info
@@ -290,5 +326,6 @@ PR→run linkage that does not exist until Phase 5.
 | 2026-08-26 | Nothing verified migrations applied cleanly or idempotently | `eb6fb5a` — `migrations` job: fresh apply, no-op re-apply, every file recorded, core tables present |
 | 2026-08-26 | Rate card understated self-hosted minutes; two cost paths disagreed for one runner | `b631bf6` — rate card 20260301 + reconciled fallback, 15 tests |
 | 2026-08-26 | No security policy (Scorecard `SecurityPolicyID`) | `4278066` — [`SECURITY.md`](../SECURITY.md) |
+| 2026-08-28 | Ingest stopped for ~4 days; no durable worker existed | `1066d66` — systemd user unit + install script; staleness 2d23h → 14s, zero failures |
 | 2026-08-26 | Node 20 deprecation warnings on 3 actions | `eb6fb5a` — superseded by SHA pinning at current majors |
 | 2026-08-26 | Adding a CI job silently weakened branch protection | `eb6fb5a` — protection requires only `ci-gate`, which aggregates every job |
