@@ -68,6 +68,13 @@ ENVEOF
 
   if [[ -n "$token" ]]; then
     say "wrote $ENV_FILE with the gh CLI's token (0600)"
+    say ""
+    say "NOTE: that is your personal gh token, which is a convenience, not the right"
+    say "      credential. It shares one 5,000 req/hour budget with your interactive gh"
+    say "      use -- heavy CLI work will stall ingest -- and it carries repo/workflow/"
+    say "      gist/read:org scope when the worker needs only public read access."
+    say "      Replace it with a fine-grained read-only PAT, or a GitHub App installation"
+    say "      token which gets its own hourly budget. See CAVEATS.md item 27."
   else
     say "wrote $ENV_FILE, but CADENCE_GITHUB_TOKEN is EMPTY -- fill it in before starting"
   fi
