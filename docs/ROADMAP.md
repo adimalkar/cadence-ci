@@ -6,6 +6,10 @@ the checklist. 24 weeks, ~15 hrs/week. Tick items as they land.
 **Slip rule:** any phase over 150% of budget gets cut to its deterministic core. Do not
 extend.
 
+**Open caveats, bugs and gaps live in [`CAVEATS.md`](CAVEATS.md)** — appended to at the end
+of every implementation session, so findings that fall out of building one thing are not
+lost while building the next. Three items there are wrong in production today.
+
 **Field research, 2026-08-26** — [`PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md)
 carries the evidence behind the items added below: 1,546 HN comments, the r/devops
 frustration thread (96 comments), primary GitHub pricing and deprecation sources, and scans
