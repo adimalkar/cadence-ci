@@ -30,6 +30,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 25 | Worker deployment is laptop-bound and unproven over weeks | Medium | Open |
 | 26 | A space in the project path breaks systemd unit settings | Low | Documented |
 | 27 | Worker shares the user's personal token and its rate limit | **High** | Open |
+| 28 | Config snapshots are captured only by `cadence audit`, never by ingest | Medium | Open |
 | 4 | `CIProvider` protocol missing `fetch_workflow_files` | Medium *(suspected)* | Open |
 | 5 | `Run.created_at` non-optional vs nullable payload | Medium *(suspected)* | Open |
 | 6 | Worker deployment shape undecided | **Blocker** | ✅ Resolved 2026-08-28 |
@@ -42,7 +43,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 13 | Shuffled test order can surface latent bugs sporadically | Low | Deliberate |
 | 14 | Service container images not digest-pinned | Low | Open |
 | 15 | No fuzzing of untrusted-input parsers | Medium | Open |
-| 16 | Workflow config is never persisted | **High** | Open |
+| 16 | Workflow config is never persisted | **High** | ✅ Resolved 2026-08-29 |
 | 17 | Reusable-workflow mapping 18–100% | **High** | Open *(pre-existing)* |
 | 18 | Phase 1 ship criterion 2 fails | **High** | Open *(pre-existing)* |
 | 19 | Report never checked with a screen reader | Medium | Open *(pre-existing)* |
@@ -226,13 +227,19 @@ The workflow YAML parser and the log normalizer both consume input controlled by
 can open a PR against an ingested repo. They are the obvious first fuzz targets. Also
 listed as a known gap in [`SECURITY.md`](../SECURITY.md).
 
-### 16. Workflow config is never persisted · High
+### 16. ~~Workflow config is never persisted~~ · RESOLVED 2026-08-29 · High
 
 [`cli.py:381`](../src/cadence/cli.py#L381) fetches workflow files live at audit time; there
 is no config table. Consequences: no config history, so "the workflow changed here and
 waste started" is unanswerable; **Phase 2's round-trip ship criterion is not reproducible
 as written**, because re-fetching from HEAD lets the corpus shift under the test; and Phase
-3 blame loses a strong feature. Cheapest before Phase 2 starts.
+3 blame loses a strong feature. **Closed by** migration `005` and `src/cadence/configstore.py` (#3). Content-addressed
+like `log_chunk`; an edit inserts a new `workflow_snapshot` row rather than mutating, so a
+path's history is its rows ordered by `first_seen`. Deliberately **not** keyed by commit
+sha — anchoring to a commit needs either an extra request per capture to resolve HEAD or a
+change to which ref the audit reads, and with it the analysis results. Verified end to end
+against `astral-sh/ruff`: 20 files, 174 kB, through the production path. See item 28 for
+what it still does not do.
 
 ### 17. Reusable workflows map at 18–100% · High · *pre-existing*
 
@@ -306,6 +313,27 @@ installation and can be scoped per repository. `install.sh` should stop defaulti
 **Interim mitigation.** None applied. Worth knowing that a run of heavy `gh` use will
 stall ingest until the hour rolls over.
 
+### 28. Config snapshots are captured only by `cadence audit` · Medium
+
+**What.** `store_snapshot` is wired into the audit path, where the workflow files are
+already in memory and cost nothing extra. The ingest worker does **not** capture config, so
+a repo that is polled continuously but never audited accrues no config history at all.
+
+**Why it matters.** The three things item 16 set out to enable only partly arrived.
+Reproducible re-analysis works, because an audited repo has its bytes stored. But "the
+workflow changed here and waste started" needs a *time series*, and the corpus is polled
+every 30 minutes while being audited approximately never — so for most repos there will be
+exactly one snapshot, and `history()` will return one row forever.
+
+**Why it was built this way.** Capturing during ingest means one extra API request per repo
+per poll, against the rate limit item 27 documents as already exhausted. That trade is
+worth making deliberately rather than by default.
+
+**Closes when.** Either the worker captures config on a cadence of its own (daily rather
+than per-poll would be enough to build history cheaply), or ingest gains a conditional
+request — the contents API supports ETags, so an unchanged directory costs a 304 rather
+than a full read.
+
 ## Environmental and tooling notes
 
 ### 20. Reddit is unreachable directly · Info
@@ -354,6 +382,9 @@ PR→run linkage that does not exist until Phase 5.
 | 2026-08-26 | Nothing verified migrations applied cleanly or idempotently | `eb6fb5a` — `migrations` job: fresh apply, no-op re-apply, every file recorded, core tables present |
 | 2026-08-26 | Rate card understated self-hosted minutes; two cost paths disagreed for one runner | `b631bf6` — rate card 20260301 + reconciled fallback, 15 tests |
 | 2026-08-26 | No security policy (Scorecard `SecurityPolicyID`) | `4278066` — [`SECURITY.md`](../SECURITY.md) |
+| 2026-08-29 | Workflow config was fetched live and discarded, so no history existed and Phase 2's round-trip criterion was not reproducible | `94ede04` — migration 005 + `configstore.py`, content-addressed, verified end to end |
+| 2026-08-29 | `history()`/`load_latest()` ordered on `now()`, which is *transaction* time in Postgres — rows written by one call share a timestamp and ordered non-deterministically | `94ede04` — all three queries tie-break on `id` |
+| 2026-08-29 | `store_snapshot` read `row[0]` while `db.connect()` supplies dict rows, raising `KeyError: 0` on the production path while unit tests passed | `94ede04` — test fixture now mirrors `db.connect()`'s row factory; the divergence was why the bug was reachable |
 | 2026-08-28 | Ingest stopped for ~4 days; no durable worker existed | `1066d66` — systemd user unit + install script; staleness 2d23h → 14s, zero failures |
 | 2026-08-26 | Node 20 deprecation warnings on 3 actions | `eb6fb5a` — superseded by SHA pinning at current majors |
 | 2026-08-26 | Adding a CI job silently weakened branch protection | `eb6fb5a` — protection requires only `ci-gate`, which aggregates every job |
