@@ -14,6 +14,7 @@ from cadence.audit import (
     summarize_pipeline,
 )
 from cadence.config import settings
+from cadence.configstore import store_snapshot
 from cadence.corpus import CORPUS
 from cadence.cost import render_saving
 from cadence.db import apply_migrations, connect
@@ -390,6 +391,17 @@ def audit(
             raise typer.Exit(1)
 
         with connect() as conn:
+            # Persist the exact YAML this audit is about to analyse. Free -- these bytes
+            # are already in memory -- and it is what makes the analysis reproducible
+            # later, and what turns repeated audits into a config history.
+            new_blobs, changed = store_snapshot(conn, gh_repo.id, workflow_files)
+            conn.commit()
+            if changed:
+                console.print(
+                    f"[dim]config changed since last audit: {changed} "
+                    f"workflow file{'s' if changed != 1 else ''}[/dim]"
+                )
+
             ctx = build_context(
                 conn, gh_repo.id, workflow_files, window_days=window, limit_runs=limit
             )
