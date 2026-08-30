@@ -31,7 +31,8 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 26 | A space in the project path breaks systemd unit settings | Low | Documented |
 | 27 | Worker shares the user's personal token and its rate limit | **High** | Open |
 | 28 | Config snapshots are captured only by `cadence audit`, never by ingest | Medium | Open |
-| 29 | `job_billing_rounding` and `matrix_legs_never_independent` are measured but unbuilt | Medium | Open |
+| 29 | `matrix_legs_never_independent` measured but unbuilt (`job_billing_rounding` shipped) | Medium | Partly resolved |
+| 30 | Dollars-only findings cannot be ranked — `Savings` implies wall-clock | Medium | Open |
 | 4 | `CIProvider` protocol missing `fetch_workflow_files` | Medium *(suspected)* | Open |
 | 5 | `Run.created_at` non-optional vs nullable payload | Medium *(suspected)* | Open |
 | 6 | Worker deployment shape undecided | **Blocker** | ✅ Resolved 2026-08-28 |
@@ -355,7 +356,31 @@ parallelism, so wall-clock feedback can worsen. It is the first rule where hours
 genuinely conflict; the finding must show both and must not fire where merging would extend
 the critical path.
 
-**Closes when.** Both are implemented with tests, or explicitly dropped with a reason.
+**`job_billing_rounding` shipped 2026-08-30** (`detectors/billing.py`, 24 tests). Building
+it produced a correction worth keeping: **the rule is silent on the entire corpus**, because
+standard runners are free on public repos and all 55 corpus repos are public. It fires on
+private repos and larger runners. The earlier claim that it would move Phase 1's criterion
+was wrong — that criterion is measured on public repos, so only wall-clock findings can move
+it, and this one finds dollars.
+
+**Closes when.** `matrix_legs_never_independent` is implemented with tests, or explicitly
+dropped with a reason.
+
+### 30. Dollars-only findings cannot be ranked · Medium
+
+**What.** `job_billing_rounding` emits `savings=None` deliberately.
+`Savings.seconds_per_run` feeds the replay total, which the report renders as **wall-clock
+hours recovered**. Billed seconds are not wall-clock seconds: merging short jobs recovers
+money, recovers no elapsed time, and may cost some.
+
+**Why it matters.** A finding worth $300/month on a private repo shows `—` in the saving
+column and cannot rank against findings that save time, because the report orders by time
+recovered.
+
+**Closes when.** The model gains a way to express a billed-only saving — a second sort key,
+or a flag on `FindingDraft` letting the report render dollars while suppressing a wall-clock
+claim. Deliberately not done while shipping the detector: it touches the credibility model
+in `PRODUCT.md` §6 and deserves its own decision.
 
 ## Environmental and tooling notes
 
