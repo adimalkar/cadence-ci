@@ -354,9 +354,18 @@ minute. Measured across 114,778 corpus jobs: **1,002 hours lost to rounding, 7.0
 everything billed.** Concentrated brutally — `pallets/flask` loses **67.3%** (20s average
 job), `react/react` 30.2% across 17,881 jobs.
 
-Why it is the right next rule: it fires on nearly every repo, which is exactly what
-criterion 2 needs; the evidence is **replay-grade arithmetic** with no projection; and no
-linter can find it because nothing in the YAML is wrong.
+**Built 2026-08-30** — `detectors/billing.py`, 24 tests. Its own profiler reproduces the
+SQL measurement exactly on flask: 1,142 jobs, 67.3% wasted, top offender a `lock` job
+running 89× at 5 seconds.
+
+**Correction to this section's original claim.** It said this rule would move criterion 2.
+It will not. Standard runners are free on public repos, the corpus is entirely public, and
+the detector correctly stays silent where nothing is billed — `cadence audit pallets/flask`
+reports "No recoverable waste found" despite that 67.3%. It fires on **private repos and
+larger runners**: the paying audience, but not this corpus.
+
+Criterion 2 is measured on public repos, so only rules finding **wall-clock** waste can
+move it. This one finds dollars. The catalog still needs classes C–E for the criterion.
 
 - Basis: replay (solid). The minutes were billed.
 - **Required guard:** merging short jobs reduces parallelism, so wall-clock can worsen while

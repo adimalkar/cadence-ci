@@ -13,6 +13,7 @@ import structlog
 from cadence.config import settings
 from cadence.cost import CostContext, load_rate_card
 from cadence.dag import aggregate_spans, critical_path, theoretical_floor
+from cadence.detectors.billing import JobBillingRoundingDetector
 from cadence.detectors.cache import DependencyCacheDetector
 from cadence.detectors.cancellation import NoRunCancellationDetector
 from cadence.detectors.context import AuditContext, RunObservation, StepSeries
@@ -32,6 +33,7 @@ DETECTORS = [
     NonDiscriminatingMatrixLegDetector(),
     IrrelevantPathTriggerDetector(),
     LongTailStepDetector(),
+    JobBillingRoundingDetector(),
 ]
 
 

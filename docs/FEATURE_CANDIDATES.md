@@ -24,7 +24,7 @@ runs, 55 repos.
 
 | # | Candidate | Evidence | Fires on | Effort |
 |---|---|---|---|---|
-| **F1** | Per-job billing rounding waste | **Measured — 7% of all billed minutes** | Nearly every repo | Small |
+| **F1** | Per-job billing rounding waste | **Measured — 7% of billed minutes, but $0 on a public corpus** | Private repos + larger runners | ✅ **Built** |
 | **F2** | Matrix legs that never disagree | **Measured — 0 disagreements in 96 runs** on 2 of 8 sampled | Matrix users | Medium |
 | **F3** | PR CI impact (`analyze-pr`) | Unmeasured — needs PR→run linkage | Every PR | Large |
 | **F4** | CI regression detection + blame | Unmeasured — data exists | Repos with drift | Medium |
@@ -71,6 +71,25 @@ distributed across thousands of tiny jobs.
 
 Flask pays for three times the compute it uses. That is not a rounding error in the
 figurative sense — it is literally the rounding.
+
+### Correction: it is free on a public repo, and the corpus is entirely public
+
+**Measured 2026-08-30, after the table above was written.** Standard GitHub-hosted runners
+cost nothing on a public repository, and all 55 corpus repos are public. So the 1,002 hours
+above were **rounded but never billed** — real arithmetic about minutes nobody paid for.
+
+That kills a claim made elsewhere in this document: this rule does **not** move Phase 1's
+failing ship criterion, because the criterion is measured on a public corpus where the rule
+correctly stays silent. Verified live — `cadence audit pallets/flask` reports *"No
+recoverable waste found"* even though flask's rounding fraction is 67.3%.
+
+Where the money is real:
+
+- **private repositories** — the paying audience, and the reason to build it
+- **larger runners on public repos** — `free_on_public = false`, so billed regardless
+
+The corpus validates the *arithmetic* but cannot demonstrate the *value*. Same shape as
+CAVEATS 24, and for the same reason.
 
 ### Why this is ours
 
@@ -290,13 +309,15 @@ see — so this must be phrased as *"no workflow downloads this"*, never *"nobod
 
 ## What I would build first, and why
 
-**F1 and F8, in that order.** Both are small, both are deterministic, both fire on almost
-every repo, and neither needs a prerequisite that does not exist.
+**F8, then F6.** F1 is built — and building it corrected this section. F1 does **not** move
+the criterion, because the corpus is public and the rule correctly stays silent where
+nothing is billed.
 
-That last point is the one that decides it. Phase 1's ship criterion fails at **median 1
-finding**, and the diagnosis in `ROADMAP.md` is that the rules which find *large* time are
-still unbuilt. F1 alone would fire on nearly every repo in the corpus, with replay-grade
-evidence and no projection. It moves the number that is currently blocking the phase.
+That correction reframes what "moves criterion 2" means. The criterion is measured on a
+public corpus, so a rule only moves it by finding **wall-clock** waste, not dollars. F1
+finds dollars. F8 (first-failing-step) and F6 (scheduled-workflow waste) are true regardless
+of who pays, which makes them the better candidates for the number actually blocking the
+phase.
 
 F3 is the best *product* idea in either document, and it should be built — after PR→run
 linkage exists, which is a separate and unglamorous piece of work that also unblocks
