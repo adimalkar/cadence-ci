@@ -162,3 +162,63 @@ this now, before there is a bad number to be tempted by.
 The response is that we are not an analytics platform — we are a tool that finds specific
 defects and fixes them, and the dashboards exist to make those findings legible over time.
 Do not get drawn into feature-matching.
+
+---
+
+# Execution checklist
+
+Moved from `ROADMAP.md` 2026-08-30.
+
+- [ ] Flaky-cost report — including infra flake (21)
+- [ ] Feedback-loop decomposition: push → queue → execution → post (21–22)
+- [ ] Changepoint regression detection, not fixed thresholds (22)
+- [ ] ~~DORA — one page, four queries (23)~~ — **see the cut below**
+
+**F3 — trends (21–22)** · **F4 — public calibration (24)**
+
+- [ ] F3: flaky cost over time, feedback decomposition, regressions with introducing commit
+      linked. One screen, not a dashboard suite.
+- [ ] F4: **public calibration dashboard** — predicted vs realized per rule, replay and
+      projection reported separately, published whether or not it flatters us
+
+## Ship criteria
+
+- [ ] A maintainer says a number surprised them
+- [ ] Calibration dashboard live, updating weekly, unattended
+- [ ] Changepoint finds the introducing commit for ≥5 known regressions
+- [ ] Feedback decomposition sums to wall-clock within 5%
+
+## Two changes to this phase
+
+### Cut DORA
+
+Agreed with the strategy review, for a reason it does not state: DORA metrics make Cadence
+legible as *"another engineering analytics platform"*, which is the category we would lose
+in. Every hour spent on four commodity queries is an hour not spent on the thing nobody
+else can do — evidence from the customer's own execution history.
+
+Cut unless a paying customer asks by name.
+
+### Reframe feedback decomposition as a finding, not a dashboard
+
+The decomposition is genuinely useful, but as a **ranked finding** rather than a chart:
+
+> *"62% of your CI minutes happen before your tests start."*
+
+That ranks against other findings and points at a remedy — cache, prebuilt image, smaller
+base container. A stacked bar chart does neither. Detail in
+[`../FEATURE_CANDIDATES.md`](../FEATURE_CANDIDATES.md) F7, including the honest constraint:
+it needs a step-name classifier, which must refuse to classify what it does not recognise
+and report its own coverage, exactly as the critical path withholds below 80% mapping.
+
+**Regression detection and blame moved to Phase 3**, where the attribution machinery
+already lives. What stays here is the *trend surface* over it.
+
+## One candidate this phase should absorb
+
+**Required-check long pole** ([`../FEATURE_CANDIDATES.md`](../FEATURE_CANDIDATES.md) F5).
+Branch protection decides what blocks a merge; if six required checks finish in four minutes
+and the seventh takes fourteen, the seventh **is** the merge wait. One API call plus run
+durations already held. It answers the strategy review's *"why is this PR still waiting?"*
+for the CI portion without needing review-latency data — which is the half we can measure
+honestly.

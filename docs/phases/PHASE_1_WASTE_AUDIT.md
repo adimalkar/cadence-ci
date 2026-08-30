@@ -259,3 +259,130 @@ the rule list. Do not over-invest in catalog breadth at the expense of the simul
 **False positives on `needs:` edges.** Recommending removal of a real dependency breaks
 someone's build. Require positive evidence of independence, not merely absence of evidence
 of dependence, and hold this rule to a higher confidence bar than the rest.
+
+---
+
+# Execution checklist
+
+Moved here from `ROADMAP.md` on 2026-08-30, so the whole phase reads in one place. The
+roadmap now carries only the dashboard row and the kill criterion.
+
+## Weeks 4–5 — prove the path on three rules before widening
+
+- [x] `no_dependency_cache` · `no_run_cancellation` · `false_needs_edge`
+      (+ `cache_key_never_hits`, which fell out of the cache rule for free)
+- [x] finding → evidence → savings, end to end, persisted and idempotent
+- [ ] …→ **check run** — needs App write scope; CLI + report is the current surface
+- [x] Versioned rate-card table (`rate_card_version` stamped on every finding)
+
+## Week 6 — the simulator
+
+- [x] Job DAG build + levelling from `needs:` (`dag.py`, cycle-safe)
+- [x] Critical path vs wall-clock vs theoretical floor
+- [x] Queue time computed separately (queue-bound repos get the opposite advice)
+- [x] Replay engine over stored step timings (`simulate.py`)
+- [x] Replay/projection kept structurally apart — no code path sums them
+
+## Weeks 7–10
+
+| Week | Work | State |
+|---|---|---|
+| 7 | Catalog classes A–C complete | 4 of ~14 rules done |
+| 8 | Cost model, two-currency reporting · start cold pitches | model ✅ · pitches ❌ |
+| 9 | Classes D–E · projection engine · corpus priors | projection ✅ · rest ❌ |
+| 10 | Eval harness, calibration measurement | ❌ |
+
+## F0 + F1 — the audit report
+
+Design in [`../FRONTEND.md`](../FRONTEND.md). The report is not a nice-to-have at the end
+of the phase — it **is** the cold-pitch artifact from §10, so it has to exist the week
+pitching starts.
+
+- [x] F0: design tokens, both themes, in `report.py` (self-contained — no CDN, no JS)
+- [x] F1: audit report — `cadence audit <repo> --html out.html`, single shareable file
+- [x] Hero waterfall: actual vs floor, recoverable region hatched
+- [x] **Replay renders solid + point value; projection renders hatched + range** —
+      test-enforced in `test_report.py`, including that both can appear on one page and
+      stay distinct
+- [x] Every finding row: claim · evidence chips · saving · basis · confidence
+- [ ] Hover a job bar → queue time splits out as a leading segment *(needs the per-job
+      waterfall; current hero is the run-level actual-vs-floor bar)*
+- [x] Empty state as a real outcome: "No recoverable waste found… This pipeline is tight."
+- [x] Mobile — single-column below 640px; report is 10KB with no external requests
+- [x] Withholds the waterfall below 80% mapping coverage
+- [x] `--json` twin for the read API and eval harness
+
+## Ship criteria — measured 2026-08-24 via `evalsweep.py`
+
+- [x] **Audit runs across all 50 corpus repos unattended.** 50/51 analysed; the one skip is
+      a repo with no workflow files, which is a correct outcome rather than a failure.
+- [ ] **Median repo: ≥3 findings, ≥10% recoverable — FAILS.** Median 1 finding (mean 1.18,
+      max 6, 22/50 repos find nothing); median 0.0% recoverable, mean 8.4%, 9/50 at ≥10%.
+- [x] **Replay reconstructs historical durations within 2%.** n=171 fully-mapped runs: mean
+      error 0.48%, median 0.00%. All 25 runs over 2% are **1 second absolute** on ~44s runs
+      — timestamp granularity, not model error. For runs ≥120s: 75/75 within 2%, mean 0.10%.
+- [x] Zero findings without evidence — DB trigger verified through the real write path.
+- [x] Report renders at 375px; every number is real text. *Not yet checked with a screen
+      reader* — see CAVEATS 19.
+- [ ] **3 maintainers of repos we don't own confirm a finding surprised them** — blocked on
+      contacting humans; needs the cold-pitch outreach from §10.
+
+### Why criterion 2 fails, and what actually fixes it
+
+Not the detectors, and not the premise. Two measured causes:
+
+1. **Ingest depth is too shallow for the replay rules.** ~78 runs per repo fanning out
+   across ~11 workflow streams — **median 4 runs per workflow**, and only 39 of 544 streams
+   reach `false_needs_edge`'s `MIN_RUNS = 20`. Config analysis judges **518 of 1,502
+   `needs:` edges (34.5%) independent**, so candidates are plentiful; they lack the sample
+   to replay. Fix: raise ingest depth, which is a scheduling task rather than a code change
+   — and the worker deployed 2026-08-28 is now accruing it.
+2. **Only 4 of ~14 catalog rules exist.** The rules that find *large* time — matrix-leg
+   pruning, long-tail tests, runner fit, path-trigger waste — are classes C–E, still
+   unbuilt. Current findings are 24 × `no_run_cancellation`, 4 × `cache_key_never_hits`,
+   4 × `no_dependency_cache`, 1 × `false_needs_edge`.
+
+## Two rules that would move criterion 2 fastest
+
+Both measured against the live corpus 2026-08-30; full workings in
+[`../FEATURE_CANDIDATES.md`](../FEATURE_CANDIDATES.md).
+
+### `job_billing_rounding` — **build this first**
+
+GitHub bills each job **rounded up to the whole minute**, so a 20-second job costs a
+minute. Measured across 114,778 corpus jobs: **1,002 hours lost to rounding, 7.0% of
+everything billed.** Concentrated brutally — `pallets/flask` loses **67.3%** (20s average
+job), `react/react` 30.2% across 17,881 jobs.
+
+Why it is the right next rule: it fires on nearly every repo, which is exactly what
+criterion 2 needs; the evidence is **replay-grade arithmetic** with no projection; and no
+linter can find it because nothing in the YAML is wrong.
+
+- Basis: replay (solid). The minutes were billed.
+- **Required guard:** merging short jobs reduces parallelism, so wall-clock can worsen while
+  the bill improves. This is the first rule where the two currencies conflict — the finding
+  must show both, and must not fire where merging would extend the critical path. The DAG
+  already knows.
+
+### `matrix_legs_never_independent`
+
+A leg earns its minutes by failing when its siblings pass. Measured: `Ubuntu` (3.1 legs,
+96 runs) and `Analyze` (5.1 legs, 96 runs) recorded **zero** divergent outcomes, while
+`build` (26.1 legs) disagreed in 31 of 298 runs — so the rule discriminates rather than
+firing on every matrix.
+
+**Never auto-fix this one.** "Never disagreed" is not "useless": perfectly correlated legs
+may still catch a future regression. Render it as a question — *"these 5 legs have never
+independently caught a failure in 96 runs; are they earning their 4m12s per run?"* — and
+give it no fixer.
+
+## Also landed in this phase, out of band
+
+- **Rate card 20260301** — GitHub's $0.002/min platform charge reached self-hosted runners
+  on 2026-03-01. Unknown labels now resolve to a `__self_hosted__` sentinel instead of
+  billing at zero, and `hypothetical_dollars_per_month` no longer disagrees with
+  `usd_per_minute` about the same runner. CAVEATS 2 and 3.
+- **Workflow config is persisted** (migration `005`, `configstore.py`). Analysis is now
+  reproducible without re-fetching a moving HEAD, and "the workflow changed in this window"
+  becomes an available feature for regression blame. CAVEATS 16 — and CAVEATS 28 for what
+  it still does not capture.

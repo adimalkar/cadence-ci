@@ -229,3 +229,89 @@ hunk is thin (a young repo, a healthy pipeline), the review degrades toward gene
 commentary — which is exactly what we said we would not ship. Measure the share of comments
 carrying real evidence; if it falls below ~70%, the honest move is to narrow the module to
 repos with enough history rather than relax the silence rule.
+
+---
+
+# Execution checklist
+
+Moved from `ROADMAP.md` 2026-08-30.
+
+## 5A + 5B — weeks 14–16 (cheap, deterministic, no new infrastructure)
+
+- [ ] Unresolved review threads via GraphQL; **live vs `isOutdated` bucketed separately**
+- [ ] Check run `cadence/merge-readiness`, always `neutral` — never a gate
+- [ ] Predicted merge conflicts from `/pulls/{n}/files` hunks — **no clone**; escalate to
+      `git merge-tree` only if hunk overlap proves imprecise
+- [ ] Lockfile semantic overlap (compare package entries, not text lines)
+- [ ] Symmetric PR-pair dedupe key, or the same conflict reports twice
+- [ ] **Stacked-PR detection**, in two units — see below
+
+## 5C — weeks 35–40 (BYO-key review; un-defers the KMS vault)
+
+- [ ] Vault: envelope encryption, per-installation DEK under a KMS CMK, decrypt only in the
+      worker, never returned over the API, logger redaction on the plaintext
+- [ ] Rotation + revocation from day one
+- [ ] **Silence rule enforced mechanically**: hunks with no Cadence evidence are omitted
+      from the prompt entirely
+- [ ] Prompt-injection defences: diff as delimited data, model output can trigger **no**
+      action, structural validation before posting
+- [ ] Hard cap 3 inline comments/PR; module defaults **off** when another review bot is
+      detected; drop comments within ±5 lines of an existing bot comment
+- [ ] Degrade to silence on provider failure — 5A/5B still ship
+
+## Stacked-PR detection — two units, ship the first without the second
+
+Match open PRs' `base.ref` against other open PRs' `head.ref`; one paginated call, **no
+clone**. GitHub surfaces this nowhere: the PR list gives no signal and reviewers get no
+warning they are mid-stack. Verified 2026-08-26 — 8 stacks in 100 open `vercel/next.js`
+PRs including a 3-deep chain, 0 in go/k8s/pytorch/polars, so it is team culture rather than
+a universal.
+
+- [ ] **(a) The badge and chain view.** Needs only `/pulls?state=open`. Tool-agnostic, so
+      unlike Graphite's it also covers hand-rolled stacks — and it serves the **reviewer**,
+      who never chose the author's tooling.
+- [ ] **(b) The CI findings**, once PR→run linkage exists: blame misattribution (a child's
+      failure can originate in a parent's commits) and rebase churn (a merged parent
+      retargets every descendant, so a 3-deep stack pays for CI 3+ times).
+
+**(b) is the priced finding; do not hold (a) for it.**
+
+**Two guards are mandatory.** Only same-repo branches can be a stack parent, and the default
+branch is never a parent. Without both, a fork PR whose head branch is named `master`
+makes the detector label **96–99 of 100 PRs** as stacked. Reasoning in
+[`../EXPANSION.md`](../EXPANSION.md) §3.3.
+
+## Reposition 5C: CI-aware review, not general AI review
+
+The strategy review's sharpest point about this phase. Cadence should not compete with
+generic AI code review on "is this code correct?" — it should ask **"what will this change
+do to CI?"**:
+
+> *"This dependency change invalidates a cache that hit on 83% of historical builds."*
+>
+> *"This workflow change adds 12 matrix legs."*
+>
+> *"This PR moves integration tests from path-scoped to every push."*
+
+That is a review surface nobody else can build, because it needs the diff **and** the
+execution history. It also makes the silence rule natural rather than restrictive: we
+review what we have evidence about, and stay quiet elsewhere.
+
+**The moat is not the LLM.** It is the historical dataset, the execution graph, the
+workflow semantics, the simulator, and verified outcomes. The model should be replaceable
+without the product changing.
+
+## Ship criteria
+
+- [ ] Lockfile conflict prediction ≥90% precision on 30 hand-labelled PR pairs
+- [ ] **Zero** stored-key appearances in any log/API/error payload (test greps the plaintext)
+- [ ] ≥20 hostile diffs produce no action and no reflected instruction text
+- [ ] Every posted comment cites at least one piece of Cadence evidence
+- [ ] With the provider hard-down, checks still post 5A/5B
+- [ ] On a repo with CodeRabbit installed, the review module posts nothing
+
+## The prerequisite, again
+
+**PR → run linkage does not exist**, and 5B(b), Phase 2's realized-savings attribution, and
+PR impact analysis all need it. Three features, one piece of work. Whichever phase gets
+there first should build it properly.

@@ -203,3 +203,80 @@ one-line revert instruction.
 **Formatting churn.** The most likely cause of a well-founded PR being closed unmerged is
 a diff that touches 200 unrelated lines. This is why the round-trip test is a ship
 criterion and not a nice-to-have.
+
+---
+
+# Execution checklist
+
+Moved from `ROADMAP.md` 2026-08-30.
+
+## Core
+
+- [ ] Comment-preserving YAML round-trip editor
+- [ ] **Round-trip test: 200 corpus workflows, byte-identical when no fix applied**
+- [ ] Fixers: `cache.*`, `cache.key`, `cache.run_id_bug`, `concurrency.cancel`
+- [ ] `preview()` returns `None` on unfamiliar shapes — declining is always correct
+- [ ] Opt-in `pull_requests:write` / `contents:write`, separate from read scopes
+- [ ] Anti-spam: 1 open PR max → 3 after first merge; report-first; closed = suppressed;
+      **never an unsolicited PR on a read-only-ingested repo**
+- [ ] Realized-savings writeback (30-day post-merge window)
+
+**Prerequisite now satisfied.** The round-trip criterion was not reproducible while config
+was re-fetched from HEAD — the corpus shifted under the test, so a failure could not be
+distinguished from an upstream edit. Migration `005` and `configstore.py` pin it. Build the
+round-trip test against `load_latest()`, not against a live fetch.
+
+## F2 — findings console (weeks 12–13)
+
+- [ ] Authenticated list: filter, sort, suppress with a reason
+- [ ] "Open fix PR" from a finding
+- [ ] **"This was wrong" button, prominent not buried** — it is the continuous eval stream
+      that makes the calibration dashboard possible
+
+## New fixers from field research
+
+Evidence in [`PHASE_2_3_CANDIDATES.md`](PHASE_2_3_CANDIDATES.md).
+
+- [ ] **`no_job_timeout` → `timeout.add`.** GitHub's default job timeout is 6 hours; a hung
+      job bills silently until killed. Corpus sample: ~145 job blocks, 31 `timeout-minutes`
+      declarations — **four in five unprotected.** A linter says "add a timeout"; we hold
+      p99 step timings and can say *"your p99 is 4m12s across 87 runs; set 15."*
+
+      **Render decision, settled 2026-08-29:** the saving is contingent — it materialises
+      only when a hang occurs, which fits neither of §6's classes. Resolution: **quote
+      dollars only with evidence.** A historical hang in the ingested window is priced as a
+      replay saving from real burned minutes; with no hang on record the finding reports
+      exposure in hours-at-risk and **no money**. No third render class.
+
+- [ ] **`cache_evicted_before_reuse`.** Sibling of the shipped `cache_key_never_hits`: the
+      key is right, the entry was evicted first. GitHub's own docs name this "cache
+      thrashing"; the eviction sweep moved from daily to hourly. Evidence is hit-rate decay
+      and total footprint against the 10 GB ceiling; the fix is scope reduction, not a key
+      change.
+
+- [ ] **`pipeline_fix_churn`.** Workflow-only commits in consecutive streaks, summed as
+      billed minutes — *"47 runs last month existed only to debug the pipeline."* The
+      dominant r/devops complaint, and nobody prices it. **Measurement finding, not a
+      fixer** — the remedy is `act` or pre-flight validation, neither of which we ship — so
+      it may belong in the report's context section rather than the findings list.
+
+**Considered and ranked last: action/runner version rot.** Real and dated (`ubuntu-22.04`
+brownouts 2026-09-17, retirement 2027-04-17) but a scan of 55 corpus repos found **zero
+exposed**, and Dependabot and Renovate already own the ground. Recorded so it is not
+re-litigated.
+
+## Ship criteria
+
+- [ ] Each fixer has a ≥20-workflow before/after corpus
+- [ ] Round-trip test green
+- [ ] **≥5 Cadence PRs merged in repos we don't own**
+- [ ] Realized-vs-predicted recorded for every merged PR
+- [ ] Zero uninvited PRs
+
+## The prerequisite this phase does not have
+
+**PR → run linkage does not exist.** Nothing joins a pull request to the runs it caused.
+That blocks realized-savings writeback from attributing correctly, and it is the same
+missing piece that blocks PR impact analysis (`FEATURE_CANDIDATES.md` F3) and stacked-PR
+detection (5B). One unglamorous piece of work unblocks three features — do it early in this
+phase rather than working around it three times.
