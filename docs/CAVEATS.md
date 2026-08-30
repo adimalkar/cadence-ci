@@ -31,6 +31,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 26 | A space in the project path breaks systemd unit settings | Low | Documented |
 | 27 | Worker shares the user's personal token and its rate limit | **High** | Open |
 | 28 | Config snapshots are captured only by `cadence audit`, never by ingest | Medium | Open |
+| 29 | `job_billing_rounding` and `matrix_legs_never_independent` are measured but unbuilt | Medium | Open |
 | 4 | `CIProvider` protocol missing `fetch_workflow_files` | Medium *(suspected)* | Open |
 | 5 | `Run.created_at` non-optional vs nullable payload | Medium *(suspected)* | Open |
 | 6 | Worker deployment shape undecided | **Blocker** | ✅ Resolved 2026-08-28 |
@@ -333,6 +334,28 @@ worth making deliberately rather than by default.
 than per-poll would be enough to build history cheaply), or ingest gains a conditional
 request — the contents API supports ETags, so an unchanged directory costs a 304 rather
 than a full read.
+
+### 29. Two measured rules are specified but not built · Medium
+
+**What.** Two Phase 1 catalog rules were measured against the live corpus on 2026-08-30 and
+written up in [`FEATURE_CANDIDATES.md`](FEATURE_CANDIDATES.md), but neither exists in code.
+
+- `job_billing_rounding` — **1,002 hours, 7.0% of all billed minutes** across 114,778 jobs.
+  `pallets/flask` loses 67.3%, `react/react` 30.2%.
+- `matrix_legs_never_independent` — `Ubuntu` and `Analyze` matrices recorded **zero**
+  divergent leg outcomes across 96 runs each, while `build` disagreed in 31 of 298.
+
+**Why it matters.** Phase 1's ship criterion fails at median 1 finding against a target of
+3, and the diagnosis is that the rules finding *large* time are unbuilt. `job_billing_rounding`
+would fire on nearly every corpus repo with replay-grade evidence. This is the cheapest
+known move on the number currently blocking the phase.
+
+**Caveat carried with the first rule:** merging short jobs cuts the bill but reduces
+parallelism, so wall-clock feedback can worsen. It is the first rule where hours and dollars
+genuinely conflict; the finding must show both and must not fire where merging would extend
+the critical path.
+
+**Closes when.** Both are implemented with tests, or explicitly dropped with a reason.
 
 ## Environmental and tooling notes
 

@@ -165,3 +165,69 @@ staleness as a defect rather than assuming a shipped rule stays correct.
 **Sandbox escape.** We will be running arbitrary dependency resolution from strangers'
 repositories. Treat every checkout as hostile. Per §13, an escape stops all feature work
 until resolved and disclosed.
+
+---
+
+# Execution checklist
+
+Moved from `ROADMAP.md` 2026-08-30.
+
+## 6A — weeks 17–19 (secrets; uses logs already stored)
+
+- [ ] CI-log secret scanning — the surface no scanner covers
+- [ ] `.ipynb` **output** scanning (secrets live in committed notebook JSON)
+- [ ] Verified liveness against provider token-info endpoints (~60% → ~99% precision)
+- [ ] `dedupe_key = hash(detector_id, sha256(value))`; plaintext never stored/logged/rendered
+- [ ] Finding links the provider's revoke page — rotation is the action, not detection
+
+## 6B — weeks 31–34 (the AI rule pack)
+
+- [ ] Model output → `eval`/`exec`/shell/SQL/path dataflow rules
+- [ ] Unsanitised prompt interpolation · tool handler without authz · unpinned weights ·
+      MCP exposure · RAG injection surface · unvalidated structured output
+- [ ] **MITRE ATLAS** technique IDs on every rule
+- [ ] Published as an open versioned ruleset (`cadence-ai-security`)
+
+## 6C — weeks 41–46 (general SCA + reachability; un-defers the sandbox)
+
+- [ ] OSV.dev + GitHub Advisory DB; CycloneDX SBOM
+- [ ] Reachability with **suppression as the headline**
+- [ ] Confidence tiers: `unreachable (high confidence)` vs `(dynamic dispatch — verify)`
+- [ ] Sandbox: no egress, read-only root, tmpfs, cpu/mem/pid caps, non-root, seccomp.
+      **Threat model written before the runner.**
+
+## Ship criteria
+
+- [ ] ≥95% precision on live-secret findings
+- [ ] Zero plaintext secrets anywhere, verified by test
+- [ ] Notebook detection catches a planted secret source-only scanners miss
+- [ ] AI rule pack ≥85% precision on held-out real AI repos
+- [ ] **No `unreachable (high confidence)` finding is ever wrong** on the eval set
+- [ ] Sandbox escape-attempt test passes
+
+## Scope warning — 6A is the only part that clearly belongs
+
+Taken together, 6A + 6B + 6C resemble a standalone security platform, and security is a
+large, well-funded, competitive category. The strategy review's objection is fair and worth
+recording plainly.
+
+**6A is different in kind from 6B and 6C.** It runs on logs Cadence *already ingests and
+stores*. Nobody else has that corpus, because nobody else keeps CI logs. *"An AWS credential
+appeared in 7 historical CI runs, and it is still live"* is a finding only this product can
+produce — and it is the same substrate argument that justifies everything in Phase 1.
+
+**6B and 6C are not.** They scan source and dependencies, which is Snyk's, Dependabot's and
+GitHub Advanced Security's ground, and 6C drags the sandbox back in as a prerequisite.
+Neither uses the CI history that makes Cadence defensible.
+
+**Recommendation:** keep 6A on the roadmap. Move 6B and 6C behind explicit user demand — a
+named user asking for them — rather than a calendar slot. If the plan slips, these are the
+first things to cut, which the existing cut order (6C → 5C → 6B) already says.
+
+## Already applied to our own repository
+
+Not a phase deliverable, but worth recording because it rehearses 6A/6C machinery: this
+repo's own CI SHA-pins every action, runs `zizmor` against its own workflows, generates a
+CycloneDX SBOM on every build, and publishes an OpenSSF Scorecard. See
+[`../../SECURITY.md`](../../SECURITY.md), which also lists the honest gaps — no fuzzing, a
+mypy baseline, ~65% coverage.

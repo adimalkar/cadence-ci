@@ -213,3 +213,59 @@ runs that produce findings.
 
 **Scope creep into DevLake territory.** The temptation to "just add GitLab" will appear
 around week 2. The interface exists so that this can be said no to cheaply.
+
+---
+
+# Execution checklist — shipped
+
+Moved from `ROADMAP.md` 2026-08-30. Kept because Phase 0 is the substrate every later phase
+reads, and because its post-ship audit is the most instructive thing in this repository.
+
+- [x] `git init`, Apache-2.0 LICENSE, README with the §1 thesis
+- [x] Project skeleton, `pyproject.toml`, dependency lock
+- [x] Postgres schema: `repo`/`commit`/`run`/`job`/`step`/`log_chunk`
+- [x] `finding` + `evidence` with the evidence `CHECK` and the insert trigger
+- [x] `CIProvider` protocol; GitHub Actions the only implementation
+- [x] Run + job + **step-timing** ingest with ETag conditional requests
+- [x] Rate-limit handling: `Retry-After`, secondary limits, backoff
+- [x] Log fetch + gzip to object store (content-addressed, fetched once ever)
+- [x] Webhook receiver: HMAC-SHA256, `X-GitHub-Delivery` idempotency, 200 in <500ms
+- [x] Job queue on Postgres (`FOR UPDATE SKIP LOCKED`)
+- [x] 50-repo corpus on a 30-min delta poll
+- [x] `docs/HELDOUT.md` — 15 repos, never looked at again
+
+## Ship criteria
+
+- [x] 1,000 webhook deliveries → zero drops, zero duplicates (replayed against the real
+      ASGI app + Postgres, ~30% redeliveries interleaved; also verified once over live HTTP
+      with real HMAC signatures)
+- [x] Full backfill of a ≥500-run repo without tripping a rate limit
+      (`react/react`, 500 runs / 7,524 jobs / 92,269 steps, 2:06)
+- [x] Step timings reconstruct their span within 2% (0.03% mean on 1,401 ruff jobs)
+- [x] 50 repos ingesting continuously — an unattended worker crossed a real 30-minute
+      interval boundary and rescheduled every repo correctly
+
+## Post-ship audit — 12 bugs
+
+See [`../AUDIT_PHASE_0.md`](../AUDIT_PHASE_0.md). **Four were silent data-fidelity losses
+that shipped under a green 66-test suite**, the worst being that a re-run's earlier attempts
+were never ingested — dropping exactly the failing jobs that are Phase 3's gold labels.
+
+This is the phase's real lesson, and it is why the CI built in August 2026 asserts that
+tests actually *ran* rather than trusting a green summary line: a suite that skips is
+indistinguishable from a suite that passes.
+
+## Durability — closed 2026-08-28
+
+The original note here read *"the mechanism firing correctly across one interval boundary is
+not the same as a deployment running for weeks unattended."* That was true and it stayed
+true for four days, during which ingest was stopped and history was permanently lost.
+
+Now deployed as a systemd user service ([`../../deploy/`](../../deploy/)) with linger
+enabled, so it survives logout and starts at boot. Ingest resumed with staleness dropping
+from 2d23h to seconds.
+
+**Still open** — [`../CAVEATS.md`](../CAVEATS.md) items 25 and 27: the worker is
+laptop-bound, so it accrues history only while the machine is on; and it runs on a personal
+`gh` token, sharing one 5,000/hour budget with interactive use and carrying far more scope
+than read-only ingest needs.

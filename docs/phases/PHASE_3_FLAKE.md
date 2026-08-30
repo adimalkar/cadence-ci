@@ -202,3 +202,102 @@ and F1 alone covers a third of the problem no competitor addresses.
 plausibly language-dependent — a JS corpus likely skews harder toward registry and network
 flake. Treat the percentages as directional, and re-measure on our own corpus before
 quoting them publicly.
+
+---
+
+# Execution checklist
+
+Moved from `ROADMAP.md` 2026-08-30.
+
+## Read this before committing seven weeks
+
+Flakiness draws **15 of 1,546 HN comments and 6 of 96 r/devops comments**, against 288 for
+cost and 229 for debuggability — plus an explicit in-thread scope rejection: *"Flaky tests…
+A Dev team problem, not CI/CD."*
+
+Three readings, none conclusive: sampling bias (those threads were framed around pricing,
+and the literature says ~59% of developers hit flakiness monthly); flakiness is suffered
+privately as a re-run click while cost arrives as a bill someone defends in public; or this
+phase really is further from felt pain than Phases 1–2.
+
+**This is not a reason to cut the phase.** It is a reason to read its kill criterion
+literally, and to sequence the deterministic work first so that value lands before the
+expensive work starts.
+
+## Build order — deterministic first, classifier last
+
+The single most useful change to this phase is reordering it. Everything in stage 1 ships
+value without a model, gold labels, or log parsing.
+
+### Stage 1 — deterministic, no ML
+
+- [ ] **Week 14 first task: query the corpus for gold-label count.** Expect ~30 reruns per
+      1,000 builds, ~68% flaky. If under a few hundred, extend ingest before training.
+- [ ] **Retry-to-green as the bootstrap label.** A same-commit re-run flipping fail → pass
+      is the strongest flakiness signal obtainable **without instrumenting anyone's test
+      framework**. The Phase 0 audit already restored the earlier-attempt ingest this
+      depends on, so it costs nothing and gives week 14 a second source to cross-check
+      against.
+- [ ] **First-failing-step index** (`FEATURE_CANDIDATES.md` F8). For every failed job,
+      record the first step with a non-zero conclusion, and aggregate:
+
+      ```text
+      WHERE YOUR BUILDS FAIL · 184 failures, 90 days
+        pytest             83%   ← your tests
+        npm ci              9%   ← infrastructure, not you
+        actions/checkout    5%   ← infrastructure, not you
+      ```
+
+      No ML, no gold labels, no log parsing. It answers *"why did CI fail?"* at the level
+      people ask it, and it separates **your code** from **the platform** — which is the
+      distinction the exit-137 finding shows people get wrong.
+- [ ] **Deterministic flake summary.** *"11 failures across 184 runs, 9 recovered on retry
+      → probable flaky 82%. Reruns cost 3h14m this month."* Ship this before any classifier.
+
+### Stage 2 — taxonomy
+
+- [ ] F1 build-level taxonomy: network · registry · rate-limit · OOM · concurrency ·
+      external service (weeks 14–15)
+- [ ] **Split OOM into guest-OOM vs host-eviction.** Exit 137 is two different failures
+      sharing one code: the kernel OOM killer ("your build needs more memory") and a
+      host-level SIGKILL where the container's own diagnostics show no pressure at all —
+      ~500 MB used, 1.8 GB free, nothing in `dmesg`. Opposite remediation; classing both as
+      OOM sends developers hunting memory for an infrastructure problem.
+- [ ] **`platform_incident` class.** GitHub is the external service that matters most, and
+      the only one attributable from an authoritative third-party record rather than
+      inferred from logs: the public GitHub Status Atom feed. Failures inside a declared
+      Actions incident window should be **excluded from flake statistics entirely** rather
+      than diluting precision. Cheap, and it was the highest-scoring comment in the
+      r/devops thread by roughly 2×.
+
+### Stage 3 — the expensive half, gated on stage 1 proving demand
+
+- [ ] F2 log normalization + signature + clustering (16–17)
+- [ ] **Golden corpus: 300 real failure logs → expected signature**
+- [ ] F3 classifier: GBT, calibrated (isotonic/Platt) (18–19)
+- [ ] Bootstrap from published datasets (`flaky-build.github.io`) before own gold set matures
+- [ ] Week 18 decision: embeddings-as-features only if they beat tabular on held-out repos
+- [ ] F4 blame candidates — ≤3 or nothing (20)
+
+**Gate between stages.** If stage 1 ships and nobody engages with the flake output, stage 3
+is seven weeks aimed at a problem this audience is not asking to have solved. Check before
+spending it.
+
+## Ship criteria
+
+- [ ] Golden corpus green
+- [ ] F1 covers ≥80% of non-test flaky failures
+- [ ] ≥85% flaky precision on ≥10 held-out repos
+- [ ] Calibration within ±10% per decile
+- [ ] Blame ≥70% precision, or emits nothing
+
+## Adjacent work this phase should claim
+
+**CI regression detection and blame** (`FEATURE_CANDIDATES.md` F4) is a better fit here
+than in Phase 4. It uses the same historical substrate and the same "attribute a failure to
+a cause" machinery, and config persistence (migration `005`) just made *"the workflow
+changed in this window"* an available feature.
+
+Build the detector before the blame: *"CI got 38% slower, and here is the decomposition"*
+is useful on its own and cannot be wrong about **who**. Hold attribution to the same
+≥70%-or-emit-nothing bar as F4 blame candidates.
