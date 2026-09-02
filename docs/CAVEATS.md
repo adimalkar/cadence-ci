@@ -33,6 +33,9 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 28 | Config snapshots are captured only by `cadence audit`, never by ingest | Medium | Open |
 | 29 | `matrix_legs_never_independent` measured but unbuilt (`job_billing_rounding` shipped) | Medium | Partly resolved |
 | 30 | Dollars-only findings cannot be ranked — `Savings` implies wall-clock | Medium | Open |
+| 31 | `recoverable_fraction` divides billed seconds by wall seconds — 3 repos exceed 100% | **High** | Open |
+| 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | Mitigated, not fixed |
+| 33 | Queue has no claim lease — a dead worker strands jobs in `processing` forever | **High** | Open |
 | 4 | `CIProvider` protocol missing `fetch_workflow_files` | Medium *(suspected)* | Open |
 | 5 | `Run.created_at` non-optional vs nullable payload | Medium *(suspected)* | Open |
 | 6 | Worker deployment shape undecided | **Blocker** | ✅ Resolved 2026-08-28 |
@@ -381,6 +384,73 @@ recovered.
 or a flag on `FindingDraft` letting the report render dollars while suppressing a wall-clock
 claim. Deliberately not done while shipping the detector: it touches the credibility model
 in `PRODUCT.md` §6 and deserves its own decision.
+
+### 31. `recoverable_fraction` mixes billed and wall-clock seconds · High
+
+**What.** `RepoResult.recoverable_fraction` is documented as the "recoverable share of median
+wall clock" and computes `replay_seconds_per_run / wall_seconds`. The numerator sums savings
+across **parallel jobs** — `no_run_cancellation` recovers billed seconds on every job of every
+superseded run, which is why `FindingDraft` carries `parallel_jobs` at all. The denominator is
+**elapsed** time for one run. Different units.
+
+**Measured 2026-09-02.** 3 of 49 corpus repos exceed 100%:
+
+| Repo | Reported | Median wall | Replay/run |
+|---|---:|---:|---:|
+| `sveltejs/kit` | **5,132%** | 704s | 36,131s |
+| `tauri-apps/tauri` | 285% | | |
+| `pytorch/pytorch` | 253% | | |
+
+`sveltejs/kit` has 100% mapping coverage and two ordinary findings, so this is not a coverage
+artifact — 36,131 billed seconds on a 704-second run is roughly 51 jobs running in parallel,
+which is entirely plausible and entirely not a share of wall clock.
+
+**Why it matters.** This is the number the **premise kill criterion** is read against — *"<10%
+median recoverable wall time at wk 10 → premise wrong, stop before Phase 2."* A metric that can
+report 5,132% cannot be trusted to decide that. The median is robust to the outliers (0.9% with
+them, 0.7% without), so today's conclusion does not change — but the mean is meaningless
+(124.7%), and any single repo's figure may be inflated.
+
+**Same class of error** as the one `job_billing_rounding` was built to avoid: billed seconds are
+not wall-clock seconds. That rule guards against it in the detector; this one is in the metric.
+
+**Closes when.** Either the numerator is restricted to critical-path seconds, or the metric is
+renamed to something honest about being a billed ratio and the criterion is restated against a
+denominator in the same units.
+
+### 32. The worker crashes if Postgres is not up at boot, then hangs · High
+
+**What.** Observed 2026-09-01. Postgres was not accepting connections when the user unit started
+at boot; the worker exited 1 with `connection to server on socket "/var/run/postgresql/.s.PGSQL.5432"
+failed`. systemd restarted it 30s later, it claimed 4 `poll_repo` jobs, and then **logged nothing
+for 18h49m** — 21 seconds of CPU across the whole period, sleeping in `poll_schedule_timeout`,
+with the rate limit healthy at 4911/5000. All four concurrency slots were holding claims whose
+database connections had died with the restarting server, and nothing timed out.
+
+**Cost.** Ingest stopped for roughly 19 hours. Days of history are only recoverable while GitHub
+retains the logs.
+
+**Mitigated 2026-09-02** by resetting the stranded claims and restarting; staleness returned to
+seconds. **Not fixed** — the unit has no wait-for-Postgres, and the worker has no statement or
+connect timeout that would turn a dead connection into an error instead of a permanent block.
+
+**Closes when.** `deploy/cadence-worker.service` gains an `ExecStartPre` that waits on
+`pg_isready` (a *user* unit cannot reliably `After=` a system service), and the worker's
+connections carry a timeout so a dead socket surfaces as a failure the retry logic can see.
+
+### 33. The queue has no claim lease · High
+
+**What.** `ingest_job.status` moves `pending → processing → done`, and nothing ever moves a row
+back. A worker that dies or hangs mid-claim strands its jobs in `processing` permanently. Four
+rows sat there for 18h49m during item 32 and would have sat there indefinitely.
+
+**Why it matters.** This is what turned a recoverable crash into a 19-hour outage. `FOR UPDATE
+SKIP LOCKED` correctly stops two workers claiming the same row, but it says nothing about a
+claim that is never released. With `--concurrency 4`, four stranded claims are the entire worker.
+
+**Closes when.** Claims carry a lease — a `claimed_at` timestamp and a reclaim query that returns
+rows in `processing` older than some multiple of the expected job duration to `pending`, bounded
+by `attempts` so a genuinely poisonous job eventually lands in `failed` rather than looping.
 
 ## Environmental and tooling notes
 
