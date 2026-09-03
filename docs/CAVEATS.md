@@ -36,6 +36,8 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 31 | `recoverable_fraction` reported up to 5,132% — partial re-runs inflate cancellation replay | **High** | ✅ Largely fixed 2026-09-03 |
 | 35 | Multi-attempt runs were double-counting jobs in matrix and billing analysis | Medium | ✅ Fixed 2026-09-03 |
 | 36 | F8 and F6 specified but not started — the only candidates that can move Phase 1's criterion | Medium | Open |
+| 37 | Finding suppression has four schema columns and no writer — Phase 2's anti-spam rule 3 is unimplementable | **High** | Open |
+| 38 | Phase 6 overstated the novelty of verified liveness | Low | ✅ Corrected 2026-09-03 |
 | 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
 | 33 | ~~Queue has no claim lease~~ — **wrong, the lease exists**; the worker hangs instead | **High** | ✅ Corrected + fixed |
 | 34 | Four large-backfill jobs hang the worker deterministically after exhausting the rate limit | **High** | Mitigated by 33's fix; cause is 27 |
@@ -560,6 +562,46 @@ finds dollars.
 Also unbuilt: `matrix_legs_never_independent`, measured but never implemented (item 29).
 
 **Closes when.** One of F8 or F6 ships and the criterion is re-measured — not assumed to improve.
+
+### 37. Suppression is designed, stored, and unreachable · High
+
+**What.** `finding` has carried `status ('suppressed')`, `suppress_scope`, `suppressed_by` and
+`suppressed_reason` since migration `001`. [`findings.py`](../src/cadence/findings.py) preserves
+a suppression across re-audits and marks a returning finding `regressed`. The `dedupe_key`
+design comment says waste findings key on `(rule, workflow_path, job_name)` *"so editing the
+YAML does not orphan a suppression."*
+
+**Nothing sets the column.** No ignore file, no inline comment, no CLI verb, no API. Every part
+of the mechanism exists except the part a user touches. Found 2026-09-03 while comparing
+against Infisical, which ships `.infisicalignore`, inline `infisical-scan:ignore`, and a
+resolved/ignored/false-positive lifecycle.
+
+**Why it matters.** It is a Phase 2 blocker, not a polish item.
+[`PHASE_2_FIX_PRS.md`](phases/PHASE_2_FIX_PRS.md) anti-spam rule 3 — *"a closed PR permanently
+suppresses that finding at `rule_repo` scope"* — cannot be implemented as written. Without it a
+maintainer who declines a fix gets re-asked on every audit, which is the behaviour rule 4 of the
+same section says is not recoverable from.
+
+**What would close it.** `.cadenceignore` + inline `# cadence:ignore <rule_id> — <reason>` +
+`cadence suppress/unsuppress`, with a mandatory reason and per-rule scope only. Design is F12 in
+[`FEATURE_CANDIDATES.md`](FEATURE_CANDIDATES.md). Ship before the first fixer, and add the
+Phase 2 ship criterion that tests it — a closed PR whose finding returns is the failure this is
+meant to prevent.
+
+### 38. Phase 6 overstated how novel verified liveness is · Low · CORRECTED 2026-09-03
+
+**What.** [`PHASE_6_SECURITY.md`](phases/PHASE_6_SECURITY.md) §6A implied that no existing
+scanner verifies whether a detected credential still works. GitGuardian ships validity
+checking, and it is standard in the paid tier of that category. Infisical, checked the same
+day, documents pattern matching, entropy and custom rules with no validation claim — so the
+practice is common but not universal, and the original sentence was wrong either way.
+
+**Why it matters.** Phase 6's precision argument leans on liveness, and a differentiation claim
+that a reader can falsify in one search costs more credibility than the feature earns. The same
+failure mode as items 31 and 33: a plausible diagnosis asserted before it was checked.
+
+**Corrected to** the claim that survives: nobody verifies liveness **over CI log history**,
+because nobody keeps CI logs. Make the claim about the corpus, not the technique.
 
 ## Environmental and tooling notes
 

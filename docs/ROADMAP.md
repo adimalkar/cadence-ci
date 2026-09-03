@@ -45,6 +45,7 @@ phases rather than annoy:
 | **Reusable-workflow mapping 18–100%** | Phase 1 critical path | Withheld below 80% rather than shown |
 | **No PR → run linkage** | PR impact analysis, stacked-PR detection | Not started; one piece of work unblocks both |
 | **Worker runs on a personal token** ([CAVEATS 27](CAVEATS.md)) | Any feature needing more ingest | Needs a fine-grained PAT or App token |
+| **Suppression has no writer** ([CAVEATS 37](CAVEATS.md)) | Phase 2 anti-spam rule 3 | Schema ready since `001`; needs an ignore file + CLI verb |
 
 ---
 
@@ -122,3 +123,8 @@ metrics. Note two narrowings:
   poutine and StepSecurity own workflow hardening, and Harden-Runner has an agent inside
   the runner with strictly more data than our read-only position can reach. Phase 6 scans
   your **source and dependencies**, not your CI configuration.
+  **Re-tested 2026-09-03** against Infisical's PAM model, which suggested flagging overbroad
+  workflow `permissions:`. Still rejected: zizmor's `excessive-permissions` audit is the named
+  reason in EXPANSION §3.1, our own CI already runs it, and history cannot strengthen the rule
+  because we observe runs and logs but never the API calls a token made. Reasoning kept in
+  [`FEATURE_CANDIDATES.md`](FEATURE_CANDIDATES.md) so it is not proposed a third time.

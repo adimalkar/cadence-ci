@@ -34,11 +34,20 @@ runs, 55 repos.
 | **F8** | First-failing-step index | Unmeasured — step data exists | Every failing repo | Small |
 | **F9** | Peer percentile from the corpus | Unmeasured — corpus-only moat | Every repo | Medium |
 | **F10** | Artifact upload never downloaded | Unmeasured — needs log parsing | Artifact users | Medium |
+| **F11** | Expired-credential failure clusters | Unmeasured — logs already stored | Repos with external auth | Small |
+| **F12** | User-reachable finding suppression | **Schema exists, no writer** | Every repo — **gates Phase 2** | Small |
 
 Candidates already carried in [`phases/PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md)
 — `no_job_timeout`, `pipeline_fix_churn`, `cache_evicted_before_reuse`, the exit-137 split,
 `platform_incident`, retry-to-green labels — are not repeated here. This document is the
 set that came after it.
+
+**F11 and F12 came from a 2026-09-03 read of [Infisical](https://infisical.com).** Most of
+that product — secrets management, dynamic secrets, PKI issuance, PAM sessions, RBAC and
+approval workflows — cannot be built here and should not be: it holds credentials and writes
+to production, and `PRODUCT.md` §3 makes read-only-until-invited a stated principle. What
+transfers is two *mechanisms*, plus one idea that turned out to be already rejected and is
+recorded below so it is not proposed a third time.
 
 ---
 
@@ -200,6 +209,17 @@ the same bar here.
 Note the dependency: **config persistence makes this dramatically better.** "The workflow
 changed in this window" is now an available feature, as of migration `005`.
 
+**Sharpened by Infisical's point-in-time recovery, 2026-09-03.** Their secrets product keeps
+every version and lets you diff and roll back to any of them; the useful half of that idea is
+that a *versioned config plus a metric* makes regressions self-attributing. Cadence is already
+halfway there and by design — `005_workflow_config.sql` says in its own header that it exists
+so *"the workflow changed here and waste started"* becomes answerable. The unbuilt half is
+small: for each `workflow_snapshot` boundary on a path, compare median run duration and
+failure rate in the windows either side, and surface the diff when either moves materially.
+
+That is a **cheaper and more certain** first cut than changepoint detection, because the
+candidate dates are given rather than inferred. Build it first; keep changepoint detection for
+degradation with no config edit behind it, which is the harder and rarer case.
 ---
 
 ## F5 · Which required check is the long pole
@@ -307,6 +327,111 @@ see — so this must be phrased as *"no workflow downloads this"*, never *"nobod
 
 ---
 
+## F11 · Expired-credential failure clusters
+
+Infisical's certificate product is, stripped of its issuance half, an **expiry inventory with
+lead-time renewal**: it knows when a credential dies and acts before it does. The CI analogue
+is a failure class nobody attributes correctly, because the symptom arrives weeks after the
+cause and looks like an ordinary red build.
+
+A token, deploy key, registry password or signing cert ages out. From that day forward a
+specific step fails on every run, on every branch, for a reason that has nothing to do with
+the code that triggered it. Teams re-run it, blame flakiness, and eventually someone digs.
+
+The signature is sharp and entirely historical:
+
+- a step that passed consistently before date *D* and fails consistently after it
+- failing on **every** branch, not a subset — this is what separates it from a code regression
+- the failure is a **step-level** cliff, not a gradual drift, which is what separates it from F4
+
+We already hold every log line from every ingested run, so the corroborating evidence —
+`401`, `403`, `expired`, `authentication failed` — is a grep away rather than new ingest.
+
+> *"`docker/login-action` has failed on all 47 runs since 2026-07-14, on 6 branches. It passed
+> 214 times before. Registry credentials expire; this looks like one that did."*
+
+**Why this one is ours and not a scanner's.** No static tool can see it — the YAML is
+unchanged and correct. It needs a before/after boundary in run history, which is the same
+substrate argument behind every rule in Phase 1.
+
+**State it as a hypothesis, not a diagnosis.** We cannot see the credential, only that a step
+that used to authenticate stopped. Render it as *"consistent with an expired credential"* and
+name the alternatives — a revoked token, a rotated secret nobody propagated, an upstream
+service that changed its auth. Overclaiming here sends someone to rotate a working key.
+
+- Detector: `expired_credential_failure` · Basis: **replay** (the failures are historical)
+- Belongs in **6A**, which already reads stored logs — see
+  [`phases/PHASE_6_SECURITY.md`](phases/PHASE_6_SECURITY.md)
+- Guard: require ≥10 passing runs before the boundary and ≥5 failing after, on ≥2 branches
+
+---
+
+## F12 · Suppression a user can actually reach — *the gap that gates Phase 2*
+
+Infisical ships three ways to silence a finding: a `.infisicalignore` file, an inline
+`infisical-scan:ignore` comment, and a UI lifecycle of resolved / ignored / false-positive.
+Unremarkable in their product. The reason it matters here is what a comparison turned up.
+
+**Cadence has the schema and no way to write to it.**
+[`001_initial.sql`](../src/cadence/db/migrations/001_initial.sql) defines `status`,
+`suppress_scope`, `suppressed_by` and `suppressed_reason`; the `dedupe_key` comment above it
+explains that waste findings key on `(rule, workflow_path, job_name)` *"so editing the YAML
+does not orphan a suppression"*; and [`findings.py`](../src/cadence/findings.py) carefully
+preserves a `suppressed` decision across re-audits and marks a returning finding `regressed`.
+
+Every part of the mechanism is built except the part a user touches. Nothing anywhere sets
+`status = 'suppressed'` — no ignore file, no inline comment, no CLI verb, no API.
+
+### This is a Phase 2 prerequisite, not a nicety
+
+[`PHASE_2_FIX_PRS.md`](phases/PHASE_2_FIX_PRS.md) anti-spam rule 3 reads: *"A closed PR
+permanently suppresses that finding at `rule_repo` scope."* That rule is currently
+unimplementable. A declined fix would be re-proposed on the next audit, forever — which is
+precisely the behaviour that gets a bot muted, and rule 4 of the same section explains why
+that damage is not recoverable.
+
+### What to build
+
+| Surface | Shape | Scope it sets |
+|---|---|---|
+| Repo file | `.cadenceignore` — one `rule_id[:workflow_path[:job_name]]` per line, `#` comments | `rule_repo` or `rule_path` |
+| Inline | `# cadence:ignore <rule_id> — <reason>` in the workflow YAML | `finding` |
+| CLI | `cadence suppress <finding-id> --reason …` / `cadence unsuppress` | any |
+
+Two rules worth fixing now, while it is cheap:
+
+1. **A reason is mandatory.** Suppressions without one become permanent mysteries; the whole
+   point of the `suppressed_reason` column is to survive the person who set it.
+2. **Suppression is per-rule, never global.** A blanket mute is indistinguishable from
+   uninstalling, and it hides the signal that a rule is miscalibrated.
+
+Cheap — one parser, one CLI verb, one `UPDATE` — and it converts four dormant columns into a
+working feature.
+
+---
+
+## Considered and rejected — overbroad workflow `permissions:`
+
+Infisical's PAM thesis is *eliminate standing access*, and the CI analogue is immediate: a
+workflow granting `contents: write` when no step pushes, or omitting `permissions:` entirely
+and inheriting the repository default.
+
+**It is already rejected, twice, and the reasoning still holds.**
+[`EXPANSION.md`](EXPANSION.md) §3.1 rejects workflow security scanning and names *"zizmor —
+static analysis, excessive permissions"* as the tool that owns it. [`ROADMAP.md`](ROADMAP.md)
+repeats the narrowing: Phase 6 scans **source and dependencies, not CI configuration**. Our
+own CI runs zizmor, so we would be shipping a rule we already consume from someone better at
+it.
+
+The tempting counter-argument is that history could prove the permission is unused. It cannot:
+we observe runs, jobs, steps and logs — never the API calls a token made. The honest ceiling
+is *"no step in this file appears to push, publish or release"*, which is static YAML analysis
+with extra steps, and zizmor already does it.
+
+Recorded here so the idea is not re-proposed a third time.
+
+---
+
 ## What I would build first, and why
 
 **F8, then F6.** F1 is built — and building it corrected this section. F1 does **not** move
@@ -322,6 +447,11 @@ phase.
 F3 is the best *product* idea in either document, and it should be built — after PR→run
 linkage exists, which is a separate and unglamorous piece of work that also unblocks
 stacked-PR detection.
+
+**Then F12, and possibly before either.** F12 moves no measurement — it is not a detector —
+but it is the one item here that *blocks a phase*: Phase 2's anti-spam rule 3 cannot be
+implemented without it, and Phase 2 is next. It is also the cheapest thing in this document,
+because three-quarters of it already exists in the schema.
 
 **What I would not add:** anything requiring a new ingest source, until item 27 in
 [`CAVEATS.md`](CAVEATS.md) is resolved and the worker has a credential with its own rate
