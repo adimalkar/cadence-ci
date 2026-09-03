@@ -27,6 +27,13 @@ WorkingDirectory=@PROJECT_DIR@
 # Credentials live outside the repository, 0600, and are never committed.
 EnvironmentFile=%h/.config/cadence/worker.env
 
+# Wait for Postgres before starting. On 2026-09-01 the unit started at boot before the
+# database was accepting connections, exited 1, and the restart landed in a state that
+# cost nineteen hours of ingest. A *user* unit cannot reliably order itself After= a
+# system service, so it waits here instead. Bounded, so a genuinely dead database fails
+# the unit rather than hanging it.
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 60); do pg_isready -q && exit 0; sleep 2; done; echo "postgres not ready after 120s" >&2; exit 1'
+
 ExecStart="@CADENCE_BIN@" worker run --concurrency 4
 
 # Transient failures are the normal case here: a dropped network, a GitHub 5xx, a

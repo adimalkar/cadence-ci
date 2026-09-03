@@ -11,9 +11,19 @@ from cadence.config import settings
 MIGRATIONS = Path(__file__).parent / "migrations"
 
 
+# Fail rather than block. A worker starting before Postgres is ready, or reaching a server
+# that is restarting, should get an exception the retry logic can act on -- psycopg's
+# default is to wait indefinitely, which turns a transient outage into a stuck process.
+CONNECT_TIMEOUT_SECONDS = 10
+
+
 @contextmanager
-def connect(url: str | None = None):
-    with psycopg.connect(url or settings.database_url, row_factory=dict_row) as conn:
+def connect(url: str | None = None, *, connect_timeout: int = CONNECT_TIMEOUT_SECONDS):
+    with psycopg.connect(
+        url or settings.database_url,
+        row_factory=dict_row,
+        connect_timeout=connect_timeout,
+    ) as conn:
         yield conn
 
 

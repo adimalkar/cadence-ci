@@ -24,6 +24,22 @@ log = structlog.get_logger(__name__)
 POLL_INTERVAL = timedelta(minutes=30)
 MAX_ATTEMPTS = 5
 
+# Hard ceiling on one job. On 2026-09-01 a worker claimed four jobs and then logged
+# nothing for 18h49m -- 21 seconds of CPU across the whole period, rate limit healthy,
+# every slot held by a claim that never finished and never failed. Ingest stopped for
+# nineteen hours, which for a product whose only irreversible deadline is GitHub's
+# 90-day log retention is the worst failure mode there is.
+#
+# The hang was never located: the journal holds no line between "Started" and the
+# restart, so neither the success path nor any of the three exception paths was reached.
+# Rather than guess at which await can block forever, bound the whole dispatch. Whatever
+# hangs, the slot comes back.
+#
+# Must stay below queue.LEASE. A job still running when its lease expires can be
+# reclaimed by another worker and processed twice; timing out first means this worker
+# releases the row before anyone else may take it. Asserted in tests.
+JOB_TIMEOUT = timedelta(minutes=10)
+
 
 async def _handle_poll_repo(provider: CIProvider, job: dict) -> None:
     payload = job["payload"]
@@ -145,7 +161,10 @@ async def run_worker(
 
             idle = 0
             try:
-                await _dispatch(provider, log_store, job)
+                await asyncio.wait_for(
+                    _dispatch(provider, log_store, job),
+                    timeout=JOB_TIMEOUT.total_seconds(),
+                )
             except (AccessDenied, NotFound, Expired) as exc:
                 # Terminal by nature: a missing scope, a deleted repo, or a log past
                 # GitHub's 90-day retention will be exactly as missing in an hour.
@@ -166,6 +185,24 @@ async def run_worker(
                 )
                 with connect() as conn:
                     queue.fail(conn, job["id"], str(exc), retry_in=retry)
+                    conn.commit()
+            except TimeoutError as exc:
+                # Retryable: the next attempt may well succeed, and MAX_ATTEMPTS stops a
+                # reliably-hanging job from cycling forever. Logged at error, not warning
+                # -- a job that hits this ceiling means something is wrong upstream, and
+                # it is the signal that would have shortened a nineteen-hour outage.
+                log.error(
+                    "worker.job_timeout",
+                    kind=job["kind"],
+                    id=job["id"],
+                    timeout_s=JOB_TIMEOUT.total_seconds(),
+                    attempts=job["attempts"],
+                )
+                retry = timedelta(minutes=1) if job["attempts"] < MAX_ATTEMPTS else None
+                with connect() as conn:
+                    queue.fail(
+                        conn, job["id"], f"job exceeded {JOB_TIMEOUT}: {exc!r}", retry_in=retry
+                    )
                     conn.commit()
             except Exception as exc:  # one bad job must not kill the worker
                 log.warning("worker.job_failed", kind=job["kind"], id=job["id"], error=str(exc))

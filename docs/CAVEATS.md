@@ -34,8 +34,9 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 29 | `matrix_legs_never_independent` measured but unbuilt (`job_billing_rounding` shipped) | Medium | Partly resolved |
 | 30 | Dollars-only findings cannot be ranked — `Savings` implies wall-clock | Medium | Open |
 | 31 | `recoverable_fraction` divides billed seconds by wall seconds — 3 repos exceed 100% | **High** | Open |
-| 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | Mitigated, not fixed |
-| 33 | Queue has no claim lease — a dead worker strands jobs in `processing` forever | **High** | Open |
+| 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
+| 33 | ~~Queue has no claim lease~~ — **wrong, the lease exists**; the worker hangs instead | **High** | ✅ Corrected + fixed |
+| 34 | Four large-backfill jobs hang the worker deterministically after exhausting the rate limit | **High** | Mitigated by 33's fix; cause is 27 |
 | 4 | `CIProvider` protocol missing `fetch_workflow_files` | Medium *(suspected)* | Open |
 | 5 | `Run.created_at` non-optional vs nullable payload | Medium *(suspected)* | Open |
 | 6 | Worker deployment shape undecided | **Blocker** | ✅ Resolved 2026-08-28 |
@@ -418,7 +419,7 @@ not wall-clock seconds. That rule guards against it in the detector; this one is
 renamed to something honest about being a billed ratio and the criterion is restated against a
 denominator in the same units.
 
-### 32. The worker crashes if Postgres is not up at boot, then hangs · High
+### 32. ~~The worker crashes if Postgres is not up at boot, then hangs~~ · RESOLVED 2026-09-03 · High
 
 **What.** Observed 2026-09-01. Postgres was not accepting connections when the user unit started
 at boot; the worker exited 1 with `connection to server on socket "/var/run/postgresql/.s.PGSQL.5432"
@@ -434,23 +435,61 @@ retains the logs.
 seconds. **Not fixed** — the unit has no wait-for-Postgres, and the worker has no statement or
 connect timeout that would turn a dead connection into an error instead of a permanent block.
 
-**Closes when.** `deploy/cadence-worker.service` gains an `ExecStartPre` that waits on
-`pg_isready` (a *user* unit cannot reliably `After=` a system service), and the worker's
-connections carry a timeout so a dead socket surfaces as a failure the retry logic can see.
+**Closed by** both halves, in the same change as item 33: an `ExecStartPre` waiting on
+`pg_isready` (bounded at 120s, so a genuinely dead database fails the unit rather than hanging
+it), and `connect_timeout=10` on every connection so a server that is down or restarting raises
+instead of blocking. The hang itself is covered by 33's watchdog, which bounds the job whatever
+the cause.
 
-### 33. The queue has no claim lease · High
+### 33. ~~The queue has no claim lease~~ — **that was wrong** · RESOLVED 2026-09-03 · High
 
-**What.** `ingest_job.status` moves `pending → processing → done`, and nothing ever moves a row
-back. A worker that dies or hangs mid-claim strands its jobs in `processing` permanently. Four
-rows sat there for 18h49m during item 32 and would have sat there indefinitely.
+**Correction.** This entry claimed the queue had no claim lease. It does.
+`queue.LEASE = timedelta(minutes=15)`, and `claim_next` already reclaims any `processing` row
+whose `updated_at` is older than the lease. The four stranded rows *were* reclaimable from
+12:00:43 onward. Nothing reclaimed them because **a lease only works if some worker is alive to
+call `claim_next`, and the only worker was hung.**
 
-**Why it matters.** This is what turned a recoverable crash into a 19-hour outage. `FOR UPDATE
-SKIP LOCKED` correctly stops two workers claiming the same row, but it says nothing about a
-claim that is never released. With `--concurrency 4`, four stranded claims are the entire worker.
+The diagnosis was inverted: the lease is correct, and the hang is the entire bug.
 
-**Closes when.** Claims carry a lease — a `claimed_at` timestamp and a reclaim query that returns
-rows in `processing` older than some multiple of the expected job duration to `pending`, bounded
-by `attempts` so a genuinely poisonous job eventually lands in `failed` rather than looping.
+**Fixed** by bounding every job. `worker.JOB_TIMEOUT = 10 minutes` wraps `_dispatch` in
+`asyncio.wait_for`, so whatever blocks, the slot returns and the existing retry path runs.
+`JOB_TIMEOUT < queue.LEASE` is a load-bearing ordering — a job outliving its lease could be
+reclaimed and processed twice — and is asserted in `test_worker_watchdog.py`.
+
+Also fixed alongside it, from the same incident:
+
+- `db.connect()` now passes `connect_timeout=10`; psycopg's default is to wait indefinitely,
+  which turns a database that is merely restarting into a stuck process.
+- `deploy/cadence-worker.service` gained an `ExecStartPre` that waits on `pg_isready`, bounded
+  at 120s. A *user* unit cannot reliably order itself `After=` a system service. This closes the
+  boot race in item 32.
+- `deploy/install.sh` was committed mode `100644`. `./deploy/install.sh` therefore failed for
+  anyone who cloned the repo, including on the machine that wrote it. Now `100755`.
+
+### 34. Four large-backfill jobs hang the worker deterministically · High
+
+**What.** The 19-hour outage recurred on 2026-09-02, and the second occurrence identified it as
+deterministic rather than random: **the same four job ids** — 459, 513, 519, 599 — were claimed
+and hung again, with the same attempt counts. All four are `limit: 250` backfills of large
+repositories (`denoland/deno`, `pytest-dev/pytest` ×2, `encode/django-rest-framework`), and all
+four carry the same `last_error`:
+
+> `API rate limit exceeded for user ID 98805408`
+
+**Why it matters.** The upstream cause is item 27: the worker runs on a personal token and shares
+one 5,000/hour budget with interactive `gh` use. A 250-run backfill of a large repo is thousands
+of requests; three of them concurrently, against a budget someone else is also spending, exhausts
+it. What is *not* explained is why exhaustion produces a silent hang rather than the `RateLimited`
+exception the worker already handles — the journal holds no line between "Started" and the
+restart, so none of the success or failure paths was reached.
+
+**Mitigated** by item 33's watchdog: the job now times out at 10 minutes, releases its slot, and
+retries with backoff until `MAX_ATTEMPTS` sends it to `failed`. The worker survives regardless.
+
+**Not closed.** The mitigation stops one hung job taking the process down; it does not explain the
+hang, and it does not stop these four jobs failing repeatedly. Closing it properly needs item 27
+— a credential with its own rate limit — and then a look at what the provider does when a
+rate-limit response arrives mid-pagination.
 
 ## Environmental and tooling notes
 
