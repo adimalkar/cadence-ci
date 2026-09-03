@@ -57,6 +57,16 @@ exists to avoid. **Verified liveness** — calling the provider's token-info end
 whether the credential still works — takes that to ~99% and turns the finding from a guess
 into a fact.
 
+**Correction, 2026-09-03: liveness is not novel, only its surface is.** An earlier draft of
+this section implied no scanner verifies credentials. GitGuardian ships validity checking, and
+it is a standard feature of the paid tier of that category. Infisical, checked the same day,
+documents pattern matching, entropy and custom rules with **no** validation claim — so the
+practice is common but not universal.
+
+The defensible claim is narrower and survives the correction intact: **nobody verifies liveness
+over CI log history**, because nobody keeps CI logs. Make the claim about the corpus, never
+about the technique.
+
 Providers worth verifying on day one: Anthropic, OpenAI, GitHub, AWS, Google Cloud, Slack,
 Stripe, HuggingFace.
 
@@ -71,6 +81,51 @@ Non-negotiable, and easy to get wrong:
   that does not itself publish the value.
 - Report the **rotation** action, not just the detection. A secret found and not rotated is
   a secret still leaked; the finding should link the provider's revoke page directly.
+
+### Blast radius is the part only we can report
+
+Every secrets platform now agrees that detection without rotation is theatre, and the mature
+ones act on it: Infisical rotates Postgres, MySQL, MSSQL and cloud IAM credentials on a
+schedule. Cadence cannot rotate anything and should not try — that requires holding the
+credential and writing to production, which `PRODUCT.md` §3 rules out.
+
+What we can report instead is the question the person rotating actually needs answered, and it
+is one a rotation product cannot answer at all:
+
+> *"This AWS key appeared in **7 runs across 41 days** of retained logs, in `deploy.yml` and
+> `nightly.yml`, on a **public** repository — readable by anyone with repo read access for as
+> long as GitHub retains those logs. It is **still live**."*
+
+Exposure window, occurrence count, which workflows, and public-vs-private reachability. That is
+a complete incident summary derived entirely from the log archive Phase 0 already stores, and
+it turns *"rotate this"* into *"rotate this, and here is what to assume was seen."*
+
+Two consequences for the finding's shape:
+
+- **Report the window, not just the hit.** First and last appearance bound how long the
+  credential was exposed; a single-run leak and a nine-month one warrant different responses.
+- **Log retention is a deadline.** GitHub keeps logs 90 days, so on a repo we ingest late the
+  true window may start before our evidence does. Say `first seen in our archive`, never
+  `first exposed` — the distinction is the difference between a fact and a guess.
+
+### The other half of a credential's life: expiry
+
+Secret scanning asks *"is this credential exposed?"*. The certificate half of Infisical's
+product asks the complementary question — *"is this credential about to stop working?"* — and
+answers it from an expiry inventory. We have no inventory and never will, because we never hold
+the credential. We do have something they don't: **the failures it caused.**
+
+`expired_credential_failure` — a step that passed consistently before a date and has failed
+consistently on every branch since. No YAML changed, no code explains it, and the log lines
+carry `401` / `403` / `expired` / `authentication failed`. Specified as **F11** in
+[`FEATURE_CANDIDATES.md`](../FEATURE_CANDIDATES.md); it belongs here rather than in Phase 1
+because it reads the same stored logs as the rest of 6A and shares its handling discipline.
+
+It also fits 6A's severity model: a live secret is severity 5 because it should not exist; an
+expired one is severity 3 because it is only costing the team a red build and a week of
+misattributed blame. **State it as a hypothesis** — we see a step that used to authenticate and
+stopped, not a credential we can inspect. Revocation, an unpropagated rotation and an upstream
+auth change all produce the same signature, and the finding must name them.
 
 ---
 
@@ -144,6 +199,8 @@ this brings back both items deferred out of Phase 0 — see the roadmap note on 
       verified by test, not by inspection
 - [ ] 6A: notebook-output detection catches a planted secret in `.ipynb` JSON that
       source-only scanners miss
+- [ ] 6A: every live-secret finding carries an exposure window bounded by observed runs,
+      labelled as archive-relative rather than absolute
 - [ ] 6B: rule pack published, versioned, ATLAS-mapped; ≥85% precision on a held-out set
       of real AI repos
 - [ ] 6C: reachability reports both directions with confidence tiers; **no
@@ -179,6 +236,12 @@ Moved from `ROADMAP.md` 2026-08-30.
 - [ ] Verified liveness against provider token-info endpoints (~60% → ~99% precision)
 - [ ] `dedupe_key = hash(detector_id, sha256(value))`; plaintext never stored/logged/rendered
 - [ ] Finding links the provider's revoke page — rotation is the action, not detection
+- [ ] **Blast radius**: exposure window, occurrence count, workflows, public-vs-private —
+      the part no rotation product can report. Say `first seen in our archive`, never
+      `first exposed`
+- [ ] **`expired_credential_failure`** (F11) — pass/fail cliff on every branch, corroborated
+      by `401`/`403`/`expired` in stored logs. Guard: ≥10 passes before, ≥5 fails after, ≥2
+      branches. Rendered as a hypothesis with its alternatives named
 
 ## 6B — weeks 31–34 (the AI rule pack)
 

@@ -175,6 +175,36 @@ Rule 4 deserves emphasis. The no-install corpus exists to build and evaluate det
 and to generate reports we offer *in an issue, when invited*. It does not license writing
 to 50 repos.
 
+### Rule 3 is currently unimplementable — fix that before the first PR
+
+**Found 2026-09-03.** Rule 3 says a closed PR permanently suppresses that finding at
+`rule_repo` scope. Nothing in the codebase can do that.
+
+The schema is ready and has been since migration `001`: `finding.status` takes
+`'suppressed'`, `suppress_scope` takes `rule_repo`, and `suppressed_by` / `suppressed_reason`
+are there to record who and why. [`findings.py`](../../src/cadence/findings.py) already
+preserves a suppression across re-audits and marks a returning finding `regressed`. The
+`dedupe_key` design comment states the intent outright — waste findings key on
+`(rule, workflow_path, job_name)` *"so editing the YAML does not orphan a suppression."*
+
+**Nothing writes the column.** There is no ignore file, no inline comment, no CLI verb, no
+API. Every piece of the mechanism exists except the one a user touches.
+
+The consequence is exactly the failure this section is written to prevent: a maintainer closes
+a Cadence PR, and the next audit proposes it again, and the one after that. Rule 1's
+open-PR cap slows the rate; it does not stop the loop. A bot that re-asks a settled question is
+a bot that gets muted, and rule 4 explains why that damage does not come back.
+
+**Sequencing:** ship suppression before the first fixer, not alongside it. It is one parser,
+one CLI verb and one `UPDATE` — cheap now, and expensive after the first maintainer has been
+asked twice. Design is **F12** in [`FEATURE_CANDIDATES.md`](../FEATURE_CANDIDATES.md); the
+shape is borrowed from Infisical's `.infisicalignore` plus inline `infisical-scan:ignore`.
+
+Two rules to settle while it is cheap: a **reason is mandatory** (a suppression without one
+becomes a permanent mystery, which is what `suppressed_reason` exists to prevent), and
+suppression is **per-rule, never global** — a blanket mute is indistinguishable from
+uninstalling, and it hides the signal that a rule is miscalibrated.
+
 ---
 
 ## Ship criteria
@@ -184,6 +214,8 @@ to 50 repos.
 3. **≥5 Cadence PRs merged in repos we don't own.**
 4. Realized-vs-predicted savings recorded for every merged PR.
 5. Zero PRs opened without a prior invitation.
+6. **A closed Cadence PR suppresses its finding, verified by test** — re-run the audit and
+   assert the finding does not return. Rule 3 is only real when a test says so.
 
 Criterion 3 is the résumé line. "I built a tool that analyzes CI" is a project; "maintainers
 of repos I don't own merged my bot's PRs and their builds got faster" is a product.
@@ -219,6 +251,10 @@ Moved from `ROADMAP.md` 2026-08-30.
 - [ ] Opt-in `pull_requests:write` / `contents:write`, separate from read scopes
 - [ ] Anti-spam: 1 open PR max → 3 after first merge; report-first; closed = suppressed;
       **never an unsolicited PR on a read-only-ingested repo**
+- [ ] **Suppression a user can reach — ship before the first fixer.** `.cadenceignore`,
+      inline `# cadence:ignore <rule_id> — <reason>`, and `cadence suppress/unsuppress`.
+      Reason mandatory; per-rule scope only, never global. The four schema columns exist
+      and nothing writes them, so rule 3 above cannot currently be honoured (F12)
 - [ ] Realized-savings writeback (30-day post-merge window)
 
 **Prerequisite now satisfied.** The round-trip criterion was not reproducible while config
