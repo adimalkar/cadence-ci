@@ -316,8 +316,12 @@ pitching starts.
 
 - [x] **Audit runs across all 50 corpus repos unattended.** 50/51 analysed; the one skip is
       a repo with no workflow files, which is a correct outcome rather than a failure.
-- [ ] **Median repo: ≥3 findings, ≥10% recoverable — FAILS.** Median 1 finding (mean 1.18,
-      max 6, 22/50 repos find nothing); median 0.0% recoverable, mean 8.4%, 9/50 at ≥10%.
+- [ ] **Median repo: ≥3 findings, ≥10% recoverable — FAILS**, but by less than it did.
+      Re-measured 2026-09-03 over 49 repos: **median 2 findings** (mean 3.02, max 22,
+      **9/49** find nothing) and **median 0.9% recoverable** (mean 18.1%, 12/49 at ≥10%).
+      Was median 1 / mean 1.18 / 22-of-50-empty on 2026-08-24. The movement came from
+      ingest depth, not new rules — runs per workflow stream went from a median of 4 to
+      21 once the worker ran continuously. **One finding short on the median.**
 - [x] **Replay reconstructs historical durations within 2%.** n=171 fully-mapped runs: mean
       error 0.48%, median 0.00%. All 25 runs over 2% are **1 second absolute** on ~44s runs
       — timestamp granularity, not model error. For runs ≥120s: 75/75 within 2%, mean 0.10%.
