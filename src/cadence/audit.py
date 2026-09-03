@@ -73,13 +73,20 @@ def build_context(
         if run_ids:
             cur.execute(
                 """
-                SELECT run_id, name, name_base,
-                       extract(epoch FROM created_at) AS created_epoch,
-                       extract(epoch FROM started_at) AS started_epoch,
-                       extract(epoch FROM completed_at) AS completed_epoch
-                FROM job
-                WHERE run_id = ANY(%s)
-                  AND started_at IS NOT NULL AND completed_at IS NOT NULL
+                SELECT j.run_id, j.name, j.name_base,
+                       extract(epoch FROM j.created_at) AS created_epoch,
+                       extract(epoch FROM j.started_at) AS started_epoch,
+                       extract(epoch FROM j.completed_at) AS completed_epoch
+                FROM job j JOIN run r ON r.id = j.run_id
+                WHERE j.run_id = ANY(%s)
+                  AND j.started_at IS NOT NULL AND j.completed_at IS NOT NULL
+                  -- Latest attempt only. Phase 0 deliberately ingests earlier attempts
+                  -- because a re-run's failing jobs are Phase 3's gold labels, but a run
+                  -- observation must describe ONE execution. Mixing attempts makes a
+                  -- re-run days later share a row with its original: sveltejs/kit run
+                  -- 33123664062 spans 2026-08-27 to 2026-08-31 -- 3.76 days for a run
+                  -- that executed twice for about ten minutes each.
+                  AND j.attempt = r.run_attempt
                 """,
                 (run_ids,),
             )
@@ -121,6 +128,9 @@ def build_context(
                        extract(epoch FROM (j.completed_at - j.started_at)) AS exec_s
                 FROM job j JOIN run r ON r.id = j.run_id
                 WHERE j.run_id = ANY(%s) AND r.workflow_path IS NOT NULL
+                  -- Same reasoning as above: one attempt per leg, or a re-run counts its
+                  -- legs twice in matrix and billing analysis.
+                  AND j.attempt = r.run_attempt
                 """,
                 (run_ids,),
             )
@@ -177,12 +187,16 @@ def _observations(run_rows, jobs_by_run, workflows: list[Workflow]) -> list[RunO
             )
 
         starts = [float(j["created_epoch"]) for j in job_rows if j["created_epoch"]]
+        # Execution start, separate from queue entry. Needed by any rule that reasons
+        # about compute rather than about what the developer waited for.
+        exec_starts = [float(j["started_epoch"]) for j in job_rows if j["started_epoch"]]
         ends = [float(j["completed_epoch"]) for j in job_rows if j["completed_epoch"]]
         out.append(
             RunObservation(
                 run_id=row["id"],
                 head_branch=row["head_branch"],
                 started_epoch=min(starts) if starts else None,
+                exec_started_epoch=min(exec_starts) if exec_starts else None,
                 completed_epoch=max(ends) if ends else None,
                 conclusion=row["conclusion"],
                 workflow_path=row["workflow_path"],

@@ -20,6 +20,8 @@ class RunObservation:
 
     run_id: int
     head_branch: str | None
+    # When the run's first job was *queued*. This is what a developer waits, so it is the
+    # right basis for wall clock -- and the wrong basis for anything about compute.
     started_epoch: float | None
     completed_epoch: float | None
     conclusion: str | None
@@ -42,11 +44,25 @@ class RunObservation:
     # node key -> timing, already collapsed across matrix legs
     timings: dict[str, NodeTiming] = field(default_factory=dict)
 
+    # When the run's first job actually began *executing*. Distinct from started_epoch by
+    # exactly the queue wait, which for a re-run can be days: run 33123664062 in
+    # sveltejs/kit was created 2026-08-27 and started 2026-08-31, having executed for 79
+    # seconds. Any rule about consumed compute must use this; a run that is queued is not
+    # occupying a runner.
+    exec_started_epoch: float | None = None
+
     @property
     def wall_seconds(self) -> float:
         if self.started_epoch is None or self.completed_epoch is None:
             return 0.0
         return max(0.0, self.completed_epoch - self.started_epoch)
+
+    @property
+    def exec_seconds(self) -> float:
+        """Elapsed time this run held runners, excluding the queue wait."""
+        if self.exec_started_epoch is None or self.completed_epoch is None:
+            return 0.0
+        return max(0.0, self.completed_epoch - self.exec_started_epoch)
 
 
 @dataclass(slots=True)

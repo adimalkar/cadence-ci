@@ -45,7 +45,8 @@ def _runs(n: int, path="ci.yml") -> list[RunObservation]:
     return [
         RunObservation(
             run_id=i, head_branch="main", started_epoch=float(i * 1000),
-            completed_epoch=float(i * 1000 + 300), conclusion="success",
+            exec_started_epoch=float(i * 1000), completed_epoch=float(i * 1000 + 300),
+            conclusion="success",
             workflow_path=path, jobs_total=3, jobs_mapped=3,
             timings={"test": NodeTiming("test", 0, 300)},
         )

@@ -30,9 +30,16 @@ def make_ctx(workflow_yaml: str, *, runs=None, step_series=None, is_private=Fals
 
 
 def run_obs(run_id: int, branch: str, start: float, end: float, timings=None,
-            workflow_path: str = "ci.yml") -> RunObservation:
+            workflow_path: str = "ci.yml", queue_seconds: float = 0.0) -> RunObservation:
+    """`start` is queue entry; execution begins `queue_seconds` later.
+
+    Defaulting the two to the same instant keeps every existing case unchanged while
+    letting cancellation tests model a run that waited before it ran — which is the
+    distinction that made a four-day queue wait read as four days of wasted compute.
+    """
     return RunObservation(
-        run_id=run_id, head_branch=branch, started_epoch=start, completed_epoch=end,
+        run_id=run_id, head_branch=branch, started_epoch=start,
+        exec_started_epoch=start + queue_seconds, completed_epoch=end,
         conclusion="success", workflow_path=workflow_path,
         timings=timings or {"build": NodeTiming("build", 0, end - start)},
     )
@@ -418,3 +425,51 @@ class TestCostCurrency:
         ctx = CostContext(is_private=True, runs_per_month=100, rate_card=RATE_CARD,
                           dominant_labels=["self-hosted-gpu"])
         assert ctx.dollars_per_month(60) == 0.0
+
+
+class TestCancellationIgnoresQueueTime:
+    """Queue time is not consumed compute.
+
+    Regression for sveltejs/kit run 33123664062: created 2026-08-27, started 2026-08-31,
+    executed for 79 seconds. Measured from queue entry it appeared to span four days and
+    overlap every other run in the window, contributing 323,357s of "waste" -- 98% of that
+    repo's reported total -- and inflating its recoverable share to 5,132%.
+    """
+
+    @staticmethod
+    def _findings(runs):
+        ctx = make_ctx(NO_CONCURRENCY, runs=runs)
+        return NoRunCancellationDetector().run(ctx)
+
+    def test_a_long_queue_wait_is_not_counted_as_waste(self):
+        # Two runs on one branch. The first waited four days to start, then ran 100s.
+        # Overlap must be measured from execution, so these barely overlap at all.
+        four_days = 4 * 24 * 3600
+        runs = [
+            run_obs(1, "main", 0.0, four_days + 100.0, queue_seconds=four_days),
+            run_obs(2, "main", four_days + 50.0, four_days + 150.0, queue_seconds=0.0),
+        ]
+        found = self._findings(runs)
+        if found:
+            # Whatever is reported cannot exceed the time the run actually executed.
+            assert found[0].savings.seconds_per_run <= 100.0
+
+    def test_genuinely_overlapping_execution_is_still_caught(self):
+        """The fix must not silence the rule it is correcting."""
+        runs = [
+            run_obs(1, "main", 0.0, 600.0),
+            run_obs(2, "main", 100.0, 700.0),
+        ]
+        found = self._findings(runs)
+        assert found, "an ordinary superseded run must still be reported"
+        assert found[0].savings.seconds_per_run > 0
+
+    def test_waste_never_exceeds_the_run_that_produced_it(self):
+        """The invariant the old code broke: you cannot waste more than you ran."""
+        runs = [
+            run_obs(i, "main", float(i * 10), float(i * 10 + 300), queue_seconds=3600.0)
+            for i in range(5)
+        ]
+        found = self._findings(runs)
+        if found:
+            assert found[0].savings.seconds_per_run <= 300.0

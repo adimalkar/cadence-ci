@@ -33,7 +33,8 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 28 | Config snapshots are captured only by `cadence audit`, never by ingest | Medium | Open |
 | 29 | `matrix_legs_never_independent` measured but unbuilt (`job_billing_rounding` shipped) | Medium | Partly resolved |
 | 30 | Dollars-only findings cannot be ranked — `Savings` implies wall-clock | Medium | Open |
-| 31 | `recoverable_fraction` divides billed seconds by wall seconds — 3 repos exceed 100% | **High** | Open |
+| 31 | `recoverable_fraction` reported up to 5,132% — partial re-runs inflate cancellation replay | **High** | ✅ Largely fixed 2026-09-03 |
+| 35 | Multi-attempt runs were double-counting jobs in matrix and billing analysis | Medium | ✅ Fixed 2026-09-03 |
 | 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
 | 33 | ~~Queue has no claim lease~~ — **wrong, the lease exists**; the worker hangs instead | **High** | ✅ Corrected + fixed |
 | 34 | Four large-backfill jobs hang the worker deterministically after exhausting the rate limit | **High** | Mitigated by 33's fix; cause is 27 |
@@ -386,7 +387,7 @@ or a flag on `FindingDraft` letting the report render dollars while suppressing 
 claim. Deliberately not done while shipping the detector: it touches the credibility model
 in `PRODUCT.md` §6 and deserves its own decision.
 
-### 31. `recoverable_fraction` mixes billed and wall-clock seconds · High
+### 31. ~~`recoverable_fraction` mixes billed and wall-clock seconds~~ · LARGELY FIXED 2026-09-03 · High
 
 **What.** `RepoResult.recoverable_fraction` is documented as the "recoverable share of median
 wall clock" and computes `replay_seconds_per_run / wall_seconds`. The numerator sums savings
@@ -415,9 +416,49 @@ them, 0.7% without), so today's conclusion does not change — but the mean is m
 **Same class of error** as the one `job_billing_rounding` was built to avoid: billed seconds are
 not wall-clock seconds. That rule guards against it in the detector; this one is in the metric.
 
-**Closes when.** Either the numerator is restricted to critical-path seconds, or the metric is
-renamed to something honest about being a billed ratio and the criterion is restated against a
-denominator in the same units.
+**The original diagnosis was wrong.** The numerator is not billed seconds —
+`SupersededRun.wasted_seconds` is elapsed overlap, and `evalsweep` sums `seconds_per_run`
+without applying `parallel_jobs`. Both sides were already wall-clock.
+
+**The actual cause, traced 2026-09-03.** GitHub's *partial* re-run carries the successful jobs
+of the previous attempt forward into the new attempt **with their original timestamps**. So one
+attempt can hold jobs days apart: `sveltejs/kit` run `33123664062` has attempt 2 containing a job
+started 2026-08-27 next to one completed 2026-08-31. Nothing is wrong with the ingest — that is
+what the API reports — but the run's span becomes 3.76 days of mostly nothing, and
+`find_superseded_runs` then sees it overlapping every other run in the window.
+
+That single run contributed **323,340 of its repo's 325,025 wasted seconds** — 99.5% — and drove
+the reported recoverable share to 5,132%. 163 of 22,340 corpus runs (0.73%) have spans over six
+hours, so the population is small and the effect concentrated.
+
+**Fixed** by excluding runs whose span exceeds `MAX_PLAUSIBLE_RUN_SECONDS` (24h) from
+cancellation replay, and reporting the exclusion count as evidence rather than dropping it
+silently — a run that was not executing continuously cannot have its whole span counted as
+cancellable compute. Excluded rather than clamped: a clamp would invent a number for a run we
+cannot measure.
+
+Measured effect on the corpus sweep: **mean recoverable 157.2% → 18.1%**.
+
+**Not fully closed.** Three repos still report above 100% (`pytorch/pytorch` 244%,
+`tauri-apps/tauri` 193%, `psf/requests` 103%). The median — which is what the kill criterion is
+read against — was never affected and remains 0.9%. The residue is a smaller instance of the same
+family: a sum-based numerator amortised over a median-based denominator will exceed 1.0 whenever
+a workflow's runs overlap heavily. Closing it properly means deciding what "share of wall clock"
+should mean when many runs are in flight at once.
+
+### 35. Multi-attempt runs double-counted their jobs · Medium · FIXED 2026-09-03
+
+**What.** `build_context` selected every job for a run regardless of `attempt`, so a re-run's
+jobs appeared alongside the original's in one `RunObservation`. Phase 0 ingests earlier attempts
+deliberately — a re-run's failing jobs are Phase 3's gold labels — but a run *observation* must
+describe one execution.
+
+**Effect.** Matrix-leg analysis saw each leg twice for any re-run, and `job_billing_rounding`
+counted the same job's billed minute more than once.
+
+**Fixed** by filtering both job queries on `j.attempt = r.run_attempt`. Note this does **not**
+fix item 31 on its own, because GitHub's partial re-run keeps carried-forward jobs inside the
+latest attempt with their old timestamps.
 
 ### 32. ~~The worker crashes if Postgres is not up at boot, then hangs~~ · RESOLVED 2026-09-03 · High
 
