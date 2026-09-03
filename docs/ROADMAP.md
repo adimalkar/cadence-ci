@@ -19,7 +19,7 @@ extend.
 | Phase | Weeks | State | The gate that decides it |
 |---|---|---|---|
 | **[0 · Ingest platform](phases/PHASE_0_INGEST.md)** | 1–3 | **Shipped**, post-ship audit done (12 bugs) | 50 repos ingesting continuously ✅ |
-| **[1 · Waste audit](phases/PHASE_1_WASTE_AUDIT.md)** | 4–10 | **In flight — one criterion failing** | Median ≥3 findings, ≥10% recoverable ❌ *(median 1, 0.0%)* |
+| **[1 · Waste audit](phases/PHASE_1_WASTE_AUDIT.md)** | 4–10 | **84% — one criterion failing** | Median ≥3 findings, ≥10% recoverable ❌ *(median 2, 0.9% — one finding short)* |
 | **[2 · Fix PRs](phases/PHASE_2_FIX_PRS.md)** | 11–13 | Not started | ≥5 Cadence PRs merged in repos we don't own |
 | **[3 · Flaky build intelligence](phases/PHASE_3_FLAKE.md)** | 14–20 | Not started — **demand signal is weak, read the phase doc** | ≥85% flaky precision on ≥10 held-out repos |
 | **[4 · Observability + trust](phases/PHASE_4_OBSERVABILITY.md)** | 21–24 | Not started | Calibration dashboard live and unattended |
@@ -54,6 +54,7 @@ phases rather than annoy:
 |---|---|
 | [`PRODUCT.md`](PRODUCT.md) | The thesis, and §6's credibility rules — replay vs projection |
 | [`CAVEATS.md`](CAVEATS.md) | Standing ledger of open findings, bugs and deliberate compromises. **Appended to after every implementation session.** |
+| [`phases/PROGRESS.md`](phases/PROGRESS.md) | How far into each phase, measured against the code rather than remembered. Re-measure it; do not re-read it. |
 | [`FEATURE_CANDIDATES.md`](FEATURE_CANDIDATES.md) | New feature candidates, each measured against the corpus or labelled unmeasured |
 | [`phases/PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md) | Field research — HN, r/devops, primary GitHub sources — behind several Phase 2/3 items |
 | [`cadence_product_strategy_review.md`](cadence_product_strategy_review.md) | External strategy review. Strong on positioning; see FEATURE_CANDIDATES for where its mockups conflict with §6 |

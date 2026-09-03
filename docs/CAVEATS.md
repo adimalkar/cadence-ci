@@ -35,6 +35,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 30 | Dollars-only findings cannot be ranked — `Savings` implies wall-clock | Medium | Open |
 | 31 | `recoverable_fraction` reported up to 5,132% — partial re-runs inflate cancellation replay | **High** | ✅ Largely fixed 2026-09-03 |
 | 35 | Multi-attempt runs were double-counting jobs in matrix and billing analysis | Medium | ✅ Fixed 2026-09-03 |
+| 36 | F8 and F6 specified but not started — the only candidates that can move Phase 1's criterion | Medium | Open |
 | 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
 | 33 | ~~Queue has no claim lease~~ — **wrong, the lease exists**; the worker hangs instead | **High** | ✅ Corrected + fixed |
 | 34 | Four large-backfill jobs hang the worker deterministically after exhausting the rate limit | **High** | Mitigated by 33's fix; cause is 27 |
@@ -531,6 +532,34 @@ retries with backoff until `MAX_ATTEMPTS` sends it to `failed`. The worker survi
 hang, and it does not stop these four jobs failing repeatedly. Closing it properly needs item 27
 — a credential with its own rate limit — and then a look at what the provider does when a
 rate-limit response arrives mid-pagination.
+
+### 36. The two rules that could move Phase 1's criterion are unbuilt · Medium
+
+**What.** Criterion 2 was re-measured 2026-09-03 at **median 2 findings** (target 3) and
+**median 0.9% recoverable** (target 10%) over 49 repos — improved from median 1 / 0.0%, with
+repos finding nothing down from 22 to 9. **One finding short on the median half.**
+
+The movement came from ingest depth, not from new rules: runs per workflow stream went from a
+median of 4 to 21 once the worker ran continuously. That source is now largely exhausted — 51%
+of streams already clear `MIN_RUNS = 20`, so further depth yields less.
+
+**Why the obvious candidate does not help.** `job_billing_rounding` was built expecting to move
+this number. It does not, and correctly so: standard runners are free on public repos, the corpus
+is entirely public, and the detector stays silent where nothing is billed. The criterion is
+measured on public repos, so **only rules finding wall-clock waste can move it**, and that one
+finds dollars.
+
+**What is left, both specified and neither started:**
+
+- **F8 · first-failing-step index** — for every failed job, the first step with a non-zero
+  conclusion, aggregated. Deterministic; no ML, no gold labels, no log parsing. True regardless
+  of who pays. Also the first stage of Phase 3, so it counts twice.
+- **F6 · scheduled-workflow waste** — `schedule:` runs on days the default branch had no
+  commits. Pure waste, invisible because it never fails.
+
+Also unbuilt: `matrix_legs_never_independent`, measured but never implemented (item 29).
+
+**Closes when.** One of F8 or F6 ships and the criterion is re-measured — not assumed to improve.
 
 ## Environmental and tooling notes
 
