@@ -5,7 +5,7 @@ and what would make us stop*. Each phase's execution checklist, ship criteria an
 now live in its own file under [`phases/`](phases/), because a single 500-line checklist
 made it hard to see any one phase whole.
 
-24 weeks, ~15 hrs/week, through Phase 4. Phases 5 and 6 roughly double that — read
+26 weeks, ~15 hrs/week, through Phase 4. Phases 5 and 6 roughly double that — read
 [`phases/PHASE_5_REVIEW.md`](phases/PHASE_5_REVIEW.md) and
 [`phases/PHASE_6_SECURITY.md`](phases/PHASE_6_SECURITY.md) before committing to either.
 
@@ -22,7 +22,7 @@ extend.
 | **[1 · Waste audit](phases/PHASE_1_WASTE_AUDIT.md)** | 4–10 | **84% — one criterion failing** | Median ≥3 findings, ≥10% recoverable ❌ *(median 2, 0.9% — one finding short)* |
 | **[2 · Fix PRs](phases/PHASE_2_FIX_PRS.md)** | 11–13 | Not started | ≥5 Cadence PRs merged in repos we don't own |
 | **[3 · Flaky build intelligence](phases/PHASE_3_FLAKE.md)** | 14–20 | Not started — **demand signal is weak, read the phase doc** | ≥85% flaky precision on ≥10 held-out repos |
-| **[4 · Observability + trust](phases/PHASE_4_OBSERVABILITY.md)** | 21–24 | Not started | Calibration dashboard live and unattended |
+| **[4 · Observability](phases/PHASE_4_OBSERVABILITY.md)** | 21–26 | Not started — **promoted to a pillar 2026-09-05** | A trace renders in two unrelated backends; calibration dashboard live |
 | **[5 · Merge readiness + review](phases/PHASE_5_REVIEW.md)** | 14–16, 35–40 | Not started | Zero stored-key appearances anywhere |
 | **[6 · Security, AI-first](phases/PHASE_6_SECURITY.md)** | 17–19, 31–46 | Not started | ≥95% precision on live-secret findings |
 
