@@ -3,7 +3,15 @@
 **Evidence-grounded CI intelligence.** Cadence reads your build history, tells you what it
 costs you in minutes and dollars, and opens the pull request that fixes it.
 
-> Status: **week 1, Phase 0.** Ingest only. Nothing user-facing yet.
+> **Status:** Phase 0 (ingest) shipped and running continuously. Phase 1 (waste audit) is
+> ~84% — eight detectors, the simulator and the report work end to end against a 51-repo
+> public corpus; one ship criterion is still failing and is being worked. Everything after
+> that is design documents. [`docs/phases/PROGRESS.md`](docs/phases/PROGRESS.md) is measured
+> against the code rather than remembered.
+>
+> **Apache-2.0, and contributions are welcome** — start with
+> [`CONTRIBUTING.md`](CONTRIBUTING.md), or say hello in
+> [Discussions](https://github.com/adimalkar/cadence-ci/discussions).
 
 ---
 
@@ -87,6 +95,18 @@ uv run pytest
 | [`docs/phases/`](docs/phases/) | Design docs, one per phase |
 | [`docs/EXPANSION.md`](docs/EXPANSION.md) | Researched feature candidates, ranked |
 | [`docs/PRODUCT_PLAN.md`](docs/PRODUCT_PLAN.md) | Engineering appendix |
+| [`docs/phases/PROGRESS.md`](docs/phases/PROGRESS.md) | How far into each phase, measured against the code |
+| [`docs/CAVEATS.md`](docs/CAVEATS.md) | Standing ledger of known gaps, bugs and deliberate compromises |
+
+## Contributing
+
+Apache-2.0. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers setup and the four rules a change
+has to respect — the unusual ones are that **evidence is enforced by a database trigger**,
+and that **the LLM is never the detector**.
+
+Issues labelled [`good first issue`](https://github.com/adimalkar/cadence-ci/labels/good%20first%20issue)
+are scoped to be completable without knowing the whole system. Vulnerabilities go through
+[`SECURITY.md`](SECURITY.md), never a public issue.
 
 ## License
 

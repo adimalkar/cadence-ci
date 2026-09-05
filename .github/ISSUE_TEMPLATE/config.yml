@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Question or idea
+    url: https://github.com/adimalkar/cadence-ci/discussions
+    about: Anything that is not a bug report or a concrete proposal starts better here.
+  - name: Security vulnerability
+    url: https://github.com/adimalkar/cadence-ci/security/advisories/new
+    about: Report privately. Never in a public issue.

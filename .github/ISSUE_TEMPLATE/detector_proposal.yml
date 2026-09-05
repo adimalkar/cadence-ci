@@ -1,0 +1,69 @@
+name: Detector proposal
+description: Propose a new rule — a specific, provable form of CI waste or failure
+labels: ["detector", "enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Detectors are the core of the product, so this template asks more than a normal
+        feature request. The bar is not "would this be useful" — it is **"can we prove it
+        from run history, and will it stay silent when it is not sure."**
+
+        Worth reading first: [`docs/FEATURE_CANDIDATES.md`](https://github.com/adimalkar/cadence-ci/blob/main/docs/FEATURE_CANDIDATES.md),
+        which holds the current candidates and, at the bottom, the ideas that were
+        considered and rejected with reasoning.
+
+  - type: textarea
+    id: waste
+    attributes:
+      label: What waste or failure does this find
+      description: One or two sentences. What is the user losing, and to what?
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: What evidence proves it
+      description: >
+        Which runs, which config range, which timing series. A rule that cannot cite
+        evidence cannot be inserted — a database trigger rejects it.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: basis
+    attributes:
+      label: Basis
+      description: >
+        **Replay** is arithmetic over timings that actually happened, and renders as a point
+        value. **Projection** predicts something that has not run, and must render as a
+        range. They are never blended.
+      options:
+        - replay — the minutes were really spent
+        - projection — a prediction about a change not yet made
+        - neither — a measurement finding with no savings attached
+    validations:
+      required: true
+
+  - type: textarea
+    id: silence
+    attributes:
+      label: When should it stay silent
+      description: >
+        The most important field. What guard stops this firing on thin data or an ambiguous
+        case? Cadence competes on precision — a wrong finding costs trust in every other
+        number on the page.
+    validations:
+      required: true
+
+  - type: textarea
+    id: prior_art
+    attributes:
+      label: Does an existing tool already do this
+      description: >
+        actionlint, zizmor, poutine, Harden-Runner, DevLake and the CI cost dashboards each
+        own ground we deliberately stay off. If one of them covers it, say why history
+        changes the answer.
+    validations:
+      required: false

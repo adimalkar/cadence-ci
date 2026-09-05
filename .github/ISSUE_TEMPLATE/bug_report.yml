@@ -1,0 +1,52 @@
+name: Bug report
+description: Something behaves differently from what the docs or the code say it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: [`docs/CAVEATS.md`](https://github.com/adimalkar/cadence-ci/blob/main/docs/CAVEATS.md)
+        is the standing ledger of known gaps and deliberate compromises. If it is already
+        there, adding what you saw to that entry is more useful than a new issue.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you ran, what happened, and what you expected instead.
+      placeholder: |
+        $ uv run cadence audit owner/repo
+        ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: >
+        Command output, a stack trace, or the finding as rendered. **Redact tokens and any
+        secret that appears in log output** — Cadence reads CI logs, so paste with care.
+    validations:
+      required: false
+
+  - type: input
+    id: repo
+    attributes:
+      label: Repository analysed
+      description: If it involves a public repo, naming it makes this reproducible.
+      placeholder: astral-sh/ruff
+    validations:
+      required: false
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: Output of `uv run cadence --version`, plus Python and Postgres versions.
+      placeholder: |
+        cadence 0.1.0
+        Python 3.12.7
+        PostgreSQL 16.3
+    validations:
+      required: true
