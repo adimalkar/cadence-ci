@@ -17,7 +17,7 @@ The dashboard in [`../ROADMAP.md`](../ROADMAP.md) says *where we are*. This file
 | **[1 · Waste audit](PHASE_1_WASTE_AUDIT.md)** | **21/25 · 84%** | 8 rules, simulator, report, cost model, eval harness | 1 ship criterion failing, 2 items blocked on people |
 | **[2 · Fix PRs](PHASE_2_FIX_PRS.md)** | 0/18 | Nothing | All of it. Prerequisite missing |
 | **[3 · Flake](PHASE_3_FLAKE.md)** | 0/18 | Nothing | All of it. Reordered, not started |
-| **[4 · Observability](PHASE_4_OBSERVABILITY.md)** | 0/10 | Nothing | All of it |
+| **[4 · Observability](PHASE_4_OBSERVABILITY.md)** | 0/24 | Nothing | All of it — **rescoped to a pillar 2026-09-05** |
 | **[5 · Review](PHASE_5_REVIEW.md)** | 0/27 | Nothing | All of it. Prerequisite missing |
 | **[6 · Security](PHASE_6_SECURITY.md)** | 0/25 | Nothing | All of it. 6A justified, 6B/6C behind demand |
 
@@ -140,8 +140,21 @@ it unusually good value.
 
 ### Phase 4 — Observability
 
-Nothing built. DORA is cut. Feedback decomposition is reframed as a ranked finding rather
-than a dashboard.
+Nothing built, and the phase doubled on 2026-09-05 when observability was promoted from a
+retention phase to a product pillar — 4 weeks to 6, 10 checklist items to 24.
+
+It is now two halves in a fixed order. **4a export** (OTel traces, Prometheus/OTLP metrics,
+findings as events) ships regardless of what gets cut; **4b surface** (flaky-cost report,
+feedback decomposition, live run view, public calibration dashboard) is second and carries
+the pre-decided cut order. DORA stays cut. Feedback decomposition stays reframed as a ranked
+finding rather than a dashboard.
+
+**One thing already exists**: [`webhook.py`](../../src/cadence/webhook.py) receives and
+queues GitHub deliveries, which is the transport 4b.4's live run view needs. Nothing else in
+this phase has any code behind it.
+
+Growth is logged as `CAVEATS` 39 rather than absorbed — the plan's far end grew while its
+near end (Phase 1 criterion 2) is still failing, and no kill criterion covers Phase 4.
 
 ### Phase 5 — Merge readiness + review
 
