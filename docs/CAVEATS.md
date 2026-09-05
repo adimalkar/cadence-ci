@@ -38,6 +38,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 36 | F8 and F6 specified but not started — the only candidates that can move Phase 1's criterion | Medium | Open |
 | 37 | Finding suppression has four schema columns and no writer — Phase 2's anti-spam rule 3 is unimplementable | **High** | Open |
 | 38 | Phase 6 overstated the novelty of verified liveness | Low | ✅ Corrected 2026-09-03 |
+| 39 | Phase 4 doubled to 6 weeks when observability became a pillar — no kill criterion covers it | Medium | Open |
 | 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
 | 33 | ~~Queue has no claim lease~~ — **wrong, the lease exists**; the worker hangs instead | **High** | ✅ Corrected + fixed |
 | 34 | Four large-backfill jobs hang the worker deterministically after exhausting the rate limit | **High** | Mitigated by 33's fix; cause is 27 |
@@ -602,6 +603,38 @@ failure mode as items 31 and 33: a plausible diagnosis asserted before it was ch
 
 **Corrected to** the claim that survives: nobody verifies liveness **over CI log history**,
 because nobody keeps CI logs. Make the claim about the corpus, not the technique.
+
+### 39. Observability became a pillar and the schedule absorbed the cost quietly · Medium
+
+**What.** On 2026-09-05 observability was promoted from a four-week retention phase to a
+product pillar, split into export (4a) and surface (4b). The plan grew from 24 weeks to 26.
+`PRODUCT.md`, `ROADMAP.md` and the phase file now agree, but three things were not
+re-derived and should not be assumed:
+
+1. **The 26-week figure is the old estimate plus two weeks.** 4a is new work — an OTLP
+   exporter, a metrics endpoint, an event emitter and their tests — and two weeks for it is
+   an assertion, not an estimate. The slip rule (150% of budget → cut to the deterministic
+   core) applies; for this phase the core is 4a.
+2. **No kill criterion covers Phase 4.** Every other phase has one in `ROADMAP.md`. A phase
+   that is now a pillar and has none is the one most likely to sprawl — precisely what its
+   own risk section warns about.
+3. **The résumé line is still week 13**, and Phase 4 sits after Phase 3, so this adds two
+   weeks to the *far* end. Worth confirming that is intended rather than accepted by
+   default: the export half is arguably more demoable than Phase 3, whose demand signal
+   item 22 already questions.
+
+**Why it matters.** Phase 1's criterion 2 is still failing at roughly week 10 of a plan that
+now runs to 26. Growing the far end of a schedule whose near end is behind is how plans stop
+being believed. This entry exists so the growth is on the record rather than absorbed.
+
+**What would close it.** Either a kill criterion for Phase 4 in `ROADMAP.md` with a week
+attached, or an explicit decision to move 4a earlier — before Phase 3 — on the grounds that
+it is cheap, differentiated, and unblocks Phase 6's audit stream.
+
+**Also unresolved, and smaller.** The CI/CD semantic conventions Cadence would emit are
+**Release Candidate, not stable** (checked 2026-09-05). Attribute names can still move, and
+a user's dashboards break when they do with no change on their side. The phase file says to
+pin the version and treat a bump as a breaking change; nothing enforces that yet.
 
 ## Environmental and tooling notes
 

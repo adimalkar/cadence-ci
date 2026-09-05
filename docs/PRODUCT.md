@@ -15,7 +15,7 @@
 | [`phases/PHASE_1_WASTE_AUDIT.md`](phases/PHASE_1_WASTE_AUDIT.md) | The waste audit, weeks 4–10 |
 | [`phases/PHASE_2_FIX_PRS.md`](phases/PHASE_2_FIX_PRS.md) | Remediation PRs, weeks 11–13 |
 | [`phases/PHASE_3_FLAKE.md`](phases/PHASE_3_FLAKE.md) | Flaky build intelligence, weeks 14–20 |
-| [`phases/PHASE_4_OBSERVABILITY.md`](phases/PHASE_4_OBSERVABILITY.md) | Observability + calibration, weeks 21–24 |
+| [`phases/PHASE_4_OBSERVABILITY.md`](phases/PHASE_4_OBSERVABILITY.md) | Observability — OTel export, then surface + calibration, weeks 21–26 |
 | [`phases/PHASE_5_REVIEW.md`](phases/PHASE_5_REVIEW.md) | Merge readiness + grounded BYO-key review |
 | [`phases/PHASE_6_SECURITY.md`](phases/PHASE_6_SECURITY.md) | Security — AI-specific first, then SCA + reachability |
 | [`EXPANSION.md`](EXPANSION.md) | Researched feature candidates, ranked, with a do-not-build tier |
@@ -381,9 +381,17 @@ Assumes ~15 hrs/week.
 | 2 — Fix PRs | 11–13 | 13 | Auto-generated remediation PRs with simulated savings |
 | **← résumé line** | | **13** | **Portfolio-complete, demoable, has users** |
 | 3 — Flaky intelligence | 14–20 | 20 | Class F: clustering, classifier, blame candidates |
-| 4 — Observability | 21–24 | 24 | DORA, trends, org rollups, public precision dashboard |
+| 4 — Observability | 21–26 | 26 | OTel/Prometheus export, then trends, live view, public precision dashboard |
 
-**24 weeks, résumé line at 13.** Two structural improvements over the earlier ordering:
+**26 weeks, résumé line at 13.** Phase 4 grew from 4 weeks to 6 on 2026-09-05, when
+observability was promoted from a retention phase to a product pillar. The order inside it
+carries the decision: **export first, surface second.** Reasoning in
+[`phases/PHASE_4_OBSERVABILITY.md`](phases/PHASE_4_OBSERVABILITY.md).
+
+There is no row for it in the table above because nobody sells it. Every CI observability
+product demands instrumentation, and every dashboard is a place data goes and does not come
+back from. Cadence emits standards-compliant telemetry about CI **you have already run**,
+with no runner agent — the read-only position applied to observability, not a new one. Two structural improvements over the earlier ordering:
 
 - **Phase 0 shrank from 5 weeks to 3** because the waste audit executes no untrusted code.
   The sandbox and the BYO-key vault — the two hardest and slowest items — are not needed
