@@ -354,7 +354,7 @@ def worker_run(
 def audit(
     repo: str = typer.Argument(..., help="owner/name"),
     window: int = typer.Option(90, help="Days of history to analyse."),
-    limit: int = typer.Option(200, help="Max runs to analyse."),
+    limit: int = typer.Option(500, help="Max runs to analyse."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Report without writing findings."),
     paths: bool = typer.Option(
         False, "--paths",

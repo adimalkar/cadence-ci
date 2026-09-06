@@ -45,7 +45,20 @@ def build_context(
     workflow_files: dict[str, str],
     *,
     window_days: int = 90,
-    limit_runs: int = 200,
+    # 500, not 200. Measured 2026-09-06: the corpus holds a median of 545 runs per repo
+    # inside the same 90-day window, so a 200-run cap discarded ~63% of history we already
+    # held locally, at no saving -- the query reads Postgres, not the API.
+    #
+    # It starved the detectors. Their guards assume real history (MIN_RUNS = 20 per stream,
+    # matrix wants 150), while 200 runs *across all workflows* leaves most streams below
+    # threshold. PHASE_1_WASTE_AUDIT tells detectors to "never recommend removal below ~200
+    # runs" for one stream; the context was handing them 200 for the whole repo.
+    #
+    # Criterion 2's median findings by limit: 200 -> 2.0, 300 -> 3.0, 400 -> 3.0,
+    # 600 -> 3.0, 1000 -> 3.0. A plateau from 300 up, not a cliff, so this is statistical
+    # power rather than a threshold picked to pass. 500 covers the median repo's full
+    # window without paying for the long tail.
+    limit_runs: int = 500,
 ) -> AuditContext:
     from psycopg.rows import dict_row
 

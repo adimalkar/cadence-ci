@@ -85,19 +85,25 @@ hatched), `findings.py`, `evalsweep.py`, `configstore.py`.
 | Median recoverable | 0.0% | **0.9%** | ≥10% |
 | Repos ≥10% recoverable | 9/50 | **12/49** | — |
 
-**Re-measured 2026-09-06 after `first_failing_step` shipped** — 49 repos, 90 days, 200 runs,
-recoverable scoped to the dominant workflow as `summarize_pipeline` requires:
+**Re-measured 2026-09-06 after `first_failing_step` shipped, at `limit_runs=500`** — 51
+repos, 90 days, recoverable scoped to the dominant workflow as `summarize_pipeline` requires:
 
 | | Without F8 | With F8 | Target |
 |---|---:|---:|---:|
-| Median findings | 2.0 | **2.0** | ≥3 |
-| Repos with ≥3 findings | 17 | **22** | — |
-| Repos finding nothing | 8 | **6** | — |
-| Median recoverable | 1.62% | **1.62%** | ≥10% |
+| **Median findings** | 2.0 | **3.0** ✅ | ≥3 |
+| Repos with ≥3 findings | 25 | **34** | — |
+| Repos finding nothing | 8 | **5** | — |
+| Median recoverable | 3.46% | **3.46%** ❌ | ≥10% |
 
-**The median did not move.** F8 fires on 21 of 49 repos and shifts both tails without
-touching the middle; recoverable is unchanged because the detector abstains from a savings
-figure. Reasoning, and why the fix is not to lower its threshold, in `CAVEATS` 36.
+**The findings half now passes.** It did not at the old `limit_runs=200` default, which fed
+the audit ~37% of the history already in Postgres — the corpus median is 545 runs per repo.
+The median reaches 3.0 at a limit of 300 and holds to 1000, so this is statistical power
+rather than a threshold picked to pass, and **F8 carries it**: without F8 the median is 2.0
+at every limit. Curve in `CAVEATS` 36.
+
+**Recoverable still fails** at 3.46%, and it plateaus too — more history will not fix that
+half. It needs rules recovering large wall-clock on the dominant workflow, and no measured
+candidate does.
 
 **Zero-finding repos falling from 22 to 9 is the real movement**, and it came from ingest
 depth rather than new rules: median runs per workflow stream went from 4 to 21, and streams

@@ -321,9 +321,10 @@ pitching starts.
 - [ ] **Median repo: ≥3 findings, ≥10% recoverable — FAILS**, but by less than it did.
       Re-measured 2026-09-03 over 49 repos: **median 2 findings** (mean 3.02, max 22,
       **9/49** find nothing) and **median 0.9% recoverable** (mean 18.1%, 12/49 at ≥10%).
-      **Re-measured 2026-09-06** after `first_failing_step`: median findings **2.0**
-      (22/49 at ≥3, 6/49 finding nothing), median recoverable **1.62%**. The new rule moved
-      both tails and left the median where it was — see `CAVEATS` 36.
+      **Re-measured 2026-09-06** at `limit_runs=500`: median findings **3.0 — the findings
+      half now passes** (34/51 at ≥3, 5/51 finding nothing), median recoverable **3.46%**,
+      which still fails. The old 200-run default was feeding the audit ~37% of stored
+      history; see `CAVEATS` 36 for the curve.
       Was median 1 / mean 1.18 / 22-of-50-empty on 2026-08-24. The movement came from
       ingest depth, not new rules — runs per workflow stream went from a median of 4 to
       21 once the worker ran continuously. **One finding short on the median.**

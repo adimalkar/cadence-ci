@@ -19,7 +19,7 @@ extend.
 | Phase | Weeks | State | The gate that decides it |
 |---|---|---|---|
 | **[0 · Ingest platform](phases/PHASE_0_INGEST.md)** | 1–3 | **Shipped**, post-ship audit done (12 bugs) | 50 repos ingesting continuously ✅ |
-| **[1 · Waste audit](phases/PHASE_1_WASTE_AUDIT.md)** | 4–10 | **84% — one criterion failing** | Median ≥3 findings, ≥10% recoverable ❌ *(median 2, 0.9% — one finding short)* |
+| **[1 · Waste audit](phases/PHASE_1_WASTE_AUDIT.md)** | 4–10 | **88% — half a criterion left** | Median ≥3 findings ✅ *(3.0)*, ≥10% recoverable ❌ *(3.46%)* |
 | **[2 · Fix PRs](phases/PHASE_2_FIX_PRS.md)** | 11–13 | Not started | ≥5 Cadence PRs merged in repos we don't own |
 | **[3 · Flaky build intelligence](phases/PHASE_3_FLAKE.md)** | 14–20 | Not started — **demand signal is weak, read the phase doc** | ≥85% flaky precision on ≥10 held-out repos |
 | **[4 · Observability](phases/PHASE_4_OBSERVABILITY.md)** | 21–26 | Not started — **promoted to a pillar 2026-09-05** | A trace renders in two unrelated backends; calibration dashboard live |

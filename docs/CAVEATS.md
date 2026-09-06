@@ -35,13 +35,16 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 30 | Dollars-only findings cannot be ranked — `Savings` implies wall-clock | Medium | Open |
 | 31 | `recoverable_fraction` reported up to 5,132% — partial re-runs inflate cancellation replay | **High** | ✅ Largely fixed 2026-09-03 |
 | 35 | Multi-attempt runs were double-counting jobs in matrix and billing analysis | Medium | ✅ Fixed 2026-09-03 |
-| 36 | F8 shipped and **did not** move criterion 2; F6 remains the last specified candidate | **High** | Open — re-measured 2026-09-06 |
+| 36 | Criterion 2's findings half **now passes** (median 3) once the audit reads the history we hold; recoverable still fails | **High** | Half open — re-measured 2026-09-06 |
 | 37 | Finding suppression has four schema columns and no writer — Phase 2's anti-spam rule 3 is unimplementable | **High** | Open |
 | 38 | Phase 6 overstated the novelty of verified liveness | Low | ✅ Corrected 2026-09-03 |
 | 39 | Phase 4 doubled to 6 weeks when observability became a pillar — no kill criterion covers it | Medium | Open |
 | 40 | F8's "infrastructure vs your tests" split was ~6x overstated — measured at 2.2%, not ~14% | Medium | ✅ Corrected 2026-09-06 |
 | 41 | Every `savings=None` finding rendered as "config bug" in the replay swatch | Medium | ✅ Fixed 2026-09-06 |
 | 42 | A stacked PR merged into an already-merged branch; its work never reached `main` | Medium | ✅ Recovered 2026-09-06 |
+| 43 | F6 measured before building: fires on 4 of 51 repos, and its top hits are maintenance bots | Medium | ✅ Closed — not building |
+| 44 | `evalsweep` measures the ship criterion with `irrelevant_path_trigger` structurally disabled | Medium | Open |
+| 45 | Three of nine built rules fire on zero corpus repos | Medium | Open |
 | 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
 | 33 | ~~Queue has no claim lease~~ — **wrong, the lease exists**; the worker hangs instead | **High** | ✅ Corrected + fixed |
 | 34 | Four large-backfill jobs hang the worker deterministically after exhausting the rate limit | **High** | Mitigated by 33's fix; cause is 27 |
@@ -567,7 +570,48 @@ Also unbuilt: `matrix_legs_never_independent`, measured but never implemented (i
 
 **Closes when.** One of F8 or F6 ships and the criterion is re-measured — not assumed to improve.
 
-### Update 2026-09-06: F8 shipped, and the criterion did not move
+### Update 2026-09-06 (second pass): the first measurement was under-powered
+
+**The section below is kept because it was wrong in an instructive way.** It concluded that
+F8 did not move the criterion. That was true of the *measurement*, not of the detector.
+
+`build_context` defaulted to `limit_runs=200`. The corpus holds a **median of 545 runs per
+repo** inside the same 90-day window, so the audit was reading about **37% of history
+already in Postgres** — no API call saved, since the query is local.
+
+Criterion 2 against how much history the audit is allowed to read:
+
+| `limit_runs` | repos | median findings | ≥3 | zero | median recoverable | F8 fires |
+|---:|---:|---:|---:|---:|---:|---:|
+| 200 | 49 | 2.0 | 22 | 6 | 1.62% | 21/49 |
+| **300** | 51 | **3.0** | 30 | 6 | 3.61% | 27/51 |
+| 400 | 51 | 3.0 | 31 | 5 | 3.23% | 31/51 |
+| 600 | 51 | 3.0 | 34 | 5 | 3.46% | 33/51 |
+| 1000 | 52 | 3.0 | 35 | 4 | 3.38% | 39/52 |
+
+**The findings half of criterion 2 passes at 300 and stays passing to 1000** — a plateau
+across a 3.3x range, which is what distinguishes statistical power from a threshold picked
+to make a number pass. F8 is what carries it: without F8 the median is 2.0 at every limit.
+
+**Why 200 starved the detectors.** Their guards assume real history — `MIN_RUNS = 20` per
+workflow stream, 150 for the matrix rule, `MIN_FAILURES = 20` for F8 — while 200 runs
+*across all workflows* leaves most streams under threshold.
+[`PHASE_1_WASTE_AUDIT.md`](phases/PHASE_1_WASTE_AUDIT.md) instructs detectors to "never
+recommend removal below ~200 runs" **for one stream**; the context was handing them 200 for
+the entire repo. 200 was an undocumented default in two call sites, never a decision.
+
+**Changed** to `limit_runs=500` in `build_context`, `evalsweep.sweep` and the `audit` CLI —
+enough to cover the median repo's full window without paying for the long tail.
+
+**Still failing: recoverable.** 3.46% against a 10% target, and it plateaus too, so more
+history will not fix it. That half needs rules that recover large wall-clock on the dominant
+workflow, and no measured candidate does.
+
+**The lesson worth keeping.** Three "this rule doesn't move the criterion" conclusions were
+recorded before anyone asked whether the harness was feeding the detectors enough data to
+fire. Check the measurement before concluding about the thing measured.
+
+### Superseded 2026-09-06: F8 shipped, and the criterion did not move
 
 Measured across 49 repos at the audit's own limits (90 days, 200 runs), before and after:
 
@@ -738,6 +782,90 @@ When stacking, retarget the base **by hand** the moment the parent merges, and v
 `git merge-base --is-ancestor <merge-sha> origin/main` before believing a PR landed. The
 claim "GitHub retargets automatically" is false for this repo's settings and should not be
 repeated.
+
+### 43. F6 measured before building, and should not be built · Medium · CLOSED 2026-09-06
+
+**What.** `CAVEATS` 36 said F6 should be measured before it is built, and that the question
+was not whether the rule is sound but whether it fires on the *median* repo. Measured
+2026-09-06.
+
+The signal is real. Consecutive scheduled runs of the same workflow with an identical
+`head_sha` tested the same code twice — no commit API needed, the evidence is self-contained.
+**74% of all scheduled runs (1,882 of 2,544) are redundant by that test**, and only **13
+(0.7%)** produced a different outcome from the previous run. 99.3% reproduce a known result
+on unchanged code.
+
+**It still should not be built.**
+
+| | |
+|---|---|
+| Repos with any redundant scheduled run | 30/51 |
+| **Median waste per repo** | **0.13 h** — eight minutes over 90 days |
+| Streams surviving a 5-minute median-duration floor | **6, across 4 repos** |
+| Share of surviving hours in one repo's `daily.yml` | 165.9 of 257 h |
+
+The top hits by volume are `close-stale.yml`, `keepalive.yml`, `lock.yml`,
+`dependabot-triage`, `triage-scheduled-tasks` — **maintenance bots whose entire purpose is to
+run on a clock regardless of commits.** Flagging them is a false positive, not a finding. A
+5-minute floor separates them cleanly (the dropped set runs at 4s, 5s, 18s, 22s per run), and
+leaves six streams across four repos.
+
+**Closed as "will not build".** A rule reaching 8% of repos with a median of eight minutes
+cannot justify its own maintenance, and it would ship a false-positive class we would then
+have to suppress.
+
+**Worth keeping from it:** the same-`head_sha` comparison is a good primitive, and the
+5-minute floor is a clean, reasoned separator between test workflows and housekeeping bots.
+If a scheduled-waste rule is ever revisited, start there.
+
+### 44. The criterion harness runs with a rule switched off · Medium
+
+**What.** `irrelevant_path_trigger` reads `ctx.changed_paths`, populated only by
+`enrich_changed_paths`, which costs one API request per distinct commit and is therefore
+opt-in. The `audit` CLI calls it. **`evalsweep.py` never does** — so every ship-criterion
+measurement has been taken with one of nine rules structurally unable to fire.
+
+**Why it matters.** The criterion is reported as the audit's yield. Reporting it with a rule
+silently disabled by omission overstates nothing, but it means the number does not describe
+the product being shipped, and nobody would notice from the output.
+
+**Partially exonerating.** Probed on the six largest corpus repos with enrichment forced on
+(60 runs each): **it still did not fire once.** So the omission is not why the rule is
+silent — the rule is simply very narrow, or `MIN_RUNS = 30` per stream is unreachable at that
+enrichment depth. Both are worth knowing and neither was known before.
+
+**What would close it.** Either call `enrich_changed_paths` in the sweep and report its
+coverage alongside the criterion, or delete the rule. A rule that fires on nothing is not
+free: it is maintained, tested, and counted in "nine rules built".
+
+### 45. Three of nine built rules fire on zero corpus repos · Medium
+
+**What.** Per-rule reach across 49 audited repos at `limit_runs=200`:
+
+| Rule | Fires on |
+|---|---:|
+| `no_run_cancellation` | 69.4% |
+| `first_failing_step` | 42.9% |
+| `long_tail_step` | 28.6% |
+| `no_dependency_cache` | 18.4% |
+| `cache_key_never_hits` | 8.2% |
+| `false_needs_edge` | 6.1% |
+| `non_discriminating_matrix_leg` | **0%** |
+| `irrelevant_path_trigger` | **0%** |
+| `job_billing_rounding` | **0%** |
+
+**Diagnosed, and each is different.** `job_billing_rounding` is correct — the corpus is
+public and standard runners are free, so it stays silent by design (item 24).
+`irrelevant_path_trigger` is item 44. `non_discriminating_matrix_leg` requires `MIN_RUNS =
+150` for one workflow stream while the audit read 200 runs across *all* streams; 21 repos
+have a qualifying stream in the database and almost none did inside the context. Raising the
+default to 500 (item 36) should help it, and that was not re-measured per-rule.
+
+**Why it matters.** "Nine rules built" is the headline in `PROGRESS.md`, and six of them
+produce every finding the corpus sees. That is worth knowing before adding a tenth.
+
+**What would close it.** Re-measure per-rule reach at `limit_runs=500`, then decide
+per rule: fix, retune with a stated reason, or delete.
 
 ## Environmental and tooling notes
 
