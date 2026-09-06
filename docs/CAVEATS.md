@@ -864,8 +864,35 @@ default to 500 (item 36) should help it, and that was not re-measured per-rule.
 **Why it matters.** "Nine rules built" is the headline in `PROGRESS.md`, and six of them
 produce every finding the corpus sees. That is worth knowing before adding a tenth.
 
-**What would close it.** Re-measure per-rule reach at `limit_runs=500`, then decide
-per rule: fix, retune with a stated reason, or delete.
+**Re-measured at `limit_runs=500`, 51 repos, 2026-09-06:**
+
+| Rule | at 200 | at 500 |
+|---|---:|---:|
+| `no_run_cancellation` | 69.4% | **76.5%** |
+| `first_failing_step` | 42.9% | **66.7%** |
+| `long_tail_step` | 28.6% | 27.5% |
+| `no_dependency_cache` | 18.4% | 15.7% |
+| `cache_key_never_hits` | 8.2% | 7.8% |
+| `false_needs_edge` | 6.1% | 7.8% |
+| `non_discriminating_matrix_leg` | **0%** | **3.9%** |
+| `irrelevant_path_trigger` | 0% | **0%** |
+| `job_billing_rounding` | 0% | 0% — correct, public corpus |
+
+**Two of the three zero-firing rules are explained.** The matrix rule came alive at 2 repos
+once it could see 150 runs on a stream, confirming the diagnosis. `job_billing_rounding`
+stays silent by design (item 24).
+
+**`irrelevant_path_trigger` is the one genuinely unexplained rule.** Zero at both limits,
+and zero even with enrichment forced on the six largest repos (item 44). It is maintained,
+tested, and counted in "nine rules built" while producing nothing.
+
+**Still open.** Decide `irrelevant_path_trigger`'s fate — instrument it to report why it
+withholds, or delete it. A rule that has never fired on 51 repos is not evidence of a clean
+corpus; it is an untested code path.
+
+Also worth noting: the reach numbers shifted slightly *down* for three rules at the higher
+limit (`long_tail_step`, `no_dependency_cache`). More history means more runs failing a
+consistency test, which is the guards working, not regressing.
 
 ## Environmental and tooling notes
 
