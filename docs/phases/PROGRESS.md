@@ -138,6 +138,48 @@ phase doc says to read its kill criterion literally rather than as a formality.
 **F8 belongs to this phase's first stage** and also moves Phase 1's criterion, which makes
 it unusually good value.
 
+## Pending — picked up here next
+
+Written 2026-09-06 so open threads survive a context loss. Ordered by what unblocks the most,
+not by size. Each links to the entry holding the detail.
+
+### Blocking a phase
+
+| | What is left | Why it matters |
+|---|---|---|
+| **Recoverable criterion** | 3.46% against a ≥10% target, and it plateaus with more history ([`CAVEATS`](../CAVEATS.md) 36) | The **last thing between Phase 1 and done**. Needs rules recovering large wall-clock on the *dominant* workflow; no measured candidate does |
+| **PR → run linkage** | Not started | One piece of work behind Phase 2 realized savings, Phase 5 stacked-PR findings, and F3 PR-impact |
+| **Worker credential** | Shared personal token ([`CAVEATS`](../CAVEATS.md) 27) | Caps any feature needing more ingest; needs a fine-grained PAT or App token |
+
+### Loose ends from shipped work
+
+| | What is left |
+|---|---|
+| `irrelevant_path_trigger` | Fires on **0 of 51** repos at both run limits, and zero even with enrichment forced. Instrument it to report why it withholds, or delete it ([`CAVEATS`](../CAVEATS.md) 44, 45) |
+| `evalsweep` enrichment | The criterion harness never calls `enrich_changed_paths`, so it measures with one rule structurally disabled ([`CAVEATS`](../CAVEATS.md) 44) |
+| `non_discriminating_matrix_leg` | Revived from 0% to 3.9% by the higher run limit. `MIN_RUNS = 150` may still be too tight — never re-argued with evidence |
+| Phase 4 kill criterion | Every other phase has one; Phase 4 has none, and it is now a 6-week pillar ([`CAVEATS`](../CAVEATS.md) 39) |
+| Dollars-only findings | Cannot be ranked — `Savings` implies wall-clock ([`CAVEATS`](../CAVEATS.md) 30). Needs a `PRODUCT.md` §6 decision |
+| Suppression surfaces | `.cadenceignore` costs one API call per audit and is fetched best-effort. No `closed_pr` writer yet — that arrives with the first fixer |
+
+### Measured and deliberately not built
+
+Recorded so they are not re-proposed. **`F6` scheduled-workflow waste** — 4/51 repos, median
+8 minutes, top hits are maintenance bots ([`CAVEATS`](../CAVEATS.md) 43). **Overbroad workflow
+`permissions:`** — zizmor owns it, and history cannot strengthen the rule
+([`FEATURE_CANDIDATES`](../FEATURE_CANDIDATES.md)). **`matrix_legs_never_independent`** —
+measured, never built; distinct from the shipped `non_discriminating_matrix_leg`.
+
+### The discipline that produced this list
+
+Three rules were built or planned on the assumption they would move Phase 1's criterion.
+`job_billing_rounding` is silent on a public corpus; F6 reaches 8% of repos; F8 appeared to do
+nothing until the harness was found to be reading 37% of stored history. **Measure reach on the
+median repo before building**, and check the measurement before concluding about the thing
+measured.
+
+---
+
 ### Phase 4 — Observability
 
 Nothing built, and the phase doubled on 2026-09-05 when observability was promoted from a

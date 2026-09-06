@@ -175,9 +175,11 @@ Rule 4 deserves emphasis. The no-install corpus exists to build and evaluate det
 and to generate reports we offer *in an issue, when invited*. It does not license writing
 to 50 repos.
 
-### Rule 3 is currently unimplementable — fix that before the first PR
+### Rule 3 was unimplementable — fixed 2026-09-06, before any fixer exists
 
-**Found 2026-09-03.** Rule 3 says a closed PR permanently suppresses that finding at
+**Found 2026-09-03, closed 2026-09-06** by migration `006` and
+[`suppress.py`](../../src/cadence/suppress.py). The history below is kept because the gap is
+instructive: every part of the mechanism existed except the part a person touches. Rule 3 says a closed PR permanently suppresses that finding at
 `rule_repo` scope. Nothing in the codebase can do that.
 
 The schema is ready and has been since migration `001`: `finding.status` takes
@@ -195,15 +197,22 @@ a Cadence PR, and the next audit proposes it again, and the one after that. Rule
 open-PR cap slows the rate; it does not stop the loop. A bot that re-asks a settled question is
 a bot that gets muted, and rule 4 explains why that damage does not come back.
 
-**Sequencing:** ship suppression before the first fixer, not alongside it. It is one parser,
-one CLI verb and one `UPDATE` — cheap now, and expensive after the first maintainer has been
-asked twice. Design is **F12** in [`FEATURE_CANDIDATES.md`](../FEATURE_CANDIDATES.md); the
-shape is borrowed from Infisical's `.infisicalignore` plus inline `infisical-scan:ignore`.
+**Sequencing held:** suppression shipped before the first fixer, not alongside it. Design was
+**F12** in [`FEATURE_CANDIDATES.md`](../FEATURE_CANDIDATES.md); the shape is borrowed from
+Infisical's `.infisicalignore` plus inline `infisical-scan:ignore`.
 
-Two rules to settle while it is cheap: a **reason is mandatory** (a suppression without one
-becomes a permanent mystery, which is what `suppressed_reason` exists to prevent), and
-suppression is **per-rule, never global** — a blanket mute is indistinguishable from
-uninstalling, and it hides the signal that a rule is miscalibrated.
+Both rules were made structural rather than conventional:
+
+- **A reason is mandatory**, enforced by a database CHECK (`finding_suppression_needs_reason`)
+  rather than by review — the same discipline as the evidence trigger. A blank reason is
+  rejected too.
+- **Suppression is per-rule, never global.** No wildcard exists: `*` is a rule name like any
+  other and matches nothing. A blanket mute is indistinguishable from uninstalling and hides
+  the signal that a rule is miscalibrated.
+
+`suppress_source` records the route — `ignore_file`, `inline`, `cli` or `closed_pr` — because
+a suppression committed to the repo is a team decision and one typed at a CLI is a person's,
+and they age differently. Rule 3's route is `closed_pr`.
 
 ---
 
@@ -251,10 +260,10 @@ Moved from `ROADMAP.md` 2026-08-30.
 - [ ] Opt-in `pull_requests:write` / `contents:write`, separate from read scopes
 - [ ] Anti-spam: 1 open PR max → 3 after first merge; report-first; closed = suppressed;
       **never an unsolicited PR on a read-only-ingested repo**
-- [ ] **Suppression a user can reach — ship before the first fixer.** `.cadenceignore`,
-      inline `# cadence:ignore <rule_id> — <reason>`, and `cadence suppress/unsuppress`.
-      Reason mandatory; per-rule scope only, never global. The four schema columns exist
-      and nothing writes them, so rule 3 above cannot currently be honoured (F12)
+- [x] **Suppression a user can reach — shipped 2026-09-06, before the first fixer.**
+      `.cadenceignore`, inline `# cadence:ignore <rule> — <reason>`, and
+      `cadence suppress add/remove/list`. Reason mandatory (database CHECK, migration 006);
+      per-rule scope only — no global scope exists. Rule 3 is now testable and tested (F12)
 - [ ] Realized-savings writeback (30-day post-merge window)
 
 **Prerequisite now satisfied.** The round-trip criterion was not reproducible while config
