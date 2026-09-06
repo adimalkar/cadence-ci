@@ -35,7 +35,7 @@ runs, 55 repos.
 | **F9** | Peer percentile from the corpus | Unmeasured — corpus-only moat | Every repo | Medium |
 | **F10** | Artifact upload never downloaded | Unmeasured — needs log parsing | Artifact users | Medium |
 | **F11** | Expired-credential failure clusters | Unmeasured — logs already stored | Repos with external auth | Small |
-| **F12** | User-reachable finding suppression | **Schema exists, no writer** | Every repo — **gates Phase 2** | Small |
+| **F12** | User-reachable finding suppression | **Schema existed, no writer** | Every repo — gated Phase 2 | ✅ **Built** |
 
 Candidates already carried in [`phases/PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md)
 — `no_job_timeout`, `pipeline_fix_churn`, `cache_evicted_before_reuse`, the exit-137 split,
@@ -407,6 +407,12 @@ Two rules worth fixing now, while it is cheap:
 
 Cheap — one parser, one CLI verb, one `UPDATE` — and it converts four dormant columns into a
 working feature.
+
+**Built 2026-09-06** (migration `006`, [`suppress.py`](../src/cadence/suppress.py)). Both
+rules above were made structural rather than conventional: the mandatory reason is a database
+CHECK, and no global scope exists — `*` is a rule name like any other and matches nothing.
+`suppress_source` records whether a suppression came from the repo, a CLI, or a closed PR,
+because those age differently. Phase 2's anti-spam rule 3 is now testable and tested.
 
 ---
 

@@ -29,6 +29,15 @@ from cadence.report import (
 from cadence.report import (
     write_report as write_html_report,
 )
+from cadence.suppress import (
+    IGNORE_FILE,
+    SuppressionError,
+    collect,
+    list_suppressed,
+    suppress_one,
+    unsuppress_one,
+)
+from cadence.suppress import apply as suppress_apply
 from cadence.worker import run_worker
 
 app = typer.Typer(no_args_is_help=True, help="Evidence-grounded CI intelligence.")
@@ -350,6 +359,92 @@ def worker_run(
     asyncio.run(_run())
 
 
+async def _fetch_ignore_file(provider, repo) -> str | None:
+    """Best-effort read of `.cadenceignore`. One request; absence is normal."""
+    try:
+        return await provider.fetch_text_file(repo, IGNORE_FILE)
+    except Exception:  # never fail an audit because a convenience file could not be read
+        return None
+
+
+suppress_app = typer.Typer(no_args_is_help=True, help="Silence a finding, with a reason.")
+app.add_typer(suppress_app, name="suppress")
+
+
+@suppress_app.command("add")
+def suppress_add(
+    finding_id: str = typer.Argument(..., help="Finding id (uuid)."),
+    reason: str = typer.Option(
+        ..., "--reason", "-r",
+        help="Why. Required -- a suppression without one becomes a permanent mystery.",
+    ),
+    scope: str = typer.Option(
+        "finding", "--scope",
+        help="finding | rule_path | rule_repo. There is deliberately no global scope.",
+    ),
+) -> None:
+    """Suppress one finding by id."""
+    if scope not in ("finding", "rule_path", "rule_repo"):
+        console.print("[red]scope must be finding, rule_path or rule_repo[/red]")
+        raise typer.Exit(1)
+    with connect() as conn:
+        try:
+            ok = suppress_one(conn, finding_id, reason=reason, scope=scope)  # type: ignore[arg-type]
+        except SuppressionError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(1) from None
+    if not ok:
+        console.print(f"[yellow]no finding {finding_id}[/yellow]")
+        raise typer.Exit(1)
+    console.print(f"[green]suppressed[/green] {finding_id} ({scope}) — {reason}")
+
+
+@suppress_app.command("remove")
+def suppress_remove(
+    finding_id: str = typer.Argument(..., help="Finding id (uuid)."),
+) -> None:
+    """Un-suppress a finding. It returns to `new` and argues for itself again."""
+    with connect() as conn:
+        ok = unsuppress_one(conn, finding_id)
+    if not ok:
+        console.print(f"[yellow]{finding_id} is not suppressed[/yellow]")
+        raise typer.Exit(1)
+    console.print(f"[green]un-suppressed[/green] {finding_id}")
+
+
+@suppress_app.command("list")
+def suppress_list(repo: str = typer.Argument(..., help="owner/name")) -> None:
+    """What is silenced in this repo, and why."""
+    try:
+        owner, name = repo.split("/", 1)
+    except ValueError:
+        console.print("[red]repo must be owner/name[/red]")
+        raise typer.Exit(1) from None
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM repo WHERE owner = %s AND name = %s", (owner, name)
+            )
+            row = cur.fetchone()
+        if row is None:
+            console.print(f"[yellow]{repo} not ingested[/yellow]")
+            raise typer.Exit(1)
+        rows = list_suppressed(conn, row["id"])
+
+    if not rows:
+        console.print(f"[dim]nothing suppressed in {repo}[/dim]")
+        return
+    table = Table(title=f"suppressed in {repo}", box=None)
+    for col in ("finding", "kind", "scope", "source", "reason"):
+        table.add_column(col)
+    for r in rows:
+        table.add_row(
+            str(r["id"])[:8], r["kind"], r["suppress_scope"] or "",
+            r["suppress_source"] or "", r["suppressed_reason"] or "",
+        )
+    console.print(table)
+
+
 @app.command()
 def audit(
     repo: str = typer.Argument(..., help="owner/name"),
@@ -417,6 +512,24 @@ def audit(
                 n = await enrich_changed_paths(provider2, gh_repo, ctx)
                 console.print(f"[dim]changed-path data for {n} runs[/dim]")
             result = run_audit(conn, ctx, commit_sha="HEAD", persist=not dry_run)
+
+            # Suppressions the repository itself declares. Applied after persistence so
+            # the ledger stays complete -- a silenced finding is recorded and explained,
+            # never withheld, or "what is silenced here and why" becomes unanswerable.
+            if not dry_run:
+                ignore_text = await _fetch_ignore_file(provider2, gh_repo)
+                try:
+                    rules = collect(workflow_files, ignore_text)
+                except SuppressionError as exc:
+                    console.print(f"[red]{exc}[/red]")
+                    raise typer.Exit(1) from None
+                if rules:
+                    n = suppress_apply(conn, gh_repo.id, rules, commit_sha="HEAD")
+                    console.print(
+                        f"[dim]{len(rules)} suppression rule"
+                        f"{'s' if len(rules) != 1 else ''} declared in the repo"
+                        f"{f'; {n} finding(s) silenced' if n else ''}[/dim]"
+                    )
 
         _render_audit(repo, ctx, summary, result, dry_run=dry_run)
 

@@ -256,6 +256,27 @@ class GitHubProvider:
             matrix=matrix,
         )
 
+    async def fetch_text_file(self, repo: Repo, path: str) -> str | None:
+        """One text file from the default branch, or None if it is not there.
+
+        Absence is the common case and not an error: most repos have no `.cadenceignore`,
+        and an audit of such a repo simply suppresses nothing.
+        """
+        try:
+            resp = await self._get_with_backoff(
+                f"/repos/{repo.owner}/{repo.name}/contents/{path}"
+            )
+        except NotFound:
+            return None
+        payload = resp.json()
+        content = payload.get("content")
+        if not content or payload.get("encoding") != "base64":
+            return None
+        try:
+            return base64.b64decode(content).decode("utf-8", errors="replace")
+        except (ValueError, TypeError):
+            return None
+
     async def fetch_workflow_files(self, repo: Repo, ref: str | None = None) -> dict[str, str]:
         """Every `.github/workflows/*.yml` as {path: content}.
 

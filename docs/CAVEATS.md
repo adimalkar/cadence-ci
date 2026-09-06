@@ -36,7 +36,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 31 | `recoverable_fraction` reported up to 5,132% — partial re-runs inflate cancellation replay | **High** | ✅ Largely fixed 2026-09-03 |
 | 35 | Multi-attempt runs were double-counting jobs in matrix and billing analysis | Medium | ✅ Fixed 2026-09-03 |
 | 36 | F8 and F6 specified but not started — the only candidates that can move Phase 1's criterion | Medium | Open |
-| 37 | Finding suppression has four schema columns and no writer — Phase 2's anti-spam rule 3 is unimplementable | **High** | Open |
+| 37 | Finding suppression has four schema columns and no writer — Phase 2's anti-spam rule 3 is unimplementable | **High** | ✅ Resolved 2026-09-06 |
 | 38 | Phase 6 overstated the novelty of verified liveness | Low | ✅ Corrected 2026-09-03 |
 | 39 | Phase 4 doubled to 6 weeks when observability became a pillar — no kill criterion covers it | Medium | Open |
 | 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
@@ -588,6 +588,22 @@ same section says is not recoverable from.
 [`FEATURE_CANDIDATES.md`](FEATURE_CANDIDATES.md). Ship before the first fixer, and add the
 Phase 2 ship criterion that tests it — a closed PR whose finding returns is the failure this is
 meant to prevent.
+
+**Resolved 2026-09-06**, migration `006` plus [`suppress.py`](../src/cadence/suppress.py).
+Three surfaces — `.cadenceignore`, inline `# cadence:ignore <rule> — <reason>`, and
+`cadence suppress add/remove/list`. Two rules made structural rather than conventional:
+
+- **A reason is mandatory, enforced by a database CHECK** — not by review, the same
+  discipline as the evidence trigger. A blank reason is rejected too.
+- **No global scope exists.** `*` is a rule name like any other and silences nothing;
+  a blanket mute is indistinguishable from uninstalling.
+
+Anti-spam rule 3 is now testable and tested: `TestPhase2AntiSpamRule3` suppresses a finding
+with `source='closed_pr'`, re-runs `persist_findings` with the same `dedupe_key`, and asserts
+it stays suppressed. A declined fix cannot be re-proposed.
+
+Findings are **suppressed, never withheld** from the database, so "what is silenced here and
+why" stays answerable and un-suppressing needs no detector re-run.
 
 ### 38. Phase 6 overstated how novel verified liveness is · Low · CORRECTED 2026-09-03
 
