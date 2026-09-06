@@ -59,7 +59,8 @@ async def sweep(
     *,
     cache_dir: Path,
     window_days: int = 90,
-    limit_runs: int = 200,
+    # Matches build_context's default; see the rationale there.
+    limit_runs: int = 500,
 ) -> list[RepoResult]:
     cache_dir.mkdir(parents=True, exist_ok=True)
     out: list[RepoResult] = []
