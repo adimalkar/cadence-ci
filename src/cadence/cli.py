@@ -495,7 +495,10 @@ def _render_audit(repo, ctx, summary, result, *, dry_run: bool) -> None:
     for d in drafts:
         s = d.savings
         if s is None:
-            saving, basis = "—", "config"
+            # savings=None means the detector deliberately claimed no wall-clock
+            # saving -- long_tail_step, job_billing_rounding and first_failing_step all
+            # do. It does NOT mean "config bug", which is what this used to say.
+            saving, basis = "—", "no time claimed"
         else:
             saving = s.render().split(" (")[0]
             basis = "replay" if s.basis.is_replay else "projection"
