@@ -35,10 +35,13 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 30 | Dollars-only findings cannot be ranked — `Savings` implies wall-clock | Medium | Open |
 | 31 | `recoverable_fraction` reported up to 5,132% — partial re-runs inflate cancellation replay | **High** | ✅ Largely fixed 2026-09-03 |
 | 35 | Multi-attempt runs were double-counting jobs in matrix and billing analysis | Medium | ✅ Fixed 2026-09-03 |
-| 36 | F8 and F6 specified but not started — the only candidates that can move Phase 1's criterion | Medium | Open |
+| 36 | F8 shipped and **did not** move criterion 2; F6 remains the last specified candidate | **High** | Open — re-measured 2026-09-06 |
 | 37 | Finding suppression has four schema columns and no writer — Phase 2's anti-spam rule 3 is unimplementable | **High** | Open |
 | 38 | Phase 6 overstated the novelty of verified liveness | Low | ✅ Corrected 2026-09-03 |
 | 39 | Phase 4 doubled to 6 weeks when observability became a pillar — no kill criterion covers it | Medium | Open |
+| 40 | F8's "infrastructure vs your tests" split was ~6x overstated — measured at 2.2%, not ~14% | Medium | ✅ Corrected 2026-09-06 |
+| 41 | Every `savings=None` finding rendered as "config bug" in the replay swatch | Medium | ✅ Fixed 2026-09-06 |
+| 42 | A stacked PR merged into an already-merged branch; its work never reached `main` | Medium | ✅ Recovered 2026-09-06 |
 | 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
 | 33 | ~~Queue has no claim lease~~ — **wrong, the lease exists**; the worker hangs instead | **High** | ✅ Corrected + fixed |
 | 34 | Four large-backfill jobs hang the worker deterministically after exhausting the rate limit | **High** | Mitigated by 33's fix; cause is 27 |
@@ -564,6 +567,38 @@ Also unbuilt: `matrix_legs_never_independent`, measured but never implemented (i
 
 **Closes when.** One of F8 or F6 ships and the criterion is re-measured — not assumed to improve.
 
+### Update 2026-09-06: F8 shipped, and the criterion did not move
+
+Measured across 49 repos at the audit's own limits (90 days, 200 runs), before and after:
+
+| | Before | After |
+|---|---:|---:|
+| **Median findings** | 2.0 | **2.0** |
+| Repos with ≥3 findings | 17 | 22 |
+| Repos finding nothing | 8 | 6 |
+| **Median recoverable** | 1.62% | **1.62%** |
+
+`first_failing_step` fires on **21 of 49** repos. It moves both tails — five more repos reach
+three findings, two fewer find nothing — and **leaves the median exactly where it was**,
+because the median repo is not among the 21. Recoverable is unchanged by construction: the
+detector abstains from a savings figure.
+
+**Why only 21.** Over all ingested history, 41 repos clear `MIN_FAILURES = 20`. Inside the
+audit's 200-run window the failure counts are far smaller — the sorted distribution runs
+`… 13, 14, 15, 15, 18, 23, 25 …` and the median repo has about 14. Only 23 repos clear the
+floor at all; two more fail the concentration guard.
+
+**The tempting fix is the wrong one.** Dropping `MIN_FAILURES` to 10 would make 33 repos
+eligible and might well push the median to 3. It would also mean publishing *"40% of your
+failures start here"* on the strength of four events. That is tuning a guard to pass a
+criterion, which is the one thing the criterion exists to prevent. The floor stays at 20.
+
+**What this means for the plan.** Three detectors in a row were expected to move criterion 2
+and did not: `job_billing_rounding` (silent on a public corpus), `matrix_legs_never_independent`
+(never built), and now `first_failing_step` (fires on 43% of repos, none of them median).
+F6 is the last specified candidate, and it should be measured *before* it is built — the
+question is not "is it a good rule" but "does it fire on the median repo".
+
 ### 37. Suppression is designed, stored, and unreachable · High
 
 **What.** `finding` has carried `status ('suppressed')`, `suppress_scope`, `suppressed_by` and
@@ -635,6 +670,74 @@ it is cheap, differentiated, and unblocks Phase 6's audit stream.
 **Release Candidate, not stable** (checked 2026-09-05). Attribute names can still move, and
 a user's dashboards break when they do with no change on their side. The phase file says to
 pin the version and treat a bump as a breaking change; nothing enforces that yet.
+
+### 40. F8's infrastructure split did not survive measurement · Medium · CORRECTED 2026-09-06
+
+**What.** `FEATURE_CANDIDATES.md` F8 pitched the first-failing-step index around a split
+between "your tests" and "infrastructure, not you", illustrated with `npm ci` at 9% and
+`actions/checkout` at 5% — about 14% infrastructure.
+
+Measured while building it, over 6,085 failed jobs with an identifiable first failing step
+across 51 repos: **recognisable infrastructure is 2.2% of first failures**, carrying 2.5 of
+495 hours. A deliberately generous allowlist — checkout, runner setup, `setup-*`, cache,
+eight dependency-install commands, docker, artifacts, post steps — classified 2.2%. The
+rest are project commands (`Run all tests on GPU`, `make test`, `Test without coverage`)
+that no allowlist can name.
+
+**Why it matters.** An illustration in a planning document read as a measurement and was
+wrong by roughly 6x. Shipping that framing would have made the detector's headline a split
+the data does not support — the same failure mode as items 31, 33 and 38, and the fourth
+time a plausible number was asserted before being checked.
+
+**Corrected to** what the data supports: **concentration**. The median repo's top failing
+step is 38% of its failures; `pallets/flask` is 76% on one tox step. The detector leads with
+that and reports the infrastructure share only as a secondary number, always with its
+classification coverage attached, so an unclassified majority is never read as "not
+infrastructure".
+
+**Closed** — the correction is in `FEATURE_CANDIDATES.md` F8, in the detector's module
+docstring, and asserted by `test_coverage_is_published_even_when_it_is_low`.
+
+### 41. Every abstaining finding was labelled a config bug · Medium · FIXED 2026-09-06
+
+**What.** Both the CLI table and the HTML report rendered `savings=None` as **"config
+bug"**, and the report did it with the **replay swatch** — the solid marker `PRODUCT.md` §6
+reserves for measured savings.
+
+Three detectors abstain deliberately and none is a config bug: `long_tail_step` (the fix is
+unspecified, so any number would be a guess), `job_billing_rounding` (the waste is billed
+minutes, not wall clock) and now `first_failing_step` (the minutes were really spent). The
+label asserted a claim no detector made, in the visual language of a measurement.
+
+**Why it matters.** §6 exists so a reader can tell a measured saving from an estimate
+without reading the words. An abstention wearing the replay swatch defeats that directly,
+and it had been shipping since `long_tail_step` landed.
+
+**Fixed** to "no time claimed" / "measured · no saving" with the projection swatch, in
+`cli.py` and `report.py`, asserted by
+`test_abstaining_finding_is_not_labelled_a_config_bug`. Found only because a third
+abstaining detector made it obvious — an argument for adding rules that stress existing
+presentation, not only new computation.
+
+### 42. A stacked PR merged into an already-merged branch · Medium · RECOVERED 2026-09-06
+
+**What.** PR #14 (the Phase 4 observability rewrite) was opened with `--base
+docs/infisical-derived-features` while that PR was still open. When #12 merged, GitHub did
+**not** retarget #14, because the repo has `delete_branch_on_merge: false` and the base
+branch still existed. #14 then merged into that stale branch, and `main` never received the
+commit. Caught a day later only because a `CAVEATS` summary row was missing.
+
+**Why it matters.** Nothing failed. The PR reported merged, CI was green, and the work was
+silently absent from `main` — the same class of failure as a wrong trace that renders fine.
+Two PRs in a row hit it; #12 was retargeted by hand after noticing, #14 was not.
+
+**Recovered** by cherry-picking `7ae0b1f` onto `main` in PR #15.
+
+**Standing rule, so this does not recur.** Do not stack unless the parent is about to merge.
+When stacking, retarget the base **by hand** the moment the parent merges, and verify with
+`git merge-base --is-ancestor <merge-sha> origin/main` before believing a PR landed. The
+claim "GitHub retargets automatically" is false for this repo's settings and should not be
+repeated.
 
 ## Environmental and tooling notes
 

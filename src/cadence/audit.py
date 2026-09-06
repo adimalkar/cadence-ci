@@ -16,7 +16,8 @@ from cadence.dag import aggregate_spans, critical_path, theoretical_floor
 from cadence.detectors.billing import JobBillingRoundingDetector
 from cadence.detectors.cache import DependencyCacheDetector
 from cadence.detectors.cancellation import NoRunCancellationDetector
-from cadence.detectors.context import AuditContext, RunObservation, StepSeries
+from cadence.detectors.context import AuditContext, JobFailure, RunObservation, StepSeries
+from cadence.detectors.failure import FirstFailingStepDetector
 from cadence.detectors.longtail import LongTailStepDetector
 from cadence.detectors.matrix import NonDiscriminatingMatrixLegDetector
 from cadence.detectors.serialization import FalseNeedsEdgeDetector
@@ -34,6 +35,7 @@ DETECTORS = [
     IrrelevantPathTriggerDetector(),
     LongTailStepDetector(),
     JobBillingRoundingDetector(),
+    FirstFailingStepDetector(),
 ]
 
 
@@ -117,6 +119,40 @@ def build_context(
                     series.durations.append(float(row["dur"]))
                     series.run_ids.append(row["run_id"])
 
+        # Where each failed job first went wrong. DISTINCT ON picks the lowest step
+        # number with a failing conclusion, which is the cause -- later failing steps in
+        # the same job are consequences or `if: always()` cleanup.
+        failures: list[JobFailure] = []
+        if run_ids:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (s.job_id)
+                       j.run_id, j.name AS job_name, s.name AS step_name, s.number,
+                       extract(epoch FROM (j.completed_at - j.started_at)) AS job_s
+                FROM step s
+                JOIN job j ON j.id = s.job_id
+                JOIN run r ON r.id = j.run_id
+                WHERE j.run_id = ANY(%s)
+                  AND j.conclusion = 'failure'
+                  AND s.conclusion IN ('failure', 'timed_out')
+                  -- Same attempt rule as every other job query here: a re-run must not
+                  -- contribute its predecessor's failures as if they were fresh.
+                  AND j.attempt = r.run_attempt
+                ORDER BY s.job_id, s.number
+                """,
+                (run_ids,),
+            )
+            for row in cur.fetchall():
+                failures.append(
+                    JobFailure(
+                        run_id=row["run_id"],
+                        job_name=row["job_name"],
+                        step_name=row["step_name"],
+                        step_number=row["number"],
+                        job_seconds=float(row["job_s"] or 0.0),
+                    )
+                )
+
         # Per-leg outcomes and durations for the matrix rule. Keyed on the verbatim
         # name, since that is exactly what distinguishes one leg from another.
         leg_outcomes: dict[str, dict[str, list[tuple[int, str | None]]]] = {}
@@ -166,6 +202,7 @@ def build_context(
         window_days=window_days,
         leg_outcomes=leg_outcomes,
         leg_durations=leg_durations,
+        failures=failures,
     )
 
 

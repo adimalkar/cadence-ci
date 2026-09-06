@@ -60,6 +60,23 @@ class TestBasisIsVisuallyDistinct:
 
 
 class TestHonestyGates:
+    def test_abstaining_finding_is_not_labelled_a_config_bug(self):
+        """savings=None means "no wall-clock claimed", not "config bug".
+
+        Three detectors abstain deliberately -- long_tail_step (the fix is unspecified),
+        job_billing_rounding (the waste is billed minutes, not wall clock) and
+        first_failing_step (the minutes were really spent). Calling all three a config bug
+        asserted something none of them claimed, and it did so in the replay swatch, which
+        reads as a measured saving.
+        """
+        html = render_html(_model(findings=[_draft("c", None)]))
+        assert "config bug" not in html
+        assert "no time claimed" in html
+        assert "measured · no saving" in html
+        # Never the replay swatch: an abstention must not read as a measured saving.
+        # Matched on the rendered span, since the class is always defined in the CSS.
+        assert '<span class="sw sw--replay"></span>' not in html
+
     def test_waterfall_withheld_when_mapping_coverage_is_low(self):
         """The wall-clock-vs-floor gap would read as recoverable time when it is really
         jobs we could not place."""

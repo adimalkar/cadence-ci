@@ -211,8 +211,15 @@ def _waterfall(m: ReportModel) -> str:
 def _finding_row(d: FindingDraft) -> str:
     s = d.savings
     if s is None:
-        save_html = '<span class="save save--range">config bug</span>'
-        basis_html = '<span class="basis"><span class="sw sw--replay"></span>config</span>'
+        # A deliberate abstention, not a config bug. Three detectors emit savings=None --
+        # long_tail_step (the fix is unspecified), job_billing_rounding (the waste is
+        # billed minutes, not wall clock) and first_failing_step (the minutes were really
+        # spent). Labelling all three "config bug" asserted something none of them claimed,
+        # and did it in the replay swatch, which reads as a measured saving.
+        save_html = '<span class="save save--range">no time claimed</span>'
+        basis_html = (
+            '<span class="basis"><span class="sw sw--proj"></span>measured · no saving</span>'
+        )
     elif s.basis.is_replay:
         save_html = (
             f'<span class="save mono">{_mmss(s.seconds_per_run)}'

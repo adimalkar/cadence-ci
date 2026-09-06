@@ -31,7 +31,7 @@ runs, 55 repos.
 | **F5** | Required-check long pole | Unmeasured — data exists | Repos with protection | Small |
 | **F6** | Scheduled-workflow waste | Unmeasured — data exists | Cron users | Small |
 | **F7** | Setup tax decomposition | Unmeasured — step data exists | Every repo | Medium |
-| **F8** | First-failing-step index | Unmeasured — step data exists | Every failing repo | Small |
+| **F8** | First-failing-step index | **Measured — top step is 38% of failures; infra split is not** | Every failing repo | ✅ **Built** |
 | **F9** | Peer percentile from the corpus | Unmeasured — corpus-only moat | Every repo | Medium |
 | **F10** | Artifact upload never downloaded | Unmeasured — needs log parsing | Artifact users | Medium |
 | **F11** | Expired-credential failure clusters | Unmeasured — logs already stored | Repos with external auth | Small |
@@ -295,6 +295,56 @@ is what the exit-137 finding in `PHASE_2_3_CANDIDATES.md` showed people get wron
 
 This is the concrete form of the strategy review's "make flake intelligence deterministic
 first," and it should ship **before** the taxonomy, the clustering, or the classifier.
+
+### Correction: the infrastructure split does not survive measurement
+
+**Measured 2026-09-06, while building it** — 6,085 failed jobs with an identifiable first
+failing step, across 51 repos. The mock above is the shape of the idea; it is not the shape
+of the data.
+
+| | Mock above | Measured |
+|---|---:|---:|
+| Recognisable infrastructure | ~14% | **2.2%** |
+| Wall-clock behind it | — | **2.5 h of 495 h** |
+| Unclassifiable (project's own command) | — | **97.8%** |
+
+A deliberately generous allowlist — checkout, runner setup, `setup-*`, cache, eight
+dependency-install commands, docker, artifacts, post steps — classified **2.2%** of first
+failures. The corpus's real distribution is `Run all tests on GPU`, `Test without
+coverage`, `make test`, `Build wheels`: project commands no allowlist can name.
+
+**So the split is not the feature.** `npm ci 9% ← infrastructure, not you` was an
+illustration that read as a measurement, and it was wrong by roughly 6x.
+
+What *is* there, and is worth shipping, is **concentration**: the median repo's top failing
+step accounts for **38%** of its failures, and 41 of 49 repos have enough failures to say so
+at all. Naming that step is specific, actionable, and true.
+
+The detector therefore reports concentration as the headline and the infrastructure share as
+a secondary number **always accompanied by its classification coverage**, so an unclassified
+majority is never read as "not infrastructure". Same withholding discipline as the critical
+path below 80% mapping.
+
+- Detector: `first_failing_step` · **Built 2026-09-06** · Basis: **none** — `savings=None`
+- Guards: `MIN_FAILURES = 20`, `MIN_TOP_SHARE = 0.25`
+
+### And it does not move Phase 1's criterion either
+
+Measured across 49 repos at the audit's own limits, before and after: **median findings
+2.0 → 2.0**, median recoverable **1.62% → 1.62%**. It fires on 21 of 49 repos, lifting
+repos-with-≥3 from 17 to 22 and cutting zero-finding repos from 8 to 6 — both tails, never
+the middle.
+
+The cause is the window. Over all ingested history 41 repos clear `MIN_FAILURES = 20`; inside
+a 200-run audit the median repo has about **14** failures, and only 23 clear the floor.
+
+Lowering the floor to 10 would make 33 repos eligible and might carry the median to 3. It
+would also mean claiming *"40% of your failures start here"* from four events. **The floor
+stays at 20** — see `CAVEATS` 36.
+
+That makes three detectors expected to move criterion 2 that did not. **F6 should be
+measured before it is built**, and the question to answer first is not whether it finds real
+waste but whether it fires on the *median* repo.
 
 ---
 

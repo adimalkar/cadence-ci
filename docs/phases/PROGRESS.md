@@ -14,7 +14,7 @@ The dashboard in [`../ROADMAP.md`](../ROADMAP.md) says *where we are*. This file
 | Phase | Checklist | Built | Left |
 |---|---:|---|---|
 | **[0 · Ingest](PHASE_0_INGEST.md)** | **16/16 · 100%** | Shipped, audited, deployed | Nothing. Operational caveats only |
-| **[1 · Waste audit](PHASE_1_WASTE_AUDIT.md)** | **21/25 · 84%** | 8 rules, simulator, report, cost model, eval harness | 1 ship criterion failing, 2 items blocked on people |
+| **[1 · Waste audit](PHASE_1_WASTE_AUDIT.md)** | **22/25 · 88%** | 9 rules, simulator, report, cost model, eval harness | 1 ship criterion failing, 2 items blocked on people |
 | **[2 · Fix PRs](PHASE_2_FIX_PRS.md)** | 0/18 | Nothing | All of it. Prerequisite missing |
 | **[3 · Flake](PHASE_3_FLAKE.md)** | 0/18 | Nothing | All of it. Reordered, not started |
 | **[4 · Observability](PHASE_4_OBSERVABILITY.md)** | 0/24 | Nothing | All of it — **rescoped to a pillar 2026-09-05** |
@@ -45,7 +45,7 @@ data arriving.
 
 ### Built
 
-**Eight rules**, against a catalog originally sketched at ~14:
+**Nine rules**, against a catalog originally sketched at ~14:
 
 | Rule | Module |
 |---|---|
@@ -56,6 +56,7 @@ data arriving.
 | `irrelevant_path_trigger` | `detectors/triggers.py` |
 | `long_tail_step` | `detectors/longtail.py` |
 | `job_billing_rounding` | `detectors/billing.py` |
+| `first_failing_step` | `detectors/failure.py` |
 
 Plus the machinery: `simulate.py` (replay + projection, kept structurally apart),
 `dag.py` (DAG, levelling, critical path, theoretical floor), `cost.py` (two currencies,
@@ -83,6 +84,20 @@ hatched), `findings.py`, `evalsweep.py`, `configstore.py`.
 | Repos finding nothing | 22/50 | **9/49** | — |
 | Median recoverable | 0.0% | **0.9%** | ≥10% |
 | Repos ≥10% recoverable | 9/50 | **12/49** | — |
+
+**Re-measured 2026-09-06 after `first_failing_step` shipped** — 49 repos, 90 days, 200 runs,
+recoverable scoped to the dominant workflow as `summarize_pipeline` requires:
+
+| | Without F8 | With F8 | Target |
+|---|---:|---:|---:|
+| Median findings | 2.0 | **2.0** | ≥3 |
+| Repos with ≥3 findings | 17 | **22** | — |
+| Repos finding nothing | 8 | **6** | — |
+| Median recoverable | 1.62% | **1.62%** | ≥10% |
+
+**The median did not move.** F8 fires on 21 of 49 repos and shifts both tails without
+touching the middle; recoverable is unchanged because the detector abstains from a savings
+figure. Reasoning, and why the fix is not to lower its threshold, in `CAVEATS` 36.
 
 **Zero-finding repos falling from 22 to 9 is the real movement**, and it came from ingest
 depth rather than new rules: median runs per workflow stream went from 4 to 21, and streams
