@@ -45,7 +45,6 @@ phases rather than annoy:
 | **Reusable-workflow mapping 18–100%** ([CAVEATS 47](CAVEATS.md)) | Phase 1 critical path **and criterion 2** | 16/50 repos below 80%. Known since 2026-09-07 to be the binding constraint on the recoverable criterion, not just presentation |
 | **No PR → run linkage** | PR impact analysis, stacked-PR detection | Not started; one piece of work unblocks both |
 | **Worker runs on a personal token** ([CAVEATS 27](CAVEATS.md)) | Any feature needing more ingest | Needs a fine-grained PAT or App token |
-| **Suppression has no writer** ([CAVEATS 37](CAVEATS.md)) | Phase 2 anti-spam rule 3 | Schema ready since `001`; needs an ignore file + CLI verb |
 
 ---
 
