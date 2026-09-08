@@ -19,7 +19,7 @@ extend.
 | Phase | Weeks | State | The gate that decides it |
 |---|---|---|---|
 | **[0 · Ingest platform](phases/PHASE_0_INGEST.md)** | 1–3 | **Shipped**, post-ship audit done (12 bugs) | 50 repos ingesting continuously ✅ |
-| **[1 · Waste audit](phases/PHASE_1_WASTE_AUDIT.md)** | 4–10 | **84% — one criterion failing** | Median ≥3 findings, ≥10% recoverable ❌ *(median 2, 0.9% — one finding short)* |
+| **[1 · Waste audit](phases/PHASE_1_WASTE_AUDIT.md)** | 4–10 | **Closed 2026-09-07 at 92%** | Median ≥3 findings ✅ *(3.0)*; ≥10% recoverable ❌ *(3.5%)* — **unreachable on a public corpus, see [CAVEATS 46](CAVEATS.md)** |
 | **[2 · Fix PRs](phases/PHASE_2_FIX_PRS.md)** | 11–13 | Not started | ≥5 Cadence PRs merged in repos we don't own |
 | **[3 · Flaky build intelligence](phases/PHASE_3_FLAKE.md)** | 14–20 | Not started — **demand signal is weak, read the phase doc** | ≥85% flaky precision on ≥10 held-out repos |
 | **[4 · Observability](phases/PHASE_4_OBSERVABILITY.md)** | 21–26 | Not started — **promoted to a pillar 2026-09-05** | A trace renders in two unrelated backends; calibration dashboard live |
@@ -42,7 +42,7 @@ phases rather than annoy:
 |---|---|---|
 | **Ingest depth** — median 4 runs per workflow; only 39 of 544 streams reach `MIN_RUNS = 20` | Phase 1 criterion 2 | Worker deployed 2026-08-28; depth now accruing |
 | **Only 4 of ~14 catalog rules built** | Phase 1 criterion 2 | The rules that find *large* time are the unbuilt ones |
-| **Reusable-workflow mapping 18–100%** | Phase 1 critical path | Withheld below 80% rather than shown |
+| **Reusable-workflow mapping 18–100%** ([CAVEATS 47](CAVEATS.md)) | Phase 1 critical path **and criterion 2** | 16/50 repos below 80%. Known since 2026-09-07 to be the binding constraint on the recoverable criterion, not just presentation |
 | **No PR → run linkage** | PR impact analysis, stacked-PR detection | Not started; one piece of work unblocks both |
 | **Worker runs on a personal token** ([CAVEATS 27](CAVEATS.md)) | Any feature needing more ingest | Needs a fine-grained PAT or App token |
 | **Suppression has no writer** ([CAVEATS 37](CAVEATS.md)) | Phase 2 anti-spam rule 3 | Schema ready since `001`; needs an ignore file + CLI verb |
@@ -93,9 +93,37 @@ indefinitely.
 | Flaky precision <75% at wk 20 | Deterministic core only, drop the classifier |
 | Credential leak | All feature work stops until resolved and disclosed |
 
-**On the Phase 1 trigger:** it is scoped to week 10 *with the full catalog*, so today's
-failing measurement is not yet a trigger. It is the number to watch, and it must be
-re-measured after the catalog is complete and ingest is deepened — not assumed to improve.
+**On the Phase 1 trigger — it now fires, and the reason matters.** Measured 2026-09-07:
+median recoverable **3.5%**. Read literally the trigger says *"premise wrong, stop before
+Phase 2."*
+
+What the measurement actually found is a **corpus mismatch, not a broken premise**. Median
+headroom above the theoretical floor is **0.1%** and 29 of 50 repos are already at their
+floor — there is no wall clock to recover because these pipelines are already as fast as
+their slowest job. A rule cannot fix that; only better reusable-workflow mapping
+([CAVEATS 47](CAVEATS.md)) or a re-specified criterion can.
+
+Mature public OSS repos are already parallelised, and the waste Cadence finds there is
+billing and diagnostics rather than wall clock — the same shape as `job_billing_rounding`
+being correctly silent on a public corpus.
+
+**Decision, 2026-09-07: proceed to Phase 2 with the criterion left failing on the record.**
+Taken by the maintainer, deliberately, with the alternatives on the table — fix the mapping
+first, re-specify the criterion for a public corpus, or stop.
+
+The reasoning that supports it: Phase 2's own ship criterion — **≥5 Cadence PRs merged in
+repos we do not own** — tests the product against real maintainers, which is a stronger
+signal than a corpus percentage. A maintainer merging a fix is direct evidence the finding
+was worth acting on; 10% recoverable wall clock is a proxy for that, and on a public corpus
+it is a bad proxy.
+
+**What this override costs, stated plainly:** criterion 2 is not passed, it is bypassed. It
+stays open in [CAVEATS 46](CAVEATS.md) and must be re-measured against a **private or
+billed** corpus before any claim about recoverable wall clock is made publicly. Overriding a
+gate once makes the next override easier, so this one is written down with its reasoning
+rather than quietly dropped.
+
+Full measurement in [`phases/PHASE_1_WASTE_AUDIT.md`](phases/PHASE_1_WASTE_AUDIT.md).
 
 **On the Phase 3 trigger:** read it literally. Flakiness draws 15 of 1,546 HN comments and
 6 of 96 r/devops comments, against 288 for cost and 229 for debuggability, plus an explicit

@@ -274,6 +274,8 @@ roadmap now carries only the dashboard row and the kill criterion.
 - [x] finding → evidence → savings, end to end, persisted and idempotent
 - [ ] …→ **check run** — needs App write scope; CLI + report is the current surface
 - [x] Versioned rate-card table (`rate_card_version` stamped on every finding)
+- [x] `first_failing_step` — F8, built 2026-09-06. Deterministic first-failure attribution
+      over step conclusions; also Phase 3's first stage
 
 ## Week 6 — the simulator
 
@@ -305,8 +307,10 @@ pitching starts.
       test-enforced in `test_report.py`, including that both can appear on one page and
       stay distinct
 - [x] Every finding row: claim · evidence chips · saving · basis · confidence
-- [ ] Hover a job bar → queue time splits out as a leading segment *(needs the per-job
-      waterfall; current hero is the run-level actual-vs-floor bar)*
+- [x] Hover a job bar → queue time splits out as a leading segment. Shipped 2026-09-07:
+      per-job bars, queue as a leading amber segment, critical-path jobs marked, matrix
+      legs disclosed rather than summed. Pure CSS — the report is still one file, no
+      scripts, 9KB. Withheld below 80% mapping on the same rule as the hero bar
 - [x] Empty state as a real outcome: "No recoverable waste found… This pipeline is tight."
 - [x] Mobile — single-column below 640px; report is 10KB with no external requests
 - [x] Withholds the waterfall below 80% mapping coverage
@@ -319,6 +323,10 @@ pitching starts.
 - [ ] **Median repo: ≥3 findings, ≥10% recoverable — FAILS**, but by less than it did.
       Re-measured 2026-09-03 over 49 repos: **median 2 findings** (mean 3.02, max 22,
       **9/49** find nothing) and **median 0.9% recoverable** (mean 18.1%, 12/49 at ≥10%).
+      **Re-measured 2026-09-06** at `limit_runs=500`: median findings **3.0 — the findings
+      half now passes** (34/51 at ≥3, 5/51 finding nothing), median recoverable **3.46%**,
+      which still fails. The old 200-run default was feeding the audit ~37% of stored
+      history; see `CAVEATS` 36 for the curve.
       Was median 1 / mean 1.18 / 22-of-50-empty on 2026-08-24. The movement came from
       ingest depth, not new rules — runs per workflow stream went from a median of 4 to
       21 once the worker ran continuously. **One finding short on the median.**
@@ -329,7 +337,61 @@ pitching starts.
 - [x] Report renders at 375px; every number is real text. *Not yet checked with a screen
       reader* — see CAVEATS 19.
 - [ ] **3 maintainers of repos we don't own confirm a finding surprised them** — blocked on
-      contacting humans; needs the cold-pitch outreach from §10.
+      contacting humans; needs the cold-pitch outreach from §10. **Not closable by
+      engineering.** Carried into Phase 2, whose ship criterion 3 (≥5 merged Cadence PRs)
+      requires the same outreach and subsumes it.
+
+### Closing measurement, 2026-09-07: the recoverable half is not reachable here
+
+The findings half passes at median 3.0. The recoverable half sits at **3.5% against a 10%
+target**, and this section previously assumed the gap was missing detectors. It is not.
+
+**Measured across 50 repos.** "Headroom" is how far median wall clock sits above the
+theoretical floor — the slowest single job. It is the entire budget any parallelism-based
+rule can ever recover.
+
+| | |
+|---|---:|
+| **Median headroom above floor** | **0.1%** |
+| Repos already at their floor (<2% headroom) | **29/50** |
+| Repos with ≥10% headroom | 18/50 |
+| …of those, with ≥80% mapping coverage | **3/50** |
+
+**The median repo's whole run takes as long as its slowest single job.** There is no slack
+to recover. No rule can extract 10% of wall clock from a pipeline already at its floor, so
+the criterion is unreachable on this corpus by construction rather than by omission.
+
+**And the 18 that look like they have headroom mostly do not.** Fifteen of them have mapping
+coverage below 80% — `moby/moby` at 2%, `rollup/rollup` at 8%, `jestjs/jest` at 12%. Their
+"floor" is computed from the few jobs we could place, so it is near zero and the headroom is
+an artifact of unmapped work. The report already withholds the waterfall for exactly these
+repos, which is the withholding rule working as designed. Only **`cli/cli`,
+`webpack/webpack` and `temporalio/temporal`** have both real headroom and trustworthy
+mapping.
+
+**So the binding constraint is reusable-workflow mapping, not rules.** That was already
+listed as blocking the critical path; this measurement shows it also gates criterion 2, and
+it is the same piece of work.
+
+**A caveat on the arithmetic.** Thirteen repos report ≥10% recovered while showing <10%
+headroom. That is not over-claiming: `no_run_cancellation` recovers whole superseded runs,
+which is not bounded by the floor of any single run. Headroom is the right denominator for
+parallelism rules and the wrong one for cancellation, and the two must not be compared
+directly.
+
+**Two honest options, neither of which is "add another rule":**
+
+1. **Fix reusable-workflow mapping.** Real engineering, unblocks the critical path and
+   criterion 2 together, and is the only path that keeps the criterion as written.
+2. **Re-specify the criterion.** A corpus of mature public OSS repos is largely
+   already-parallelised; the waste Cadence finds there is billing and diagnostics, not wall
+   clock. A 10% wall-clock target may simply be the wrong gate for a public corpus, the same
+   way `job_billing_rounding` is correctly silent on one (item 24).
+
+**This is recorded as unfinished, not as passed.** The kill criterion at week 10 reads "<10%
+median recoverable → premise wrong, stop before Phase 2". Read literally it triggers. Read
+against this measurement, what it actually caught is a corpus mismatch, not a broken premise
+— and that distinction is the decision to make deliberately rather than by default.
 
 ### Why criterion 2 fails, and what actually fixes it
 
