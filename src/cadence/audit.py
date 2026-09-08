@@ -389,4 +389,16 @@ def summarize_pipeline(ctx: AuditContext) -> dict | None:
         # More parallelism makes a queue-bound pipeline slower, not faster. Every other
         # tool's advice is "parallelise more"; saying the opposite requires measuring it.
         "queue_bound": total_queue > total_exec,
+        # Per-job queue/exec for the report's job waterfall. Queue is kept separate all
+        # the way to the markup: a queue-bound job gets the opposite advice from a
+        # compute-bound one, and collapsing them into a single bar hides that.
+        "job_timings": {
+            k: {
+                "queue": t.queue_seconds,
+                "exec": t.exec_seconds,
+                "legs": t.leg_count,
+                "start": (cp.node_finish.get(k, 0.0) - t.total_seconds) if cp else 0.0,
+            }
+            for k, t in median.timings.items()
+        },
     }

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import html
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from cadence.cost import render_saving
 from cadence.detectors.base import FindingDraft
@@ -52,6 +52,10 @@ class ReportModel:
     findings: list[FindingDraft]
     replay_total: float
     headline: str
+    # {job: {queue, exec, legs, start}} for the per-job waterfall. Empty is normal —
+    # a repo below the mapping threshold has no placeable jobs.
+    job_timings: dict[str, dict[str, float]] = field(default_factory=dict)
+    critical_path: list[str] = field(default_factory=list)
 
     @property
     def well_mapped(self) -> bool:
@@ -86,6 +90,8 @@ def build_model(
         findings=drafts,
         replay_total=replay_total,
         headline=render_saving(ctx.cost, replay_total) if replay_total > 0 else "",
+        job_timings=summary.get("job_timings", {}),
+        critical_path=summary.get("critical_path", []),
     )
 
 
@@ -125,6 +131,26 @@ body{margin:0;background:var(--ground);color:var(--text);
   background:var(--panel);color:var(--muted);font-size:.8125rem;max-width:70ch}
 .note strong{color:var(--warn)}
 .chart{margin:32px 0 0;overflow-x:auto}
+.jobs{margin:28px 0 0}
+.jrow{display:grid;grid-template-columns:minmax(88px,22%) 1fr;gap:10px;align-items:center;
+  padding:3px 0;position:relative}
+.jrow__k{font-size:.72rem;color:var(--muted);text-align:right;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.jrow__k.is-cp{color:var(--text);font-weight:600}
+.jtrack{position:relative;height:14px;background:var(--rule);border-radius:3px}
+/* Queue is amber and always leads: waiting for a runner is not the same cost as
+   running, and a queue-bound pipeline gets the opposite advice. */
+.jq{position:absolute;top:0;height:100%;background:var(--warn);border-radius:3px 0 0 3px}
+.jx{position:absolute;top:0;height:100%;background:var(--spent);border-radius:0 3px 3px 0}
+.jx.is-cp{background:var(--recover)}
+/* Hover detail, CSS only -- the report must stay a single file with no scripts. */
+.jtip{position:absolute;right:0;bottom:100%;margin-bottom:4px;z-index:2;
+  background:var(--text);color:var(--ground);padding:6px 9px;border-radius:5px;
+  font-size:.7rem;line-height:1.5;white-space:nowrap;opacity:0;pointer-events:none;
+  transition:opacity .12s}
+.jrow:hover .jtip,.jrow:focus-within .jtip{opacity:1}
+.jlegend{display:flex;gap:14px;font-size:.7rem;color:var(--muted);margin-top:10px}
+.jkey{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px}
 .chart__in{min-width:480px}
 .bars{display:grid;gap:6px}
 .row{display:grid;grid-template-columns:104px 1fr;align-items:center;gap:0}
@@ -172,6 +198,68 @@ body{margin:0;background:var(--ground);color:var(--text);
 @media (max-width:640px){.f{grid-template-columns:1fr}
   .f__side{text-align:left;align-items:flex-start}.row{grid-template-columns:78px 1fr}}
 """
+
+
+def _job_waterfall(m: ReportModel) -> str:
+    """Per-job bars, with queue time split out as a leading segment.
+
+    The run-level bar above says how long the pipeline took. This says *where* it went,
+    and it is the only place the report shows queue separately per job — which matters
+    because a queue-bound job gets the opposite advice from a compute-bound one.
+
+    Hover detail is pure CSS. The report is a single file with no scripts and no external
+    requests, and that constraint is worth more than a richer tooltip.
+
+    Withheld on the same rule as the run-level waterfall: below 80% mapping, most jobs are
+    missing and a chart of the rest would misrepresent the pipeline.
+    """
+    if not m.well_mapped or not m.job_timings:
+        return ""
+
+    span = max((t["queue"] + t["exec"]) for t in m.job_timings.values())
+    if span <= 0:
+        return ""
+
+    on_path = set(m.critical_path)
+    ordered = sorted(
+        m.job_timings.items(), key=lambda kv: kv[1]["queue"] + kv[1]["exec"], reverse=True
+    )[:14]
+
+    rows = []
+    for key, t in ordered:
+        q, x = t["queue"], t["exec"]
+        qp, xp = 100.0 * q / span, 100.0 * x / span
+        cp = key in on_path
+        legs = int(t.get("legs", 1) or 1)
+        leg_note = f" · {legs} matrix legs (slowest shown)" if legs > 1 else ""
+        rows.append(
+            f'<div class="jrow" tabindex="0">'
+            f'<span class="jrow__k{" is-cp" if cp else ""}" title="{_e(key)}">{_e(key)}</span>'
+            f'<span class="jtrack">'
+            f'<span class="jq" style="left:0;width:{qp:.2f}%"></span>'
+            f'<span class="jx{" is-cp" if cp else ""}" '
+            f'style="left:{qp:.2f}%;width:{xp:.2f}%"></span>'
+            f'<span class="jtip mono">{_e(key)}<br>'
+            f"queue {_mmss(q)} · exec {_mmss(x)} · total {_mmss(q + x)}"
+            f'{"<br>on the critical path" if cp else ""}{_e(leg_note)}'
+            f"</span></span></div>"
+        )
+
+    hidden = len(m.job_timings) - len(ordered)
+    more = (
+        f'<p class="sub mono" style="font-size:.7rem;margin-top:8px">'
+        f"{hidden} shorter job{'s' if hidden != 1 else ''} not shown</p>"
+        if hidden > 0
+        else ""
+    )
+    legend = (
+        '<div class="jlegend">'
+        '<span><i class="jkey" style="background:var(--warn)"></i>queue</span>'
+        '<span><i class="jkey" style="background:var(--recover)"></i>exec, critical path</span>'
+        '<span><i class="jkey" style="background:var(--spent)"></i>exec, off path</span>'
+        "</div>"
+    )
+    return f'<div class="jobs">{"".join(rows)}{legend}{more}</div>'
 
 
 def _waterfall(m: ReportModel) -> str:
@@ -330,6 +418,7 @@ def render_html(m: ReportModel) -> str:
     <p class="sub">{sub}</p>
     {coverage_note}{queue_note}
     {_waterfall(m)}
+    {_job_waterfall(m)}
   </section>
   {ledger}
   <section class="method">

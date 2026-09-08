@@ -127,3 +127,66 @@ class TestJson:
         f = payload["findings"][0]
         assert f["basis"] == "replay"
         assert set(f["evidence_kinds"]) == {"code_range", "run_history"}
+
+
+class TestJobWaterfall:
+    """Queue time splits out as a leading segment — the last unchecked Phase 1 F-item.
+
+    It matters because a queue-bound job gets the opposite advice from a compute-bound
+    one, and a single merged bar cannot show that.
+    """
+
+    def _model(self, **over):
+        base = dict(
+            job_timings={
+                "build": {"queue": 60.0, "exec": 240.0, "legs": 1, "start": 0.0},
+                "test": {"queue": 30.0, "exec": 120.0, "legs": 4, "start": 0.0},
+            },
+            critical_path=["build"],
+            coverage=1.0,
+            wall_seconds=600.0,
+        )
+        base.update(over)
+        return _model(**base)
+
+    def test_queue_leads_and_exec_follows(self):
+        html = render_html(self._model())
+        assert 'class="jq"' in html
+        assert 'class="jx' in html
+        # Queue starts at 0 and exec begins exactly where queue ends: 60/300 = 20%.
+        assert 'class="jq" style="left:0;width:20.00%"' in html
+        assert 'style="left:20.00%;width:80.00%"' in html
+
+    def test_critical_path_jobs_are_marked(self):
+        html = render_html(self._model())
+        assert "is-cp" in html
+        assert "on the critical path" in html
+
+    def test_hover_detail_needs_no_javascript(self):
+        """The report is one file with no scripts and no external requests."""
+        html = render_html(self._model())
+        assert 'class="jtip' in html
+        assert "<script" not in html.lower()
+
+    def test_matrix_legs_are_disclosed_not_summed(self):
+        """Legs run in parallel, so the bar is the slowest leg. Saying so avoids reading
+        it as total billed time."""
+        html = render_html(self._model())
+        assert "4 matrix legs (slowest shown)" in html
+
+    def test_withheld_below_the_mapping_threshold(self):
+        """Same rule as the run-level waterfall: most jobs missing means the chart lies."""
+        html = render_html(self._model(coverage=0.5))
+        assert 'class="jobs"' not in html
+
+    def test_withheld_when_there_are_no_job_timings(self):
+        html = render_html(self._model(job_timings={}))
+        assert 'class="jobs"' not in html
+
+    def test_long_job_lists_are_truncated_and_say_so(self):
+        many = {
+            f"job-{i}": {"queue": 1.0, "exec": float(100 - i), "legs": 1, "start": 0.0}
+            for i in range(20)
+        }
+        html = render_html(self._model(job_timings=many, critical_path=[]))
+        assert "6 shorter jobs not shown" in html
