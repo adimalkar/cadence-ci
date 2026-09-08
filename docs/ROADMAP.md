@@ -107,9 +107,23 @@ Mature public OSS repos are already parallelised, and the waste Cadence finds th
 billing and diagnostics rather than wall clock — the same shape as `job_billing_rounding`
 being correctly silent on a public corpus.
 
-**This needs a deliberate decision rather than a default one:** fix the mapping, re-specify
-the criterion for a public corpus, or honour the trigger and stop. Full measurement in
-[`phases/PHASE_1_WASTE_AUDIT.md`](phases/PHASE_1_WASTE_AUDIT.md).
+**Decision, 2026-09-07: proceed to Phase 2 with the criterion left failing on the record.**
+Taken by the maintainer, deliberately, with the alternatives on the table — fix the mapping
+first, re-specify the criterion for a public corpus, or stop.
+
+The reasoning that supports it: Phase 2's own ship criterion — **≥5 Cadence PRs merged in
+repos we do not own** — tests the product against real maintainers, which is a stronger
+signal than a corpus percentage. A maintainer merging a fix is direct evidence the finding
+was worth acting on; 10% recoverable wall clock is a proxy for that, and on a public corpus
+it is a bad proxy.
+
+**What this override costs, stated plainly:** criterion 2 is not passed, it is bypassed. It
+stays open in [CAVEATS 46](CAVEATS.md) and must be re-measured against a **private or
+billed** corpus before any claim about recoverable wall clock is made publicly. Overriding a
+gate once makes the next override easier, so this one is written down with its reasoning
+rather than quietly dropped.
+
+Full measurement in [`phases/PHASE_1_WASTE_AUDIT.md`](phases/PHASE_1_WASTE_AUDIT.md).
 
 **On the Phase 3 trigger:** read it literally. Flakiness draws 15 of 1,546 HN comments and
 6 of 96 r/devops comments, against 288 for cost and 229 for debuggability, plus an explicit
