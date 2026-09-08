@@ -14,7 +14,7 @@ The dashboard in [`../ROADMAP.md`](../ROADMAP.md) says *where we are*. This file
 | Phase | Checklist | Built | Left |
 |---|---:|---|---|
 | **[0 · Ingest](PHASE_0_INGEST.md)** | **16/16 · 100%** | Shipped, audited, deployed | Nothing. Operational caveats only |
-| **[1 · Waste audit](PHASE_1_WASTE_AUDIT.md)** | **22/25 · 88%** | 9 rules, simulator, report, cost model, eval harness | 1 ship criterion failing, 2 items blocked on people |
+| **[1 · Waste audit](PHASE_1_WASTE_AUDIT.md)** | **23/25 · 92%** | 9 rules, simulator, report, cost model, eval harness, suppression | **Closed 2026-09-07** with 2 items open — see below |
 | **[2 · Fix PRs](PHASE_2_FIX_PRS.md)** | 0/18 | Nothing | All of it. Prerequisite missing |
 | **[3 · Flake](PHASE_3_FLAKE.md)** | 0/18 | Nothing | All of it. Reordered, not started |
 | **[4 · Observability](PHASE_4_OBSERVABILITY.md)** | 0/24 | Nothing | All of it — **rescoped to a pillar 2026-09-05** |
@@ -41,7 +41,7 @@ data arriving.
 
 ---
 
-## Phase 1 — 84%, and the last 16% is the hard part
+## Phase 1 — closed 2026-09-07 at 92%, with two items open by design
 
 ### Built
 
@@ -133,6 +133,57 @@ measured but never implemented.
 
 ---
 
+## Phase 1 — what shipped, and what did not
+
+Closed 2026-09-07 at **23 of 25** checklist items. Recorded here rather than rounded up.
+
+### Shipped
+
+Nine detectors, the simulator, the cost model with a versioned rate card, the HTML report
+(one file, no scripts, 9KB), the eval harness, and user-reachable suppression. Replay
+reconstructs historical durations to within 2%; every finding carries evidence, enforced by
+a database trigger.
+
+### Ship criteria — 4 of 6
+
+| | |
+|---|---|
+| ✅ | Audit runs unattended across the corpus — 50/51 |
+| ❌ | **Median ≥3 findings, ≥10% recoverable** — findings half **passes** at 3.0; recoverable is **3.5%** |
+| ✅ | Replay within 2% — mean error 0.48% |
+| ✅ | Zero findings without evidence — verified through the real write path |
+| ✅ | Report renders at 375px (not screen-reader tested — CAVEATS 19) |
+| ❌ | **3 maintainers confirm a finding surprised them** — needs outreach, not code |
+
+### The two that did not close, and why
+
+**Recoverable ≥10% ([CAVEATS 46](../CAVEATS.md)) — unreachable on this corpus.** Median
+headroom above the theoretical floor is **0.1%**, and 29 of 50 repos are already at their
+floor: the whole run takes as long as its slowest job. No rule can recover 10% of wall clock
+from a pipeline with no slack. Of the 18 repos that appear to have headroom, 15 map under
+80% of their jobs, so the headroom is unmapped work rather than opportunity. **The binding
+constraint is reusable-workflow mapping ([CAVEATS 47](../CAVEATS.md)), not detectors** — the
+same work that gates the critical path.
+
+Three sessions were spent adding rules against this number on the assumption the right rule
+would move it. It never could.
+
+**Maintainer confirmation ([CAVEATS 48](../CAVEATS.md)) — not an engineering task.** Needs
+contacting humans. Carried into Phase 2, whose ship criterion 3 requires the same outreach
+and subsumes it. The check-run surface is likewise blocked on GitHub App write scope.
+
+### What this means for the kill criterion
+
+`ROADMAP.md` says "<10% median recoverable at week 10 → premise wrong, **stop before Phase
+2**". Read literally, it triggers. What the measurement actually found is a **corpus
+mismatch**, not a broken premise: mature public OSS repos are already parallelised, and the
+waste Cadence finds there is billing and diagnostics rather than wall clock — the same shape
+as `job_billing_rounding` being correctly silent on a public corpus.
+
+**That distinction is a product decision and it is being flagged, not taken by default.**
+
+---
+
 ## Phases 2–6 — specified, not started
 
 Zero checkboxes ticked across all five. Each has a design doc worth reading before starting;
@@ -196,5 +247,11 @@ stored, which nobody else has. 6B and 6C are behind explicit user demand.
 2. **A credential with its own rate limit** ([CAVEATS 27](../CAVEATS.md)) — the worker
    shares a personal token, which is why its large backfills exhaust the budget and hang.
    Nothing that needs more ingest can be built until this is fixed.
-3. **One more wall-clock rule** — F8 or F6 — to move Phase 1's criterion from median 2
-   to 3.
+3. **Reusable-workflow mapping** ([CAVEATS 47](../CAVEATS.md)) — 16 of 50 repos map under
+   80% of their jobs, and as of 2026-09-07 that is known to gate **criterion 2 as well as**
+   the critical path. It is the binding constraint on the only Phase 1 criterion still open,
+   and no new rule can substitute for it.
+
+*(This slot used to read "one more wall-clock rule — F8 or F6". F8 shipped and moved the
+findings half; F6 was measured and rejected. The recoverable half turned out not to be a
+rules problem at all — median headroom above the floor is 0.1%.)*
