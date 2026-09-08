@@ -129,6 +129,40 @@ CST-level edit against the source text). **The diff must touch only the lines be
 changed.** Add a test that round-trips 200 real workflow files from the corpus and asserts
 byte-identical output when no fix is applied. Without that test this will regress silently.
 
+### Built 2026-09-07 — `fixers/edit.py`, and what it measured
+
+**666 of 928 real corpus workflow files (71.8%) round-trip byte-identically.** Past the
+200-file criterion with room, and the 28% that fail do so for three reasons, none fixable
+by configuration:
+
+- ruamel normalises flow-style spacing: `{ name: x }` → `{name: x}`, `[ "main" ]` → `["main"]`
+- it strips trailing whitespace from otherwise-blank lines
+- files whose sequence indent differs from the configured one get every list re-indented
+
+A per-file indent detector was tried to close the third and **made it far worse — 1.8%** —
+because ruamel's `sequence`/`offset` do not mean what they appear to. Reverted; recorded in
+the module so nobody repeats it.
+
+**The important consequence: re-serialisation is the wrong mechanism for additive fixes.**
+Adding a `concurrency:` block or a cache step is a *text insertion*, and inserting lines
+into the source preserves 100% of files by construction — including the 28% ruamel would
+reshape. `edit.py` then becomes the safety net it should always have been rather than the
+editing mechanism.
+
+**So the fixers should be built text-first**, with `is_faithful` as a precondition check
+only where a structural edit is genuinely unavoidable. That reverses the original sketch
+here, on measured grounds.
+
+### Enforcing the criterion where it actually runs
+
+The corpus lives in a local cache; CI has no GitHub fixtures and cannot fetch them. A check
+that only passes on one laptop is not a check, and CI **fails the build on any skipped
+test**, so a corpus-conditional skip was not available either.
+
+Resolution: the guard runs against **220 generated workflow files on every commit** and
+against the real corpus additionally wherever its cache exists. Both must pass. Vendoring
+928 strangers' workflow files would raise a licensing question we have not answered.
+
 ### Fixer contract
 
 ```python
