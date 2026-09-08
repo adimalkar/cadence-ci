@@ -45,6 +45,9 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 43 | F6 measured before building: fires on 4 of 51 repos, and its top hits are maintenance bots | Medium | ✅ Closed — not building |
 | 44 | `evalsweep` measures the ship criterion with `irrelevant_path_trigger` structurally disabled | Medium | Open |
 | 45 | Three of nine built rules fire on zero corpus repos | Medium | Open |
+| 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — Phase 1 closed without it |
+| 47 | Reusable-workflow mapping <80% on 16 of 50 repos, and it gates criterion 2 as well as the critical path | **High** | Open |
+| 48 | Two Phase 1 items are not closable by engineering (App write scope, maintainer contact) | Medium | Carried to Phase 2 |
 | 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
 | 33 | ~~Queue has no claim lease~~ — **wrong, the lease exists**; the worker hangs instead | **High** | ✅ Corrected + fixed |
 | 34 | Four large-backfill jobs hang the worker deterministically after exhausting the rate limit | **High** | Mitigated by 33's fix; cause is 27 |
@@ -893,6 +896,72 @@ corpus; it is an untested code path.
 Also worth noting: the reach numbers shifted slightly *down* for three rules at the higher
 limit (`long_tail_step`, `no_dependency_cache`). More history means more runs failing a
 consistency test, which is the guards working, not regressing.
+
+### 46. Criterion 2's recoverable half cannot be reached on this corpus · High
+
+**What.** Phase 1 ship criterion 2 wants ≥10% of median wall clock recovered. It sits at
+**3.5%**, and every previous entry here assumed the gap was missing detectors. Measured
+2026-09-07 across 50 repos, it is not.
+
+Headroom — how far median wall clock sits above the theoretical floor, the slowest single
+job — is the entire budget any parallelism rule can ever recover:
+
+| | |
+|---|---:|
+| **Median headroom above floor** | **0.1%** |
+| Repos already at their floor (<2%) | **29/50** |
+| Repos with ≥10% headroom | 18/50 |
+| …with ≥80% mapping coverage too | **3/50** |
+
+**The median repo's entire run takes as long as its slowest job.** No rule can recover 10%
+of wall clock from a pipeline already at its floor. This is unreachable by construction.
+
+**Why it matters.** Three sessions were spent adding and measuring rules against this
+number — `job_billing_rounding`, F6, `first_failing_step` — on the assumption that the right
+rule would move it. The constraint was never the rules.
+
+**What would close it.** Either fix reusable-workflow mapping (item 47), which is the only
+path that keeps the criterion as written, or re-specify it: a corpus of mature public OSS
+repos is already parallelised, and the waste Cadence finds there is billing and diagnostics
+rather than wall clock. **That is a product decision and is deliberately not being taken
+unilaterally here.**
+
+**Note on the arithmetic.** 13 repos report ≥10% recovered against <10% headroom. Not
+over-claiming — `no_run_cancellation` recovers whole superseded runs, which no single run's
+floor bounds. Headroom is the wrong denominator for cancellation savings.
+
+### 47. Reusable-workflow mapping gates more than the critical path · High
+
+**What.** 16 of 50 corpus repos map under 80% of their jobs to config nodes, so the critical
+path and both waterfalls are withheld for them — correctly. What was not known until
+2026-09-07 is that **the same gap drives criterion 2**: of the 18 repos that appear to have
+≥10% recoverable headroom, 15 are below the threshold, with floors computed from the handful
+of jobs we could place. `moby/moby` maps 2%, `rollup/rollup` 8%, `jestjs/jest` 12%.
+
+**Why it matters.** It was filed as a presentation limitation. It is a measurement
+limitation, and it is the binding constraint on Phase 1's remaining criterion.
+
+**Cause, already known.** Reusable workflows (`jobs.x.uses: ./.github/workflows/_build.yml`)
+rename their jobs to `x / <inner>`, matching nothing in the calling file.
+
+**What would close it.** Resolve `uses:` references, parse the called workflow, and map the
+`caller / inner` names back. It needs the called file, which `configstore` can already store.
+
+### 48. Two Phase 1 items are not closable by engineering · Medium
+
+**What.** Phase 1 closes with two items open that no amount of code will finish:
+
+- **Check-run output** needs GitHub App write scope, which requires registering an App and
+  a user installing it.
+- **3 maintainers confirming a finding surprised them** needs contacting humans.
+
+**Why it matters.** Both are real gates on whether the product works, not paperwork. The
+second is the only criterion that tests whether Cadence told someone something true they did
+not already know.
+
+**Carried to Phase 2**, whose ship criterion 3 — ≥5 merged Cadence PRs in repos we do not own
+— requires the same outreach and subsumes the maintainer confirmation. Recorded so Phase 1 is
+not remembered as fully passed.
 
 ## Environmental and tooling notes
 
