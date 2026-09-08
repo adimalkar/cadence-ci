@@ -45,7 +45,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 43 | F6 measured before building: fires on 4 of 51 repos, and its top hits are maintenance bots | Medium | ✅ Closed — not building |
 | 44 | `evalsweep` measures the ship criterion with `irrelevant_path_trigger` structurally disabled | Medium | Open |
 | 45 | Three of nine built rules fire on zero corpus repos | Medium | Open |
-| 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — Phase 1 closed without it |
+| 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — **kill criterion overridden 2026-09-07**, Phase 2 proceeding |
 | 47 | Reusable-workflow mapping <80% on 16 of 50 repos, and it gates criterion 2 as well as the critical path | **High** | Open |
 | 48 | Two Phase 1 items are not closable by engineering (App write scope, maintainer contact) | Medium | Carried to Phase 2 |
 | 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
@@ -929,6 +929,16 @@ unilaterally here.**
 **Note on the arithmetic.** 13 repos report ≥10% recovered against <10% headroom. Not
 over-claiming — `no_run_cancellation` recovers whole superseded runs, which no single run's
 floor bounds. Headroom is the wrong denominator for cancellation savings.
+
+**Decision 2026-09-07: the kill criterion was overridden, not met.** Phase 2 proceeds with
+this criterion failing, on the maintainer's explicit call, because Phase 2's own gate (≥5
+merged Cadence PRs in repos we do not own) tests the same question against real people
+rather than a corpus proxy.
+
+**The obligation that comes with the override:** this criterion is **bypassed, not passed**.
+No public claim about recoverable wall clock may cite it, and it must be re-measured against
+a **private or billed** corpus — where the money is real and pipelines are less likely to be
+already at their floor — before it is treated as answered either way.
 
 ### 47. Reusable-workflow mapping gates more than the critical path · High
 
