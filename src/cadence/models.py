@@ -156,3 +156,32 @@ class NormalizedEvent:
     repo: Repo
     run: Run | None = None
     jobs: list[Job] = field(default_factory=list)
+
+
+# GitHub caps the `files` array on a commit response at 300 entries. Past that the list is
+# incomplete, and any measure derived from it under-counts exactly the largest changes --
+# so it is recorded and consumers withhold rather than guess.
+GITHUB_FILES_CAP = 300
+
+
+@dataclass(slots=True)
+class CommitRecord:
+    """One commit, reduced to what CI analysis needs: what it touched, and which tree.
+
+    Paths, never contents. Cadence does not read source (`PRODUCT.md` section 3); which
+    files a change touched is metadata of the same class as a workflow path or a job name.
+    """
+
+    sha: str
+    paths: list[str] = field(default_factory=list)
+    tree_sha: str | None = None
+    authored_at: datetime | None = None
+
+    @property
+    def truncated(self) -> bool:
+        """Did the provider cut the file list short?
+
+        Exactly at the cap counts as truncated: the API gives no explicit flag, and a
+        commit touching precisely 300 files is rarer than one touching more.
+        """
+        return len(self.paths) >= GITHUB_FILES_CAP

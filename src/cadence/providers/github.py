@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 import httpx
 import structlog
 
-from cadence.models import Job, NormalizedEvent, Repo, Run, RunPage, Step
+from cadence.models import CommitRecord, Job, NormalizedEvent, Repo, Run, RunPage, Step
 from cadence.providers.base import AccessDenied, Expired, NotFound, RateLimited
 
 log = structlog.get_logger(__name__)
@@ -301,16 +301,40 @@ class GitHubProvider:
     async def fetch_commit_paths(self, repo: Repo, sha: str) -> list[str]:
         """Files changed by one commit. Empty list if unavailable.
 
-        One request per commit, so callers must budget it — this is opt-in enrichment for
-        a single-repo audit, not something the corpus sweep can afford.
+        Kept for the in-memory enrichment path. `fetch_commit` returns the same request's
+        other two payloads as well and is what the commit store uses.
+        """
+        record = await self.fetch_commit(repo, sha)
+        return list(record.paths) if record else []
+
+    async def fetch_commit(self, repo: Repo, sha: str) -> CommitRecord | None:
+        """One commit: changed paths, tree sha, authored time. None if unavailable.
+
+        A single `GET /commits/{sha}` carries all three, so fetching them together costs
+        the same as fetching any one of them. That is what makes populating `run.tree_sha`
+        — NULL on every row since migration 001 — effectively free once the path backfill
+        is being paid for anyway.
         """
         try:
-            resp = await self._get_with_backoff(f"/repos/{repo.owner}/{repo.name}/commits/{sha}")
+            resp = await self._get_with_backoff(
+                f"/repos/{repo.owner}/{repo.name}/commits/{sha}"
+            )
         except (NotFound, Expired):
-            return []
+            return None
         payload = resp.json()
         files = payload.get("files") or []
-        return [f["filename"] for f in files if isinstance(f, dict) and f.get("filename")]
+        paths = [
+            f["filename"] for f in files if isinstance(f, dict) and f.get("filename")
+        ]
+        commit = payload.get("commit") or {}
+        tree = (commit.get("tree") or {}).get("sha")
+        authored = _dt((commit.get("author") or {}).get("date"))
+        return CommitRecord(
+            sha=payload.get("sha") or sha,
+            paths=paths,
+            tree_sha=tree,
+            authored_at=authored,
+        )
 
     def normalize_event(self, event: str, payload: dict) -> NormalizedEvent | None:
         repo_json = payload.get("repository")
