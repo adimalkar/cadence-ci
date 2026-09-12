@@ -10,13 +10,15 @@ from __future__ import annotations
 
 import structlog
 
+from cadence.commitstore import load_changed_paths
 from cadence.config import settings
 from cadence.cost import CostContext, load_rate_card
 from cadence.dag import aggregate_spans, critical_path, theoretical_floor
 from cadence.detectors.billing import JobBillingRoundingDetector
 from cadence.detectors.cache import DependencyCacheDetector
 from cadence.detectors.cancellation import NoRunCancellationDetector
-from cadence.detectors.context import AuditContext, RunObservation, StepSeries
+from cadence.detectors.context import AuditContext, JobFailure, RunObservation, StepSeries
+from cadence.detectors.failure import FirstFailingStepDetector
 from cadence.detectors.longtail import LongTailStepDetector
 from cadence.detectors.matrix import NonDiscriminatingMatrixLegDetector
 from cadence.detectors.serialization import FalseNeedsEdgeDetector
@@ -34,6 +36,7 @@ DETECTORS = [
     IrrelevantPathTriggerDetector(),
     LongTailStepDetector(),
     JobBillingRoundingDetector(),
+    FirstFailingStepDetector(),
 ]
 
 
@@ -43,7 +46,20 @@ def build_context(
     workflow_files: dict[str, str],
     *,
     window_days: int = 90,
-    limit_runs: int = 200,
+    # 500, not 200. Measured 2026-09-06: the corpus holds a median of 545 runs per repo
+    # inside the same 90-day window, so a 200-run cap discarded ~63% of history we already
+    # held locally, at no saving -- the query reads Postgres, not the API.
+    #
+    # It starved the detectors. Their guards assume real history (MIN_RUNS = 20 per stream,
+    # matrix wants 150), while 200 runs *across all workflows* leaves most streams below
+    # threshold. PHASE_1_WASTE_AUDIT tells detectors to "never recommend removal below ~200
+    # runs" for one stream; the context was handing them 200 for the whole repo.
+    #
+    # Criterion 2's median findings by limit: 200 -> 2.0, 300 -> 3.0, 400 -> 3.0,
+    # 600 -> 3.0, 1000 -> 3.0. A plateau from 300 up, not a cliff, so this is statistical
+    # power rather than a threshold picked to pass. 500 covers the median repo's full
+    # window without paying for the long tail.
+    limit_runs: int = 500,
 ) -> AuditContext:
     from psycopg.rows import dict_row
 
@@ -117,6 +133,40 @@ def build_context(
                     series.durations.append(float(row["dur"]))
                     series.run_ids.append(row["run_id"])
 
+        # Where each failed job first went wrong. DISTINCT ON picks the lowest step
+        # number with a failing conclusion, which is the cause -- later failing steps in
+        # the same job are consequences or `if: always()` cleanup.
+        failures: list[JobFailure] = []
+        if run_ids:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (s.job_id)
+                       j.run_id, j.name AS job_name, s.name AS step_name, s.number,
+                       extract(epoch FROM (j.completed_at - j.started_at)) AS job_s
+                FROM step s
+                JOIN job j ON j.id = s.job_id
+                JOIN run r ON r.id = j.run_id
+                WHERE j.run_id = ANY(%s)
+                  AND j.conclusion = 'failure'
+                  AND s.conclusion IN ('failure', 'timed_out')
+                  -- Same attempt rule as every other job query here: a re-run must not
+                  -- contribute its predecessor's failures as if they were fresh.
+                  AND j.attempt = r.run_attempt
+                ORDER BY s.job_id, s.number
+                """,
+                (run_ids,),
+            )
+            for row in cur.fetchall():
+                failures.append(
+                    JobFailure(
+                        run_id=row["run_id"],
+                        job_name=row["job_name"],
+                        step_name=row["step_name"],
+                        step_number=row["number"],
+                        job_seconds=float(row["job_s"] or 0.0),
+                    )
+                )
+
         # Per-leg outcomes and durations for the matrix rule. Keyed on the verbatim
         # name, since that is exactly what distinguishes one leg from another.
         leg_outcomes: dict[str, dict[str, list[tuple[int, str | None]]]] = {}
@@ -166,6 +216,12 @@ def build_context(
         window_days=window_days,
         leg_outcomes=leg_outcomes,
         leg_durations=leg_durations,
+        failures=failures,
+        # From storage, not the API. Until migration 007 this was populated only by
+        # `enrich_changed_paths` behind `--paths`, which is why irrelevant_path_trigger
+        # fired on 0 of 51 corpus repos -- evalsweep never called it (CAVEATS 44, 45).
+        # Empty is still a legitimate state: it means this repo's commits are unfetched.
+        changed_paths=load_changed_paths(conn, repo_id, run_ids),
     )
 
 
@@ -339,4 +395,16 @@ def summarize_pipeline(ctx: AuditContext) -> dict | None:
         # More parallelism makes a queue-bound pipeline slower, not faster. Every other
         # tool's advice is "parallelise more"; saying the opposite requires measuring it.
         "queue_bound": total_queue > total_exec,
+        # Per-job queue/exec for the report's job waterfall. Queue is kept separate all
+        # the way to the markup: a queue-bound job gets the opposite advice from a
+        # compute-bound one, and collapsing them into a single bar hides that.
+        "job_timings": {
+            k: {
+                "queue": t.queue_seconds,
+                "exec": t.exec_seconds,
+                "legs": t.leg_count,
+                "start": (cp.node_finish.get(k, 0.0) - t.total_seconds) if cp else 0.0,
+            }
+            for k, t in median.timings.items()
+        },
     }

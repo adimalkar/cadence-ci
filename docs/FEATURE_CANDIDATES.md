@@ -29,13 +29,15 @@ runs, 55 repos.
 | **F3** | PR CI impact (`analyze-pr`) | Unmeasured — needs PR→run linkage | Every PR | Large |
 | **F4** | CI regression detection + blame | Unmeasured — data exists | Repos with drift | Medium |
 | **F5** | Required-check long pole | Unmeasured — data exists | Repos with protection | Small |
-| **F6** | Scheduled-workflow waste | Unmeasured — data exists | Cron users | Small |
+| **F6** | Scheduled-workflow waste | **Measured — 4/51 repos, median 8 min; top hits are bots** | — | ❌ **Will not build** |
 | **F7** | Setup tax decomposition | Unmeasured — step data exists | Every repo | Medium |
-| **F8** | First-failing-step index | Unmeasured — step data exists | Every failing repo | Small |
+| **F8** | First-failing-step index | **Measured — top step is 38% of failures; infra split is not** | Every failing repo | ✅ **Built** |
 | **F9** | Peer percentile from the corpus | Unmeasured — corpus-only moat | Every repo | Medium |
 | **F10** | Artifact upload never downloaded | Unmeasured — needs log parsing | Artifact users | Medium |
 | **F11** | Expired-credential failure clusters | Unmeasured — logs already stored | Repos with external auth | Small |
 | **F12** | User-reachable finding suppression | **Schema exists, no writer** | Every repo — **gates Phase 2** | Small |
+| **F13** | Behavioural codebase map — where CI says a repo breaks | **Partly measured — see below** | Every repo with failures | Medium |
+| **F14** | Suggested CI configuration | Unmeasured — needs ecosystem cohorts | Repos with thin CI | Medium |
 
 Candidates already carried in [`phases/PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md)
 — `no_job_timeout`, `pipeline_fix_churn`, `cache_evicted_before_reuse`, the exit-137 split,
@@ -256,6 +258,41 @@ no new commits — 6.3 hours, $23."*
 Trivially detectable from `run.event = 'schedule'` joined against commit activity. The fix
 is a `if: github.event.repository.pushed_at > ...` guard, or moving to `workflow_dispatch`.
 
+### Measured 2026-09-06 — and it will not be built
+
+`CAVEATS` 36 required this to be measured before being built, with one question: does it fire
+on the *median* repo?
+
+No commit API is needed. Consecutive scheduled runs of the same workflow with an identical
+`head_sha` tested the same code twice, which is self-contained evidence. By that test:
+
+- **74% of all scheduled runs are redundant** — 1,882 of 2,544
+- only **0.7%** produced a different outcome from the previous run; 99.3% reproduce a known
+  result on unchanged code
+
+The signal is real. The yield is not:
+
+| | |
+|---|---|
+| Repos with any redundant scheduled run | 30/51 |
+| **Median waste per repo** | **0.13 h** — eight minutes over 90 days |
+| Streams surviving a 5-minute duration floor | **6, across 4 repos** |
+
+**And its loudest hits are false positives.** Ranked by volume, the top scheduled workflows
+are `close-stale.yml`, `keepalive.yml`, `lock.yml`, `dependabot-triage` and
+`triage-scheduled-tasks` — maintenance bots whose entire purpose is to run on a clock
+regardless of commits. A 5-minute median-duration floor separates them cleanly (the dropped
+set runs at 4s, 5s, 18s and 22s per run) and leaves six streams across four repos, with
+165.9 of the surviving 257 hours in one repo's `daily.yml`.
+
+**Closed as will-not-build.** 8% reach at a median of eight minutes cannot pay for the rule's
+maintenance, and it would ship a false-positive class we would then have to build suppression
+for.
+
+Worth keeping: the same-`head_sha` comparison is a good primitive, and the duration floor is
+a clean, reasoned separator between test workflows and housekeeping. Start there if this is
+ever revisited.
+
 ---
 
 ## F7 · The setup tax
@@ -295,6 +332,62 @@ is what the exit-137 finding in `PHASE_2_3_CANDIDATES.md` showed people get wron
 
 This is the concrete form of the strategy review's "make flake intelligence deterministic
 first," and it should ship **before** the taxonomy, the clustering, or the classifier.
+
+### Correction: the infrastructure split does not survive measurement
+
+**Measured 2026-09-06, while building it** — 6,085 failed jobs with an identifiable first
+failing step, across 51 repos. The mock above is the shape of the idea; it is not the shape
+of the data.
+
+| | Mock above | Measured |
+|---|---:|---:|
+| Recognisable infrastructure | ~14% | **2.2%** |
+| Wall-clock behind it | — | **2.5 h of 495 h** |
+| Unclassifiable (project's own command) | — | **97.8%** |
+
+A deliberately generous allowlist — checkout, runner setup, `setup-*`, cache, eight
+dependency-install commands, docker, artifacts, post steps — classified **2.2%** of first
+failures. The corpus's real distribution is `Run all tests on GPU`, `Test without
+coverage`, `make test`, `Build wheels`: project commands no allowlist can name.
+
+**So the split is not the feature.** `npm ci 9% ← infrastructure, not you` was an
+illustration that read as a measurement, and it was wrong by roughly 6x.
+
+What *is* there, and is worth shipping, is **concentration**: the median repo's top failing
+step accounts for **38%** of its failures, and 41 of 49 repos have enough failures to say so
+at all. Naming that step is specific, actionable, and true.
+
+The detector therefore reports concentration as the headline and the infrastructure share as
+a secondary number **always accompanied by its classification coverage**, so an unclassified
+majority is never read as "not infrastructure". Same withholding discipline as the critical
+path below 80% mapping.
+
+- Detector: `first_failing_step` · **Built 2026-09-06** · Basis: **none** — `savings=None`
+- Guards: `MIN_FAILURES = 20`, `MIN_TOP_SHARE = 0.25`
+
+### It moves the criterion — once the audit reads the history we hold
+
+First measured at `limit_runs=200` as **no change**: median findings 2.0 → 2.0, firing on
+21 of 49 repos. That was a fact about the measurement. The corpus holds a median of **545
+runs per repo** in the same window, so the audit was reading ~37% of local history.
+
+| `limit_runs` | median findings | F8 fires |
+|---:|---:|---:|
+| 200 | 2.0 | 21/49 |
+| **300** | **3.0** | 27/51 |
+| 600 | 3.0 | 33/51 |
+| 1000 | 3.0 | 39/52 |
+
+**The findings half of criterion 2 passes from 300 upward**, a plateau rather than a cliff,
+and **F8 carries it** — without F8 the median stays 2.0 at every limit. Default raised to
+500; full reasoning in `CAVEATS` 36.
+
+Recoverable is unaffected (~3.4%, target 10%) because the detector abstains from a savings
+figure by design.
+
+**The floor stays at 20.** Lowering `MIN_FAILURES` to 10 was the tempting way to move the
+number at `limit_runs=200`; it would have meant claiming *"40% of your failures start here"*
+from four events. The right fix was feeding the detector the data, not weakening it.
 
 ---
 
@@ -429,6 +522,102 @@ is *"no step in this file appears to push, publish or release"*, which is static
 with extra steps, and zizmor already does it.
 
 Recorded here so the idea is not re-proposed a third time.
+
+---
+
+## F13 · A behavioural codebase map — what CI knows that a reader doesn't
+
+**Requested 2026-09-08.** The observation behind it is real and getting worse: on
+AI-assisted repositories, the people maintaining the code often did not write it and cannot
+say where it is fragile. They want three things — what this codebase is, where it usually
+breaks, and how it keeps working anyway.
+
+### The version that is ours, and the version that isn't
+
+The tempting build reads the source and explains it. That is Cursor's, Copilot Workspace's
+and Sourcegraph's ground, `PRODUCT.md` §2 rule 2 forbids the model being the detector, and
+`PRODUCT.md:409` says source analysis "dilutes a product identity that is now cleanly
+*pipeline efficiency and reliability*". Anything executed against an untrusted checkout also
+drags in the full Phase 6 sandbox.
+
+**So the map is behavioural, not semantic.** Cadence cannot say what your code *means*. It
+can say what your code *does under CI*, from history nobody else keeps:
+
+| Question | Source | State |
+|---|---|---|
+| Where do failures start? | `first_failing_step` | ✅ shipped |
+| Which parts of the repo break the build? | changed paths × failure rate | **unblocked 2026-09-12** (CAVEATS 50) |
+| What does CI never exercise? | path filters vs observed paths | needs the above |
+| How does it work despite failing? | same job, same code, failed then passed | measured — **thin**, see below |
+
+### Retry-to-green: measured, and weaker than it first looked
+
+A first pass suggested *"76% of re-runs go green with no code change."* **That number is
+selection bias** — people re-run until green, so the denominator is wrong. The rigorous
+signal compares the *same job* at consecutive attempts within one run, which is identical
+code by construction:
+
+| | |
+|---|---:|
+| Failed jobs provably cleared by a retry on identical code | **299 of 7,591 — 3.9%** |
+| Repos with any | 31 / 55 |
+| **Median pairs per repo** | **3** |
+| Hours burned on attempts a retry cleared | 73.2 h |
+
+Median three pairs is far below what this project's guards require of a finding
+(`MIN_FAILURES = 20`, `MIN_RUNS = 20`). **So it ships as a reported number with its `n`
+attached, not as a ranked finding** — and only where `n` is large enough to mean anything.
+Recorded because the 76% version is the one that would have been quoted.
+
+### Why the fragility half became buildable
+
+Changed paths were fetched per audit and discarded, behind a flag the sweep never passed —
+which is why `irrelevant_path_trigger` fires on 0 of 51 repos. Migration `007` and
+[`commitstore.py`](../src/cadence/commitstore.py) persist them. Verified on `pallets/flask`:
+**269 of 271 runs now carry changed paths**, no flag, no API call at audit time.
+
+The fragility measure is then arithmetic: for each directory, the share of runs touching it
+that failed, against the repo's own baseline. *"Changes under `src/auth/` fail CI 3.2× the
+repo average — 18 of 44, against 6% overall."* Replay, not projection.
+
+**Two honesty constraints, both already enforced in the store.** GitHub truncates a commit's
+file list at 300, and a truncated list is withheld rather than reasoned over. And commit
+coverage is published with the figure, exactly as the critical path publishes its mapping
+coverage.
+
+---
+
+## F14 · Suggested CI configuration
+
+**Requested 2026-09-08.** `PHASE_2_FIX_PRS.md:88` already notes that *"the
+`.github/workflows/` performance surface is unclaimed"* — nobody generates workflow-YAML
+performance changes. This extends that from fixing a config to proposing one.
+
+**Never a bare template.** A template is `actions/starter-workflows`, free and better
+resourced. Two grounded modes instead:
+
+- **Repo with history** — derived from its own runs, which is replay: *"your `ci.yml` is
+  p50 22m; this arrangement would have produced the same signal in 9–13m across your last
+  1,842 runs."*
+- **Repo with thin or no history** — derived from the corpus cohort, which is F9's argument:
+  *"38 comparable Python repos: 92% test on `pull_request`, 78% cache dependencies, median
+  feedback 4m10s. Yours does none of it."*
+
+The second is the case the request actually names, since AI-assisted repos often have almost
+no CI. It is also the only mode that needs the 55-repo corpus, which makes it the more
+defensible of the two.
+
+**Ecosystem inference is free.** `actions/setup-python` → Python, `actions/setup-node` →
+Node, and so on, read from workflow YAML already stored in `workflow_blob`. No `/languages`
+call, no source parsing.
+
+**§6 applies without exception.** A configuration that has never run is a **projection** and
+renders hatched, as a range. The history-grounded mode may quote replay for the parts it
+replays and must not blend the two.
+
+**Unmeasured.** Before building: does the corpus have enough repos per ecosystem to make a
+cohort statement, and what is the smallest cohort worth quoting? Answer that first — three
+detectors in a row were built against assumptions that measurement then overturned.
 
 ---
 

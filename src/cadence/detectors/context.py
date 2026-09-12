@@ -76,6 +76,24 @@ class StepSeries:
 
 
 @dataclass(slots=True)
+class JobFailure:
+    """One failed job, reduced to where it first went wrong.
+
+    `step_name` is the first step in the job with a failing conclusion, by step number.
+    Steps run in order and a failing step normally ends the job, so the first failure is
+    the cause and everything after it is either skipped or an `if: always()` cleanup.
+    """
+
+    run_id: int
+    job_name: str
+    step_name: str
+    step_number: int
+    # Seconds the job ran before it was abandoned. Not recoverable -- the work was real --
+    # but it is what makes one failure more expensive than another.
+    job_seconds: float
+
+
+@dataclass(slots=True)
 class AuditContext:
     repo_id: int
     owner: str
@@ -96,6 +114,9 @@ class AuditContext:
     leg_durations: dict[tuple[str, str], list[float]] = field(default_factory=dict)
     # Files changed per run, for the path-trigger rule: {run_id: [paths]}
     changed_paths: dict[int, list[str]] = field(default_factory=dict)
+    # Failed jobs with the step they first failed at. Empty for a repo whose runs all
+    # passed, which is a legitimate state and not a coverage problem.
+    failures: list[JobFailure] = field(default_factory=list)
     # NOTE: class E (runner fit) is deliberately NOT built. Detecting "single-threaded
     # job on an 8-core runner" needs CPU utilisation, which the Actions API does not
     # expose -- only labels. Inferring it from duration alone would be a guess presented

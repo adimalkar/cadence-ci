@@ -35,10 +35,22 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 30 | Dollars-only findings cannot be ranked — `Savings` implies wall-clock | Medium | Open |
 | 31 | `recoverable_fraction` reported up to 5,132% — partial re-runs inflate cancellation replay | **High** | ✅ Largely fixed 2026-09-03 |
 | 35 | Multi-attempt runs were double-counting jobs in matrix and billing analysis | Medium | ✅ Fixed 2026-09-03 |
-| 36 | F8 and F6 specified but not started — the only candidates that can move Phase 1's criterion | Medium | Open |
+| 36 | Criterion 2's findings half **now passes** (median 3) once the audit reads the history we hold; recoverable still fails | **High** | Half open — re-measured 2026-09-06 |
 | 37 | Finding suppression has four schema columns and no writer — Phase 2's anti-spam rule 3 is unimplementable | **High** | Open |
 | 38 | Phase 6 overstated the novelty of verified liveness | Low | ✅ Corrected 2026-09-03 |
 | 39 | Phase 4 doubled to 6 weeks when observability became a pillar — no kill criterion covers it | Medium | Open |
+| 40 | F8's "infrastructure vs your tests" split was ~6x overstated — measured at 2.2%, not ~14% | Medium | ✅ Corrected 2026-09-06 |
+| 41 | Every `savings=None` finding rendered as "config bug" in the replay swatch | Medium | ✅ Fixed 2026-09-06 |
+| 42 | A stacked PR merged into an already-merged branch; its work never reached `main` | Medium | ✅ Recovered 2026-09-06 |
+| 43 | F6 measured before building: fires on 4 of 51 repos, and its top hits are maintenance bots | Medium | ✅ Closed — not building |
+| 44 | `evalsweep` measures the ship criterion with `irrelevant_path_trigger` structurally disabled | Medium | Open |
+| 45 | Three of nine built rules fire on zero corpus repos | Medium | Open |
+| 49 | The log archive holds 25 of 194,026 job logs — three docs claim we store every line | **High** | Open |
+| 50 | Changed paths were fetched and discarded; `irrelevant_path_trigger` had no data | Medium | ✅ Fixed 2026-09-12 |
+| 51 | `run.tree_sha` NULL on all 29,134 rows since migration 001, with an index built for it | Medium | ✅ Fixed 2026-09-12 |
+| 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — **kill criterion overridden 2026-09-07**, Phase 2 proceeding |
+| 47 | Reusable-workflow mapping <80% on 16 of 50 repos, and it gates criterion 2 as well as the critical path | **High** | Open |
+| 48 | Two Phase 1 items are not closable by engineering (App write scope, maintainer contact) | Medium | Carried to Phase 2 |
 | 32 | Worker crashes if Postgres is not up at boot, then hangs on dead connections | **High** | ✅ Resolved 2026-09-03 |
 | 33 | ~~Queue has no claim lease~~ — **wrong, the lease exists**; the worker hangs instead | **High** | ✅ Corrected + fixed |
 | 34 | Four large-backfill jobs hang the worker deterministically after exhausting the rate limit | **High** | Mitigated by 33's fix; cause is 27 |
@@ -564,6 +576,79 @@ Also unbuilt: `matrix_legs_never_independent`, measured but never implemented (i
 
 **Closes when.** One of F8 or F6 ships and the criterion is re-measured — not assumed to improve.
 
+### Update 2026-09-06 (second pass): the first measurement was under-powered
+
+**The section below is kept because it was wrong in an instructive way.** It concluded that
+F8 did not move the criterion. That was true of the *measurement*, not of the detector.
+
+`build_context` defaulted to `limit_runs=200`. The corpus holds a **median of 545 runs per
+repo** inside the same 90-day window, so the audit was reading about **37% of history
+already in Postgres** — no API call saved, since the query is local.
+
+Criterion 2 against how much history the audit is allowed to read:
+
+| `limit_runs` | repos | median findings | ≥3 | zero | median recoverable | F8 fires |
+|---:|---:|---:|---:|---:|---:|---:|
+| 200 | 49 | 2.0 | 22 | 6 | 1.62% | 21/49 |
+| **300** | 51 | **3.0** | 30 | 6 | 3.61% | 27/51 |
+| 400 | 51 | 3.0 | 31 | 5 | 3.23% | 31/51 |
+| 600 | 51 | 3.0 | 34 | 5 | 3.46% | 33/51 |
+| 1000 | 52 | 3.0 | 35 | 4 | 3.38% | 39/52 |
+
+**The findings half of criterion 2 passes at 300 and stays passing to 1000** — a plateau
+across a 3.3x range, which is what distinguishes statistical power from a threshold picked
+to make a number pass. F8 is what carries it: without F8 the median is 2.0 at every limit.
+
+**Why 200 starved the detectors.** Their guards assume real history — `MIN_RUNS = 20` per
+workflow stream, 150 for the matrix rule, `MIN_FAILURES = 20` for F8 — while 200 runs
+*across all workflows* leaves most streams under threshold.
+[`PHASE_1_WASTE_AUDIT.md`](phases/PHASE_1_WASTE_AUDIT.md) instructs detectors to "never
+recommend removal below ~200 runs" **for one stream**; the context was handing them 200 for
+the entire repo. 200 was an undocumented default in two call sites, never a decision.
+
+**Changed** to `limit_runs=500` in `build_context`, `evalsweep.sweep` and the `audit` CLI —
+enough to cover the median repo's full window without paying for the long tail.
+
+**Still failing: recoverable.** 3.46% against a 10% target, and it plateaus too, so more
+history will not fix it. That half needs rules that recover large wall-clock on the dominant
+workflow, and no measured candidate does.
+
+**The lesson worth keeping.** Three "this rule doesn't move the criterion" conclusions were
+recorded before anyone asked whether the harness was feeding the detectors enough data to
+fire. Check the measurement before concluding about the thing measured.
+
+### Superseded 2026-09-06: F8 shipped, and the criterion did not move
+
+Measured across 49 repos at the audit's own limits (90 days, 200 runs), before and after:
+
+| | Before | After |
+|---|---:|---:|
+| **Median findings** | 2.0 | **2.0** |
+| Repos with ≥3 findings | 17 | 22 |
+| Repos finding nothing | 8 | 6 |
+| **Median recoverable** | 1.62% | **1.62%** |
+
+`first_failing_step` fires on **21 of 49** repos. It moves both tails — five more repos reach
+three findings, two fewer find nothing — and **leaves the median exactly where it was**,
+because the median repo is not among the 21. Recoverable is unchanged by construction: the
+detector abstains from a savings figure.
+
+**Why only 21.** Over all ingested history, 41 repos clear `MIN_FAILURES = 20`. Inside the
+audit's 200-run window the failure counts are far smaller — the sorted distribution runs
+`… 13, 14, 15, 15, 18, 23, 25 …` and the median repo has about 14. Only 23 repos clear the
+floor at all; two more fail the concentration guard.
+
+**The tempting fix is the wrong one.** Dropping `MIN_FAILURES` to 10 would make 33 repos
+eligible and might well push the median to 3. It would also mean publishing *"40% of your
+failures start here"* on the strength of four events. That is tuning a guard to pass a
+criterion, which is the one thing the criterion exists to prevent. The floor stays at 20.
+
+**What this means for the plan.** Three detectors in a row were expected to move criterion 2
+and did not: `job_billing_rounding` (silent on a public corpus), `matrix_legs_never_independent`
+(never built), and now `first_failing_step` (fires on 43% of repos, none of them median).
+F6 is the last specified candidate, and it should be measured *before* it is built — the
+question is not "is it a good rule" but "does it fire on the median repo".
+
 ### 37. Suppression is designed, stored, and unreachable · High
 
 **What.** `finding` has carried `status ('suppressed')`, `suppress_scope`, `suppressed_by` and
@@ -635,6 +720,325 @@ it is cheap, differentiated, and unblocks Phase 6's audit stream.
 **Release Candidate, not stable** (checked 2026-09-05). Attribute names can still move, and
 a user's dashboards break when they do with no change on their side. The phase file says to
 pin the version and treat a bump as a breaking change; nothing enforces that yet.
+
+### 40. F8's infrastructure split did not survive measurement · Medium · CORRECTED 2026-09-06
+
+**What.** `FEATURE_CANDIDATES.md` F8 pitched the first-failing-step index around a split
+between "your tests" and "infrastructure, not you", illustrated with `npm ci` at 9% and
+`actions/checkout` at 5% — about 14% infrastructure.
+
+Measured while building it, over 6,085 failed jobs with an identifiable first failing step
+across 51 repos: **recognisable infrastructure is 2.2% of first failures**, carrying 2.5 of
+495 hours. A deliberately generous allowlist — checkout, runner setup, `setup-*`, cache,
+eight dependency-install commands, docker, artifacts, post steps — classified 2.2%. The
+rest are project commands (`Run all tests on GPU`, `make test`, `Test without coverage`)
+that no allowlist can name.
+
+**Why it matters.** An illustration in a planning document read as a measurement and was
+wrong by roughly 6x. Shipping that framing would have made the detector's headline a split
+the data does not support — the same failure mode as items 31, 33 and 38, and the fourth
+time a plausible number was asserted before being checked.
+
+**Corrected to** what the data supports: **concentration**. The median repo's top failing
+step is 38% of its failures; `pallets/flask` is 76% on one tox step. The detector leads with
+that and reports the infrastructure share only as a secondary number, always with its
+classification coverage attached, so an unclassified majority is never read as "not
+infrastructure".
+
+**Closed** — the correction is in `FEATURE_CANDIDATES.md` F8, in the detector's module
+docstring, and asserted by `test_coverage_is_published_even_when_it_is_low`.
+
+### 41. Every abstaining finding was labelled a config bug · Medium · FIXED 2026-09-06
+
+**What.** Both the CLI table and the HTML report rendered `savings=None` as **"config
+bug"**, and the report did it with the **replay swatch** — the solid marker `PRODUCT.md` §6
+reserves for measured savings.
+
+Three detectors abstain deliberately and none is a config bug: `long_tail_step` (the fix is
+unspecified, so any number would be a guess), `job_billing_rounding` (the waste is billed
+minutes, not wall clock) and now `first_failing_step` (the minutes were really spent). The
+label asserted a claim no detector made, in the visual language of a measurement.
+
+**Why it matters.** §6 exists so a reader can tell a measured saving from an estimate
+without reading the words. An abstention wearing the replay swatch defeats that directly,
+and it had been shipping since `long_tail_step` landed.
+
+**Fixed** to "no time claimed" / "measured · no saving" with the projection swatch, in
+`cli.py` and `report.py`, asserted by
+`test_abstaining_finding_is_not_labelled_a_config_bug`. Found only because a third
+abstaining detector made it obvious — an argument for adding rules that stress existing
+presentation, not only new computation.
+
+### 42. A stacked PR merged into an already-merged branch · Medium · RECOVERED 2026-09-06
+
+**What.** PR #14 (the Phase 4 observability rewrite) was opened with `--base
+docs/infisical-derived-features` while that PR was still open. When #12 merged, GitHub did
+**not** retarget #14, because the repo has `delete_branch_on_merge: false` and the base
+branch still existed. #14 then merged into that stale branch, and `main` never received the
+commit. Caught a day later only because a `CAVEATS` summary row was missing.
+
+**Why it matters.** Nothing failed. The PR reported merged, CI was green, and the work was
+silently absent from `main` — the same class of failure as a wrong trace that renders fine.
+Two PRs in a row hit it; #12 was retargeted by hand after noticing, #14 was not.
+
+**Recovered** by cherry-picking `7ae0b1f` onto `main` in PR #15.
+
+**Standing rule, so this does not recur.** Do not stack unless the parent is about to merge.
+When stacking, retarget the base **by hand** the moment the parent merges, and verify with
+`git merge-base --is-ancestor <merge-sha> origin/main` before believing a PR landed. The
+claim "GitHub retargets automatically" is false for this repo's settings and should not be
+repeated.
+
+### 43. F6 measured before building, and should not be built · Medium · CLOSED 2026-09-06
+
+**What.** `CAVEATS` 36 said F6 should be measured before it is built, and that the question
+was not whether the rule is sound but whether it fires on the *median* repo. Measured
+2026-09-06.
+
+The signal is real. Consecutive scheduled runs of the same workflow with an identical
+`head_sha` tested the same code twice — no commit API needed, the evidence is self-contained.
+**74% of all scheduled runs (1,882 of 2,544) are redundant by that test**, and only **13
+(0.7%)** produced a different outcome from the previous run. 99.3% reproduce a known result
+on unchanged code.
+
+**It still should not be built.**
+
+| | |
+|---|---|
+| Repos with any redundant scheduled run | 30/51 |
+| **Median waste per repo** | **0.13 h** — eight minutes over 90 days |
+| Streams surviving a 5-minute median-duration floor | **6, across 4 repos** |
+| Share of surviving hours in one repo's `daily.yml` | 165.9 of 257 h |
+
+The top hits by volume are `close-stale.yml`, `keepalive.yml`, `lock.yml`,
+`dependabot-triage`, `triage-scheduled-tasks` — **maintenance bots whose entire purpose is to
+run on a clock regardless of commits.** Flagging them is a false positive, not a finding. A
+5-minute floor separates them cleanly (the dropped set runs at 4s, 5s, 18s, 22s per run), and
+leaves six streams across four repos.
+
+**Closed as "will not build".** A rule reaching 8% of repos with a median of eight minutes
+cannot justify its own maintenance, and it would ship a false-positive class we would then
+have to suppress.
+
+**Worth keeping from it:** the same-`head_sha` comparison is a good primitive, and the
+5-minute floor is a clean, reasoned separator between test workflows and housekeeping bots.
+If a scheduled-waste rule is ever revisited, start there.
+
+### 44. The criterion harness runs with a rule switched off · Medium
+
+**What.** `irrelevant_path_trigger` reads `ctx.changed_paths`, populated only by
+`enrich_changed_paths`, which costs one API request per distinct commit and is therefore
+opt-in. The `audit` CLI calls it. **`evalsweep.py` never does** — so every ship-criterion
+measurement has been taken with one of nine rules structurally unable to fire.
+
+**Why it matters.** The criterion is reported as the audit's yield. Reporting it with a rule
+silently disabled by omission overstates nothing, but it means the number does not describe
+the product being shipped, and nobody would notice from the output.
+
+**Partially exonerating.** Probed on the six largest corpus repos with enrichment forced on
+(60 runs each): **it still did not fire once.** So the omission is not why the rule is
+silent — the rule is simply very narrow, or `MIN_RUNS = 30` per stream is unreachable at that
+enrichment depth. Both are worth knowing and neither was known before.
+
+**What would close it.** Either call `enrich_changed_paths` in the sweep and report its
+coverage alongside the criterion, or delete the rule. A rule that fires on nothing is not
+free: it is maintained, tested, and counted in "nine rules built".
+
+### 45. Three of nine built rules fire on zero corpus repos · Medium
+
+**What.** Per-rule reach across 49 audited repos at `limit_runs=200`:
+
+| Rule | Fires on |
+|---|---:|
+| `no_run_cancellation` | 69.4% |
+| `first_failing_step` | 42.9% |
+| `long_tail_step` | 28.6% |
+| `no_dependency_cache` | 18.4% |
+| `cache_key_never_hits` | 8.2% |
+| `false_needs_edge` | 6.1% |
+| `non_discriminating_matrix_leg` | **0%** |
+| `irrelevant_path_trigger` | **0%** |
+| `job_billing_rounding` | **0%** |
+
+**Diagnosed, and each is different.** `job_billing_rounding` is correct — the corpus is
+public and standard runners are free, so it stays silent by design (item 24).
+`irrelevant_path_trigger` is item 44. `non_discriminating_matrix_leg` requires `MIN_RUNS =
+150` for one workflow stream while the audit read 200 runs across *all* streams; 21 repos
+have a qualifying stream in the database and almost none did inside the context. Raising the
+default to 500 (item 36) should help it, and that was not re-measured per-rule.
+
+**Why it matters.** "Nine rules built" is the headline in `PROGRESS.md`, and six of them
+produce every finding the corpus sees. That is worth knowing before adding a tenth.
+
+**Re-measured at `limit_runs=500`, 51 repos, 2026-09-06:**
+
+| Rule | at 200 | at 500 |
+|---|---:|---:|
+| `no_run_cancellation` | 69.4% | **76.5%** |
+| `first_failing_step` | 42.9% | **66.7%** |
+| `long_tail_step` | 28.6% | 27.5% |
+| `no_dependency_cache` | 18.4% | 15.7% |
+| `cache_key_never_hits` | 8.2% | 7.8% |
+| `false_needs_edge` | 6.1% | 7.8% |
+| `non_discriminating_matrix_leg` | **0%** | **3.9%** |
+| `irrelevant_path_trigger` | 0% | **0%** |
+| `job_billing_rounding` | 0% | 0% — correct, public corpus |
+
+**Two of the three zero-firing rules are explained.** The matrix rule came alive at 2 repos
+once it could see 150 runs on a stream, confirming the diagnosis. `job_billing_rounding`
+stays silent by design (item 24).
+
+**`irrelevant_path_trigger` is the one genuinely unexplained rule.** Zero at both limits,
+and zero even with enrichment forced on the six largest repos (item 44). It is maintained,
+tested, and counted in "nine rules built" while producing nothing.
+
+**Still open.** Decide `irrelevant_path_trigger`'s fate — instrument it to report why it
+withholds, or delete it. A rule that has never fired on 51 repos is not evidence of a clean
+corpus; it is an untested code path.
+
+Also worth noting: the reach numbers shifted slightly *down* for three rules at the higher
+limit (`long_tail_step`, `no_dependency_cache`). More history means more runs failing a
+consistency test, which is the guards working, not regressing.
+
+### 46. Criterion 2's recoverable half cannot be reached on this corpus · High
+
+**What.** Phase 1 ship criterion 2 wants ≥10% of median wall clock recovered. It sits at
+**3.5%**, and every previous entry here assumed the gap was missing detectors. Measured
+2026-09-07 across 50 repos, it is not.
+
+Headroom — how far median wall clock sits above the theoretical floor, the slowest single
+job — is the entire budget any parallelism rule can ever recover:
+
+| | |
+|---|---:|
+| **Median headroom above floor** | **0.1%** |
+| Repos already at their floor (<2%) | **29/50** |
+| Repos with ≥10% headroom | 18/50 |
+| …with ≥80% mapping coverage too | **3/50** |
+
+**The median repo's entire run takes as long as its slowest job.** No rule can recover 10%
+of wall clock from a pipeline already at its floor. This is unreachable by construction.
+
+**Why it matters.** Three sessions were spent adding and measuring rules against this
+number — `job_billing_rounding`, F6, `first_failing_step` — on the assumption that the right
+rule would move it. The constraint was never the rules.
+
+**What would close it.** Either fix reusable-workflow mapping (item 47), which is the only
+path that keeps the criterion as written, or re-specify it: a corpus of mature public OSS
+repos is already parallelised, and the waste Cadence finds there is billing and diagnostics
+rather than wall clock. **That is a product decision and is deliberately not being taken
+unilaterally here.**
+
+**Note on the arithmetic.** 13 repos report ≥10% recovered against <10% headroom. Not
+over-claiming — `no_run_cancellation` recovers whole superseded runs, which no single run's
+floor bounds. Headroom is the wrong denominator for cancellation savings.
+
+**Decision 2026-09-07: the kill criterion was overridden, not met.** Phase 2 proceeds with
+this criterion failing, on the maintainer's explicit call, because Phase 2's own gate (≥5
+merged Cadence PRs in repos we do not own) tests the same question against real people
+rather than a corpus proxy.
+
+**The obligation that comes with the override:** this criterion is **bypassed, not passed**.
+No public claim about recoverable wall clock may cite it, and it must be re-measured against
+a **private or billed** corpus — where the money is real and pipelines are less likely to be
+already at their floor — before it is treated as answered either way.
+
+### 47. Reusable-workflow mapping gates more than the critical path · High
+
+**What.** 16 of 50 corpus repos map under 80% of their jobs to config nodes, so the critical
+path and both waterfalls are withheld for them — correctly. What was not known until
+2026-09-07 is that **the same gap drives criterion 2**: of the 18 repos that appear to have
+≥10% recoverable headroom, 15 are below the threshold, with floors computed from the handful
+of jobs we could place. `moby/moby` maps 2%, `rollup/rollup` 8%, `jestjs/jest` 12%.
+
+**Why it matters.** It was filed as a presentation limitation. It is a measurement
+limitation, and it is the binding constraint on Phase 1's remaining criterion.
+
+**Cause, already known.** Reusable workflows (`jobs.x.uses: ./.github/workflows/_build.yml`)
+rename their jobs to `x / <inner>`, matching nothing in the calling file.
+
+**What would close it.** Resolve `uses:` references, parse the called workflow, and map the
+`caller / inner` names back. It needs the called file, which `configstore` can already store.
+
+### 48. Two Phase 1 items are not closable by engineering · Medium
+
+**What.** Phase 1 closes with two items open that no amount of code will finish:
+
+- **Check-run output** needs GitHub App write scope, which requires registering an App and
+  a user installing it.
+- **3 maintainers confirming a finding surprised them** needs contacting humans.
+
+**Why it matters.** Both are real gates on whether the product works, not paperwork. The
+second is the only criterion that tests whether Cadence told someone something true they did
+not already know.
+
+**Carried to Phase 2**, whose ship criterion 3 — ≥5 merged Cadence PRs in repos we do not own
+— requires the same outreach and subsumes the maintainer confirmation. Recorded so Phase 1 is
+not remembered as fully passed.
+
+### 49. The log archive is empty, and three documents say otherwise · High
+
+**What.** `EXPANSION.md:38`, `PHASE_6_SECURITY.md:50` and `FEATURE_CANDIDATES.md:37` all
+state that Cadence "already stores every log line from every run."
+
+Measured 2026-09-08: **25 job logs stored against 194,026 jobs. Zero of them from failed
+jobs.**
+
+The plumbing works — `cadence logs --failures-only` exists, the worker writes, the store is
+content-addressed by sha. It has simply never been run at scale. Separately,
+`LocalLogStore.get` has **no production callers at all**: logs are write-only, and
+`evidence.log_chunk_id` / `byte_start` / `byte_end` exist for a `log_span` evidence kind no
+detector produces.
+
+**Why it matters.** Phase 6A's entire justification is *"it runs on logs Cadence already
+ingests and stores. Nobody else has that corpus."* That is currently false. F11
+(`expired_credential_failure`) is likewise marked "logs already stored". Both would fail the
+moment someone tried to build them.
+
+It also blocks failure→file attribution: 95% of first-failing steps are unclassifiable
+project commands, so mapping a failure to a source file means reading stack traces out of
+log text, and there is no log text to read.
+
+**What would close it.** Run the backfill at corpus scale and measure what it costs against
+the rate limit (item 27 is the standing constraint), then correct the three claims to say
+what is actually stored. Until then, no plan should assume the archive exists.
+
+### 50. Changed paths were fetched and thrown away · Medium · FIXED 2026-09-12
+
+**What.** `enrich_changed_paths` fetched each commit's file list, handed it to the detectors
+in memory and discarded it. Its dedupe cache was function-local, so a second audit re-paid
+the full cost, and it sat behind a `--paths` flag that `evalsweep` never passes. That is why
+`irrelevant_path_trigger` fired on **0 of 51 repos** — not a bad rule, a rule with no data.
+
+**Fixed** by migration `007` and [`commitstore.py`](../src/cadence/commitstore.py): a
+`repo_commit` table keyed `(repo_id, sha)`, populated by `cadence commits backfill`, read by
+`build_context` with no flag and no API call at audit time.
+
+Verified on `pallets/flask`: **269 of 271 runs now carry changed paths**, commit coverage
+93/93. Previously zero in every sweep.
+
+**Two things the store refuses to hand on.** GitHub caps a commit's file list at 300
+entries, so a truncated list is recorded and then withheld — a rule concluding "nothing
+relevant changed" from a partial list is wrong in the one direction that ships bad advice.
+Empty commits are withheld for the same reason. `coverage()` returns both halves of the
+fraction so anything derived from paths can publish its denominator, as the critical path
+already does below 80% mapping.
+
+### 51. `run.tree_sha` was NULL on every row, with an index waiting for it · Medium · FIXED 2026-09-12
+
+**What.** Migration `001` created `run.tree_sha` and a partial index
+`run_tree_sha_idx ... WHERE tree_sha IS NOT NULL`, and the schema comment calls it "the
+strongest flaky label: same tree, different outcome". `github.py` set it to `None` on every
+run with a comment saying it "costs an extra commit lookup and is backfilled separately".
+
+**It was never backfilled.** NULL on all 29,134 rows; the index had no rows in it.
+
+**Fixed as a side effect of item 50** — the same `GET /commits/{sha}` response that carries
+the changed file list also carries `commit.tree.sha`, so populating it costs nothing extra
+once the path backfill is being paid for. `backfill_tree_shas` fills runs that lack one and
+never overwrites a value already present.
+
+Verified on `pallets/flask`: **287 tree shas filled** on the first pass.
 
 ## Environmental and tooling notes
 
