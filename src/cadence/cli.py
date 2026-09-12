@@ -13,6 +13,8 @@ from cadence.audit import (
     run_audit,
     summarize_pipeline,
 )
+from cadence.commitstore import backfill_tree_shas, store_commits, unfetched_shas
+from cadence.commitstore import coverage as commit_coverage
 from cadence.config import settings
 from cadence.configstore import store_snapshot
 from cadence.corpus import CORPUS
@@ -37,11 +39,15 @@ worker_app = typer.Typer(no_args_is_help=True, help="The ingest queue's consumer
 queue_app = typer.Typer(no_args_is_help=True, help="Inspect the ingest queue.")
 corpus_app = typer.Typer(no_args_is_help=True, help="The no-install evaluation corpus.")
 webhook_app = typer.Typer(no_args_is_help=True, help="The webhook receiver.")
+commits_app = typer.Typer(
+    no_args_is_help=True, help="Fetch what each commit changed (paths + tree sha)."
+)
 app.add_typer(db_app, name="db")
 app.add_typer(worker_app, name="worker")
 app.add_typer(queue_app, name="queue")
 app.add_typer(corpus_app, name="corpus")
 app.add_typer(webhook_app, name="webhook")
+app.add_typer(commits_app, name="commits")
 
 console = Console()
 
@@ -344,6 +350,74 @@ def worker_run(
                 until_empty=until_empty,
                 max_idle_iterations=max_idle or None,
             )
+        finally:
+            await provider.aclose()
+
+    asyncio.run(_run())
+
+
+@commits_app.command("backfill")
+def commits_backfill(
+    repo: str = typer.Argument(..., help="owner/name"),
+    window: int = typer.Option(90, help="Days of run history to cover."),
+    limit: int = typer.Option(300, help="Max commits to fetch this pass."),
+) -> None:
+    """Populate the commit store: one request per commit, newest first.
+
+    A separate verb rather than part of `audit`, because it costs one API request per
+    distinct commit and a caller has to choose to spend that. Resumable: a second pass
+    fetches only what the first did not reach.
+
+    The same responses fill `run.tree_sha`, NULL on every row since migration 001 despite
+    carrying an index built for it.
+    """
+    token = _require_token()
+    try:
+        owner, name = repo.split("/", 1)
+    except ValueError:
+        console.print("[red]repo must be owner/name[/red]")
+        raise typer.Exit(1) from None
+
+    async def _run() -> None:
+        provider = GitHubProvider(token=token)
+        try:
+            gh_repo = await provider.get_repo(owner, name)
+            with connect() as conn:
+                todo = unfetched_shas(conn, gh_repo.id, window_days=window, limit=limit)
+                fetched, seen = commit_coverage(conn, gh_repo.id, window_days=window)
+
+            if not todo:
+                console.print(
+                    f"[green]{repo}: nothing to fetch[/green] "
+                    f"[dim]({fetched}/{seen} commits already stored)[/dim]"
+                )
+                return
+
+            records = []
+            with console.status(f"fetching {len(todo)} commits for {repo}…"):
+                for sha in todo:
+                    rec = await provider.fetch_commit(gh_repo, sha)
+                    if rec is not None:
+                        records.append(rec)
+
+            with connect() as conn:
+                stored = store_commits(conn, gh_repo.id, records)
+                trees = backfill_tree_shas(conn, gh_repo.id)
+                fetched, seen = commit_coverage(conn, gh_repo.id, window_days=window)
+
+            missed = len(todo) - len(records)
+            truncated = sum(1 for r in records if r.truncated)
+            console.print(
+                f"[green]{repo}[/green]: stored {stored} commits"
+                + (f", {missed} unavailable" if missed else "")
+                + (
+                    f", [yellow]{truncated} truncated at 300 files[/yellow]"
+                    if truncated
+                    else ""
+                )
+                + f"; filled {trees} tree shas"
+            )
+            console.print(f"[dim]commit coverage: {fetched}/{seen} in {window}d[/dim]")
         finally:
             await provider.aclose()
 

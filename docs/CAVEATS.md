@@ -45,6 +45,9 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 43 | F6 measured before building: fires on 4 of 51 repos, and its top hits are maintenance bots | Medium | ✅ Closed — not building |
 | 44 | `evalsweep` measures the ship criterion with `irrelevant_path_trigger` structurally disabled | Medium | Open |
 | 45 | Three of nine built rules fire on zero corpus repos | Medium | Open |
+| 49 | The log archive holds 25 of 194,026 job logs — three docs claim we store every line | **High** | Open |
+| 50 | Changed paths were fetched and discarded; `irrelevant_path_trigger` had no data | Medium | ✅ Fixed 2026-09-12 |
+| 51 | `run.tree_sha` NULL on all 29,134 rows since migration 001, with an index built for it | Medium | ✅ Fixed 2026-09-12 |
 | 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — **kill criterion overridden 2026-09-07**, Phase 2 proceeding |
 | 47 | Reusable-workflow mapping <80% on 16 of 50 repos, and it gates criterion 2 as well as the critical path | **High** | Open |
 | 48 | Two Phase 1 items are not closable by engineering (App write scope, maintainer contact) | Medium | Carried to Phase 2 |
@@ -972,6 +975,70 @@ not already know.
 **Carried to Phase 2**, whose ship criterion 3 — ≥5 merged Cadence PRs in repos we do not own
 — requires the same outreach and subsumes the maintainer confirmation. Recorded so Phase 1 is
 not remembered as fully passed.
+
+### 49. The log archive is empty, and three documents say otherwise · High
+
+**What.** `EXPANSION.md:38`, `PHASE_6_SECURITY.md:50` and `FEATURE_CANDIDATES.md:37` all
+state that Cadence "already stores every log line from every run."
+
+Measured 2026-09-08: **25 job logs stored against 194,026 jobs. Zero of them from failed
+jobs.**
+
+The plumbing works — `cadence logs --failures-only` exists, the worker writes, the store is
+content-addressed by sha. It has simply never been run at scale. Separately,
+`LocalLogStore.get` has **no production callers at all**: logs are write-only, and
+`evidence.log_chunk_id` / `byte_start` / `byte_end` exist for a `log_span` evidence kind no
+detector produces.
+
+**Why it matters.** Phase 6A's entire justification is *"it runs on logs Cadence already
+ingests and stores. Nobody else has that corpus."* That is currently false. F11
+(`expired_credential_failure`) is likewise marked "logs already stored". Both would fail the
+moment someone tried to build them.
+
+It also blocks failure→file attribution: 95% of first-failing steps are unclassifiable
+project commands, so mapping a failure to a source file means reading stack traces out of
+log text, and there is no log text to read.
+
+**What would close it.** Run the backfill at corpus scale and measure what it costs against
+the rate limit (item 27 is the standing constraint), then correct the three claims to say
+what is actually stored. Until then, no plan should assume the archive exists.
+
+### 50. Changed paths were fetched and thrown away · Medium · FIXED 2026-09-12
+
+**What.** `enrich_changed_paths` fetched each commit's file list, handed it to the detectors
+in memory and discarded it. Its dedupe cache was function-local, so a second audit re-paid
+the full cost, and it sat behind a `--paths` flag that `evalsweep` never passes. That is why
+`irrelevant_path_trigger` fired on **0 of 51 repos** — not a bad rule, a rule with no data.
+
+**Fixed** by migration `007` and [`commitstore.py`](../src/cadence/commitstore.py): a
+`repo_commit` table keyed `(repo_id, sha)`, populated by `cadence commits backfill`, read by
+`build_context` with no flag and no API call at audit time.
+
+Verified on `pallets/flask`: **269 of 271 runs now carry changed paths**, commit coverage
+93/93. Previously zero in every sweep.
+
+**Two things the store refuses to hand on.** GitHub caps a commit's file list at 300
+entries, so a truncated list is recorded and then withheld — a rule concluding "nothing
+relevant changed" from a partial list is wrong in the one direction that ships bad advice.
+Empty commits are withheld for the same reason. `coverage()` returns both halves of the
+fraction so anything derived from paths can publish its denominator, as the critical path
+already does below 80% mapping.
+
+### 51. `run.tree_sha` was NULL on every row, with an index waiting for it · Medium · FIXED 2026-09-12
+
+**What.** Migration `001` created `run.tree_sha` and a partial index
+`run_tree_sha_idx ... WHERE tree_sha IS NOT NULL`, and the schema comment calls it "the
+strongest flaky label: same tree, different outcome". `github.py` set it to `None` on every
+run with a comment saying it "costs an extra commit lookup and is backfilled separately".
+
+**It was never backfilled.** NULL on all 29,134 rows; the index had no rows in it.
+
+**Fixed as a side effect of item 50** — the same `GET /commits/{sha}` response that carries
+the changed file list also carries `commit.tree.sha`, so populating it costs nothing extra
+once the path backfill is being paid for. `backfill_tree_shas` fills runs that lack one and
+never overwrites a value already present.
+
+Verified on `pallets/flask`: **287 tree shas filled** on the first pass.
 
 ## Environmental and tooling notes
 

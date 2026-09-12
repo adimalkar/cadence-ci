@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import structlog
 
+from cadence.commitstore import load_changed_paths
 from cadence.config import settings
 from cadence.cost import CostContext, load_rate_card
 from cadence.dag import aggregate_spans, critical_path, theoretical_floor
@@ -216,6 +217,11 @@ def build_context(
         leg_outcomes=leg_outcomes,
         leg_durations=leg_durations,
         failures=failures,
+        # From storage, not the API. Until migration 007 this was populated only by
+        # `enrich_changed_paths` behind `--paths`, which is why irrelevant_path_trigger
+        # fired on 0 of 51 corpus repos -- evalsweep never called it (CAVEATS 44, 45).
+        # Empty is still a legitimate state: it means this repo's commits are unfetched.
+        changed_paths=load_changed_paths(conn, repo_id, run_ids),
     )
 
 
