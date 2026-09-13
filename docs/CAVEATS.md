@@ -48,6 +48,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 49 | The log archive holds 25 of 194,026 job logs — three docs claim we store every line | **High** | Open |
 | 50 | Changed paths were fetched and discarded; `irrelevant_path_trigger` had no data | Medium | ✅ Fixed 2026-09-12 |
 | 51 | `run.tree_sha` NULL on all 29,134 rows since migration 001, with an index built for it | Medium | ✅ Fixed 2026-09-12 |
+| 52 | Directory-level fragility is noise — F13's headline measured at 1.33x and will not be built | Medium | ✅ Closed 2026-09-13 |
 | 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — **kill criterion overridden 2026-09-07**, Phase 2 proceeding |
 | 47 | Reusable-workflow mapping <80% on 16 of 50 repos, and it gates criterion 2 as well as the critical path | **High** | Open |
 | 48 | Two Phase 1 items are not closable by engineering (App write scope, maintainer contact) | Medium | Carried to Phase 2 |
@@ -1039,6 +1040,34 @@ once the path backfill is being paid for. `backfill_tree_shas` fills runs that l
 never overwrites a value already present.
 
 Verified on `pallets/flask`: **287 tree shas filled** on the first pass.
+
+### 52. Directory-level fragility does not exist in the data · Medium · CLOSED 2026-09-13
+
+**What.** F13's headline was *"changes under `src/auth/` fail CI 3.2× the repo average"*.
+Measured across 7 repos with full commit coverage — 770 commits, 4,826 classified runs — in
+four framings: 1.66× inclusive, **1.26×** with confounds removed, **0.79×** for
+CI-config-vs-code, **1.33×** with exclusive attribution. Only 2 of 7 repos have any
+directory at ≥1.5× their own base rate.
+
+**Two things worth keeping.** The first measurement attributed a run to *every* directory it
+touched, so mixed commits inherited their failures into every bucket — that is what inflated
+`.github` to 2.73× and made the signal look real. And the tautology everyone assumes —
+"editing CI config breaks CI" — is **false here**: CI-only runs fail at 0.79× the rate of
+code-only runs, with numpy at 100 CI-only runs and zero failures.
+
+**Why it matters.** A 1.33× median on base rates of 4–46% is noise with a decimal point. It
+would have shipped as the headline of a whole feature.
+
+**Stopped at three framings on purpose.** Cutting the same data until something clears a
+threshold is fishing. Recorded here so a fourth cut is recognised as such.
+
+**What it does not kill.** The commit-path store built to enable it stands: it gave
+`irrelevant_path_trigger` data for the first time (item 50) and populated `run.tree_sha`
+(item 51). Two of three justifications delivered; the third is closed.
+
+**What survives of "where does this repo fail":** `first_failing_step` at step granularity,
+67% reach. File granularity needs stack traces from failure logs, and item 49 says the log
+archive holds 25 of 194,026.
 
 ## Environmental and tooling notes
 
