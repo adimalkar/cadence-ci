@@ -36,7 +36,7 @@ runs, 55 repos.
 | **F10** | Artifact upload never downloaded | Unmeasured — needs log parsing | Artifact users | Medium |
 | **F11** | Expired-credential failure clusters | Unmeasured — logs already stored | Repos with external auth | Small |
 | **F12** | User-reachable finding suppression | **Schema exists, no writer** | Every repo — **gates Phase 2** | Small |
-| **F13** | Behavioural codebase map — where CI says a repo breaks | **Partly measured — see below** | Every repo with failures | Medium |
+| **F13** | Behavioural codebase map — where CI says a repo breaks | **Measured — fragility map is noise (1.33x)** | — | ❌ **Will not build** |
 | **F14** | Suggested CI configuration | Unmeasured — needs ecosystem cohorts | Repos with thin CI | Medium |
 
 Candidates already carried in [`phases/PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md)
@@ -569,7 +569,48 @@ Median three pairs is far below what this project's guards require of a finding
 attached, not as a ranked finding** — and only where `n` is large enough to mean anything.
 Recorded because the 76% version is the one that would have been quoted.
 
-### Why the fragility half became buildable
+### The fragility map does not survive measurement — measured 2026-09-13
+
+The headline this feature was going to carry — *"changes under `src/auth/` fail CI 3.2× the
+repo average"* — **is not supported by the data.** Measured across 7 repos with full commit
+coverage (770 commits, 4,826 classified runs), in four framings:
+
+| Framing | Median top-directory ratio | Repos with a dir ≥1.5× |
+|---|---:|---:|
+| All directories a run touched | 1.66× | 4 / 7 |
+| …with `.github`, `docs`, `benchmarks` removed | **1.26×** | 2 / 7 |
+| CI-config-only runs vs code-only runs | **0.79×** | 2 / 5 |
+| Exclusive attribution (runs touching one directory) | **1.33×** | — |
+
+**The first number was an artifact of my own method.** Attributing a run to *every*
+directory it touched means a mixed commit inherits its failures into every bucket, which
+inflated `.github` to 2.73× on jest and 2.14× on react. Exclusive attribution — count only
+runs touching a single top-level directory — is the correct cut, and it lands at 1.33×.
+
+**The tautology I expected is not there either.** "Editing CI config breaks CI" seemed
+certain enough to be a finding in its own right. Measured, CI-config-only runs fail at
+**0.79× the rate of code-only runs** — *less* often. numpy: 100 CI-only runs, zero
+failures. rollup: 16, zero.
+
+**A 1.33× median on a base rate of 4–46% is noise wearing a decimal point.** With n=590 and
+a base of 14.9%, the interval on that ratio straddles 1.0. Publishing it would be the exact
+failure this project keeps correcting — a plausible number asserted before it was checked.
+
+**Stopped at three framings deliberately.** Trying a fourth cut of the same data until one
+clears a threshold is fishing, not measuring.
+
+**What this kills, and what it does not.** The per-directory fragility map is closed: it is
+not being built. The commit-path store that was built to enable it stands on its own — it
+fixed `irrelevant_path_trigger` (0 of 51 repos, no data) and `run.tree_sha` (NULL on 29,134
+rows), which were two of its three justifications. Two of three delivered is the honest
+accounting.
+
+**What survives of "where does this codebase fail":** `first_failing_step`, which reaches
+67% of repos and answers the question at *step* granularity. File granularity would need
+stack traces out of failure logs, and the log archive holds 25 of 194,026 job logs
+(CAVEATS 49).
+
+### Why the path store still earned its place
 
 Changed paths were fetched per audit and discarded, behind a flag the sweep never passed —
 which is why `irrelevant_path_trigger` fires on 0 of 51 repos. Migration `007` and
