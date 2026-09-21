@@ -38,6 +38,8 @@ runs, 55 repos.
 | **F12** | User-reachable finding suppression | **Schema existed, no writer** | Every repo — gated Phase 2 | ✅ **Built** |
 | **F13** | Behavioural codebase map — where CI says a repo breaks | **Measured — fragility map is noise (1.33x)** | — | ❌ **Will not build** |
 | **F14** | Suggested CI configuration | Unmeasured — needs ecosystem cohorts | Repos with thin CI | Medium |
+| **F15** | Vendor-neutral bottleneck verdict — *"faster runners will not help you"* | **Partly measured — 1/50 repos queue-bound** | Every repo | Small |
+| **F16** | Self-hosted fleet cost attribution | Unmeasured — corpus is 100% hosted | Self-hosted operators | ✅ **Groundwork built** |
 
 Candidates already carried in [`phases/PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md)
 — `no_job_timeout`, `pipeline_fix_churn`, `cache_evicted_before_reuse`, the exit-137 split,
@@ -665,6 +667,66 @@ replays and must not blend the two.
 **Unmeasured.** Before building: does the corpus have enough repos per ecosystem to make a
 cohort statement, and what is the smallest cohort worth quoting? Answer that first — three
 detectors in a row were built against assumptions that measurement then overturned.
+
+---
+
+## F15 · The verdict no runner vendor can give you
+
+**From a competitive review, 2026-09-21.** Depot, Blacksmith, WarpBuild, Namespace, RunsOn,
+Ubicloud and BuildJet all sell the same thing: faster runners. Depot's own headline is *"10x
+faster programmable CI engine"*. None of them will tell you when speed is the wrong lever,
+and they structurally cannot — `EXPANSION.md` §3.5 named the reason when it rejected the
+category for us: *"it would make us a vendor whose advice is self-interested."*
+
+Cadence already computes the answer. `summarize_pipeline` returns `queue_bound` — whether a
+pipeline spends more time waiting for a runner than using one — and the corpus says **1 of
+50 repos** is queue-bound. For the other 49, buying faster hardware addresses a constraint
+they do not have.
+
+> *"You are not queue-bound. 3% of your job time is spent waiting for a runner; the rest is
+> execution. Faster runners would not measurably change your feedback loop. The 8m12s on
+> your critical path is where the time is."*
+
+That is unsellable by anyone with runners to sell, and it is one field on a summary we
+already produce.
+
+**What is not yet measured.** The 1-of-50 figure comes from a strict test (total queue >
+total exec). The distribution *below* that bar — how many repos have a meaningful but
+non-dominant queue — could not be measured until `queue_coverage` landed (CAVEATS 54),
+because eight repos were silently discarding up to a fifth of their queue observations. Do
+that measurement before writing the finding, and expect a confident number to survive it
+less often than it deserves.
+
+**Guard it on coverage.** A queue verdict computed from four-fifths of a repo's jobs is the
+kind of claim this project exists not to make.
+
+---
+
+## F16 · What the self-hosted fleet actually costs
+
+**Groundwork built 2026-09-21** as the fix for CAVEATS 53.
+
+GitHub bills **nothing** for self-hosted runners. So every CI cost tool — CostOps,
+Blacksmith's analytics, GitHub's own metrics — reports `$0` for a self-hosted fleet, while
+the EC2 instances, the rack and the power are real money. **Nobody attributes it**, and the
+reason is that nobody can: the number is not in any API, it is in the operator's cloud bill.
+
+We cannot know it either, and will not invent one — inventing one is precisely the bug
+CAVEATS 53 records. But we can *accept* it.
+`CostContext.self_hosted_usd_per_minute` takes an operator-supplied rate and denominates
+their fleet in the same dollars as everything else. `None` stays `$0` rather than becoming a
+guess, and it never overrides a known hosted rate, because GitHub's bill is not ours to
+restate.
+
+**Why this is worth more than it looks.** Self-hosted is the population `CAVEATS` 24 calls
+"the commercial case" — private repos, real infrastructure, an actual budget. It is also the
+population the 55-repo public corpus contains none of, so **every claim here is unmeasured
+and must stay labelled as such** until a private repo or a synthetic fixture exercises it.
+
+Remaining work: surface it — a config field and a CLI flag — and decide whether a fleet's
+idle time is Cadence's business at all. A runner costs money while idle, which is a real
+form of waste and one we can see (queue and exec per runner label), but it is also the point
+where a read-only analyser starts wanting an agent. Measure before building.
 
 ---
 

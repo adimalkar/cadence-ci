@@ -38,11 +38,19 @@ class RateCard:
     def usd_per_minute(self, labels: list[str], *, is_private: bool) -> float:
         """Billed rate for a job, or 0.0 when the runner is free for this repo.
 
-        An unknown label means a self-hosted or third-party pool. Until 2026-03-01 those
-        were genuinely free and billing them at 0.0 was correct; since then GitHub applies
-        its platform charge to them too, so they resolve to the card's SELF_HOSTED rate.
-        Cards predating that row keep the old behaviour and return 0.0, which is what makes
-        an old `rate_card_version` still reproduce the figure it originally published.
+        An unknown label means a self-hosted or third-party pool, and **GitHub charges
+        nothing for those**. The platform charge that card 20260301 priced at $0.002/min
+        was announced for private-repo self-hosted runners and postponed indefinitely
+        within 48 hours; it never took effect (see migration `008`). Card 20260901 prices
+        the sentinel at 0.0, which is the true GitHub charge.
+
+        Cards are never rewritten, only superseded: an old `rate_card_version` still
+        resolves through its own row, so a figure published under 20260301 still
+        reproduces — wrongly, but reproducibly, which is what makes it auditable.
+
+        **0.0 is what GitHub bills, not what the runner costs.** An EC2 instance or a rack
+        is real money; that number belongs to the operator, so `CostContext` takes an
+        optional `self_hosted_usd_per_minute` override rather than this card inventing one.
         """
         for label in labels:
             key = label.strip()
@@ -82,20 +90,45 @@ class CostContext:
     rate_card: RateCard
     billed_minutes_per_run: float = 0.0
     dominant_labels: list[str] = None  # type: ignore[assignment]
+    # What a self-hosted minute costs the operator, if they told us. GitHub bills nothing
+    # for self-hosted runners, so every CI cost tool reports $0 for them -- while the EC2
+    # instance or the rack is real money nobody attributes. We cannot know that number and
+    # will not invent one, but an operator who supplies it gets their fleet denominated in
+    # the same dollars as everything else. `None` means "unknown", which stays $0 rather
+    # than becoming a guess.
+    self_hosted_usd_per_minute: float | None = None
 
     def __post_init__(self) -> None:
         if self.dominant_labels is None:
             self.dominant_labels = ["ubuntu-latest"]
+        if self.self_hosted_usd_per_minute is not None and self.self_hosted_usd_per_minute < 0:
+            raise ValueError("self_hosted_usd_per_minute cannot be negative")
+
+    def effective_rate(self) -> float:
+        """Dollars per minute for this repo's dominant runner.
+
+        The operator's self-hosted rate applies only when the card resolves to 0 *and* the
+        runner is unrecognised -- i.e. when GitHub is charging nothing and we are pricing
+        the operator's own hardware. It never overrides a known hosted rate, because
+        GitHub's bill for those is not the operator's to restate.
+        """
+        rate = self.rate_card.usd_per_minute(
+            self.dominant_labels, is_private=self.is_private
+        )
+        if rate > 0 or self.self_hosted_usd_per_minute is None:
+            return rate
+        known = any(label.strip() in self.rate_card.rates for label in self.dominant_labels)
+        return 0.0 if known else self.self_hosted_usd_per_minute
 
     @property
     def headline_currency(self) -> Currency:
         """Dollars only when the repo actually pays them.
 
         A public repo on larger runners *is* billed, so the test is the effective rate,
-        not the visibility flag.
+        not the visibility flag. An operator-supplied self-hosted rate counts too: if they
+        told us their fleet costs money, dollars are the currency they think in.
         """
-        rate = self.rate_card.usd_per_minute(self.dominant_labels, is_private=self.is_private)
-        return Currency.DOLLARS if rate > 0 else Currency.HOURS
+        return Currency.DOLLARS if self.effective_rate() > 0 else Currency.HOURS
 
     def dollars_per_month(
         self, seconds_saved_per_run: float, *, parallel_jobs: float = 1.0
@@ -107,7 +140,7 @@ class CostContext:
         job bills as 2 job-minutes; cancelling a superseded run saves every concurrently
         running job's minutes at once.
         """
-        rate = self.rate_card.usd_per_minute(self.dominant_labels, is_private=self.is_private)
+        rate = self.effective_rate()
         if rate <= 0:
             return 0.0
         minutes = (seconds_saved_per_run / 60.0) * parallel_jobs

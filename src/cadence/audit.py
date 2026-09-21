@@ -391,10 +391,27 @@ def summarize_pipeline(ctx: AuditContext) -> dict | None:
         "floor_seconds": theoretical_floor(median.timings),
         "jobs": len(median.timings),
         "queue_seconds": total_queue,
+        # What share of nodes had an observable queue. Below 1.0 the queue figures are
+        # computed from a subset, because a re-run's carried-forward jobs report a start
+        # before their creation and get clamped (see `aggregate_spans`). Published so a
+        # consumer withholds rather than quoting a partial number -- the same discipline
+        # the critical path applies below 80% mapping.
+        "queue_coverage": (
+            sum(1 for t in median.timings.values() if not t.queue_unknown)
+            / len(median.timings)
+        ) if median.timings else 0.0,
         "exec_seconds": total_exec,
         # More parallelism makes a queue-bound pipeline slower, not faster. Every other
         # tool's advice is "parallelise more"; saying the opposite requires measuring it.
-        "queue_bound": total_queue > total_exec,
+        # More parallelism makes a queue-bound pipeline slower, not faster -- and buying
+        # faster runners helps only a pipeline that is waiting for them. Every runner
+        # vendor sells speed; none of them will tell you speed is the wrong lever, because
+        # they sell it. Saying so requires measuring it, and measuring it requires knowing
+        # the queue for most of the pipeline -- hence the coverage gate.
+        "queue_bound": (
+            total_queue > total_exec
+            and all(not t.queue_unknown for t in median.timings.values())
+        ),
         # Per-job queue/exec for the report's job waterfall. Queue is kept separate all
         # the way to the markup: a queue-bound job gets the opposite advice from a
         # compute-bound one, and collapsing them into a single bar hides that.

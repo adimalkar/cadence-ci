@@ -70,8 +70,18 @@ phases rather than annoy:
       [`deploy/`](../deploy/).
 - [ ] Eval harness written in Phase 1, reused by every later module
 - [ ] Weekly publish: calibration, precision, n, date, detector SHA
-- [ ] **Week 8: re-verify Kleore's feature set.** If they ship config rules + fix PRs, only
-      the simulator differentiates and this plan needs revisiting.
+- [x] **Week 8: re-verify Kleore's feature set.** Done 2026-09-21. **The trigger does not
+      fire, but it half-fires.** Kleore now ships flaky detection, dollar quantification,
+      quarantine, and **Auto-Heal — fix PRs**. Those PRs modify **test source code**, not
+      workflow YAML; their own writing calls the YAML optimisations "manual fixes
+      developers must implement themselves." So: fix PRs yes, **config rules no**, and
+      `PHASE_2_FIX_PRS.md` §88's claim that the `.github/workflows/` performance surface is
+      unclaimed still holds.
+      **What did change:** Kleore now occupies Phase 3's ground (flaky intelligence) more
+      completely than Phase 3 plans to, with an empirical validation loop Cadence does not
+      have — running a failing test 100× in parallel and only graduating the PR if all 100
+      pass. Read alongside item 22 (Phase 3's demand signal is weaker than assumed) before
+      committing seven weeks. Re-verify again before Phase 3 starts, not on a calendar.
 - [ ] **Watch costops.dev and Semaphore.** costops.dev publishes our catalog as prose;
       Semaphore runs our arithmetic toward migration where we recommend repair. The audit
       report should be able to answer *"would switching beat fixing?"* rather than leaving

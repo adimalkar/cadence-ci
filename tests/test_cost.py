@@ -108,3 +108,77 @@ class TestHeadlineCurrency:
         )
         assert ctx.dollars_per_month(60.0) == pytest.approx(0.2)
         assert ctx.headline_currency is Currency.DOLLARS
+
+
+class TestSelfHostedIsFree:
+    """GitHub charges nothing for self-hosted runners.
+
+    Card 20260301 priced the sentinel at $0.002/min on the strength of a platform charge
+    that was announced, then postponed indefinitely within 48 hours, and never took
+    effect. `free_on_public = true` hid the error on the corpus (all public) while it
+    landed on private repos with self-hosted runners — the paying audience. See migration
+    008 and CAVEATS 24.
+    """
+
+    def _card(self, self_hosted: float) -> RateCard:
+        return RateCard(
+            version=20260901,
+            rates={"ubuntu-latest": 0.006, "__self_hosted__": self_hosted},
+            free_on_public={"ubuntu-latest": True, "__self_hosted__": True},
+        )
+
+    def test_an_unknown_runner_costs_nothing_on_a_private_repo(self):
+        """The regression that matters: a private repo on self-hosted hardware was being
+        billed for a GitHub charge that does not exist."""
+        card = self._card(0.000)
+        assert card.usd_per_minute(["self-hosted", "linux"], is_private=True) == 0.0
+
+    def test_a_known_hosted_rate_is_untouched(self):
+        card = self._card(0.000)
+        assert card.usd_per_minute(["ubuntu-latest"], is_private=True) == 0.006
+
+    def test_an_old_card_still_reproduces_its_own_figure(self):
+        """Cards are superseded, never rewritten — an old rate_card_version must still
+        resolve through its own row, or published figures stop being auditable."""
+        old = self._card(0.002)
+        assert old.usd_per_minute(["self-hosted"], is_private=True) == 0.002
+
+
+class TestOperatorSuppliedSelfHostedRate:
+    """The gap no CI cost tool fills: GitHub bills $0 for self-hosted, so every tool
+    reports $0 — while the EC2 instance is real money nobody attributes."""
+
+    CARD = RateCard(
+        version=20260901,
+        rates={"ubuntu-latest": 0.006, "__self_hosted__": 0.000},
+        free_on_public={"ubuntu-latest": True, "__self_hosted__": True},
+    )
+
+    def _ctx(self, labels, *, rate=None, private=True) -> CostContext:
+        return CostContext(
+            is_private=private, runs_per_month=100.0, rate_card=self.CARD,
+            dominant_labels=labels, self_hosted_usd_per_minute=rate,
+        )
+
+    def test_unknown_means_zero_not_a_guess(self):
+        assert self._ctx(["self-hosted"]).effective_rate() == 0.0
+
+    def test_a_supplied_rate_prices_an_unrecognised_runner(self):
+        assert self._ctx(["self-hosted"], rate=0.04).effective_rate() == 0.04
+
+    def test_it_never_overrides_a_known_hosted_rate(self):
+        """GitHub's bill for a hosted runner is not the operator's to restate."""
+        assert self._ctx(["ubuntu-latest"], rate=0.04).effective_rate() == 0.006
+
+    def test_it_reaches_the_dollar_figure(self):
+        ctx = self._ctx(["depot-ubuntu-24.04-4"], rate=0.02)
+        # 60s saved/run * 100 runs/month = 100 minutes * $0.02
+        assert ctx.dollars_per_month(60.0) == pytest.approx(2.0)
+
+    def test_a_supplied_rate_switches_the_headline_to_dollars(self):
+        assert self._ctx(["self-hosted"]).headline_currency is Currency.HOURS
+        assert self._ctx(["self-hosted"], rate=0.04).headline_currency is Currency.DOLLARS
+
+    def test_a_negative_rate_is_rejected(self):
+        with pytest.raises(ValueError, match="cannot be negative"):
+            self._ctx(["self-hosted"], rate=-1.0)
