@@ -27,6 +27,10 @@ class NodeTiming:
     queue_seconds: float
     exec_seconds: float
     leg_count: int = 1
+    # True when this node's queue could not be observed and was clamped to zero rather
+    # than measured. Carried so a consumer can report coverage instead of quoting a
+    # queue figure that silently excludes part of the data.
+    queue_unknown: bool = False
 
     @property
     def total_seconds(self) -> float:
@@ -163,10 +167,29 @@ def aggregate_spans(
         if not started or not completed:
             continue
         first_start = min(started)
-        queue = max(0.0, first_start - min(created)) if created else 0.0
-        exec_s = max(0.0, max(completed) - first_start)
+        raw_queue = (first_start - min(created)) if created else 0.0
+        # A negative queue is impossible and always means a re-run: GitHub carries the
+        # previous attempt's jobs forward with their original `started_at` while
+        # `created_at` advances to the new attempt, so start precedes creation by up to
+        # days. Same root cause as CAVEATS 31.
+        #
+        # Clamping is right -- we genuinely do not know that job's queue -- but clamping
+        # *silently* is not. Measured 2026-09-21: 8 corpus repos are affected, moby/moby
+        # at 20.4% of its jobs, so a fifth of that repo's queue observations were being
+        # discarded with nothing said. `queue_unknown` is what lets a consumer withhold
+        # instead of quoting a queue figure computed from four-fifths of the data.
+        # Checked per leg, not on the aggregate. Legs {created 100, started 130} and
+        # {created 150, started 100} give a node span of min(created)=100 to
+        # min(started)=100 -- a clean zero that hides one leg being impossible. A single
+        # contradictory leg means that leg's timestamps came from another attempt, so the
+        # node's min() mixes attempts and its queue is not trustworthy.
+        unknown = any(c is not None and s is not None and s < c for c, s, _ in entries)
         out[key] = NodeTiming(
-            key=key, queue_seconds=queue, exec_seconds=exec_s, leg_count=len(entries)
+            key=key,
+            queue_seconds=max(0.0, raw_queue),
+            exec_seconds=max(0.0, max(completed) - first_start),
+            leg_count=len(entries),
+            queue_unknown=unknown,
         )
     return out
 

@@ -49,6 +49,8 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 50 | Changed paths were fetched and discarded; `irrelevant_path_trigger` had no data | Medium | ✅ Fixed 2026-09-12 |
 | 51 | `run.tree_sha` NULL on all 29,134 rows since migration 001, with an index built for it | Medium | ✅ Fixed 2026-09-12 |
 | 52 | Directory-level fragility is noise — F13's headline measured at 1.33x and will not be built | Medium | ✅ Closed 2026-09-13 |
+| 53 | Rate card billed self-hosted runners $0.002/min for a GitHub charge that never took effect | **High** | ✅ Fixed 2026-09-21 |
+| 54 | Queue time was clamped silently on re-run jobs — up to 20.4% of a repo's observations | Medium | ✅ Fixed 2026-09-21 |
 | 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — **kill criterion overridden 2026-09-07**, Phase 2 proceeding |
 | 47 | Reusable-workflow mapping <80% on 16 of 50 repos, and it gates criterion 2 as well as the critical path | **High** | Open |
 | 48 | Two Phase 1 items are not closable by engineering (App write scope, maintainer contact) | Medium | Carried to Phase 2 |
@@ -114,6 +116,12 @@ construction and by unit test, not by observation.
 
 **Closes when.** Either a private repo enters the corpus, or an `evalsweep` run is done
 against a synthetic private-repo fixture that exercises the self-hosted path end to end.
+
+**Answered 2026-09-21, and the answer is that it was wrong — see item 53.** Filed as
+"correct by construction and by unit test, not by observation." Observation was the thing
+missing, and it would have caught it: the $0.002/min rate priced a GitHub charge that was
+postponed indefinitely and never took effect. The unit tests all passed, because they
+tested that the number resolved, not that the number was right.
 
 ---
 
@@ -1068,6 +1076,72 @@ threshold is fishing. Recorded here so a fourth cut is recognised as such.
 **What survives of "where does this repo fail":** `first_failing_step` at step granularity,
 67% reach. File granularity needs stack traces from failure logs, and item 49 says the log
 archive holds 25 of 194,026.
+
+### 53. The rate card invented a GitHub charge · High · FIXED 2026-09-21
+
+**What.** Migration `004` states as fact: *"On 2026-03-01 GitHub began applying a
+$0.002/min 'Actions cloud platform charge' to all workflow executions, self-hosted runners
+included."*
+
+**That never happened.** GitHub announced the charge on 2025-12-16 for self-hosted runners
+in private repositories, and **postponed it indefinitely within 48 hours** after community
+backlash. Verified 2026-09-21 against GitHub's own pricing-changes page and two independent
+write-ups. There is no self-hosted platform charge today and no announced timeline.
+
+What *did* happen, which card 2026 already had right: hosted rates fell up to 39% on
+2026-01-01 (Linux x86 $0.008 → $0.006).
+
+**Why it matters.** `__self_hosted__` is the fallback for *any* unrecognised runner label.
+At $0.002/min it billed users for compute GitHub does not charge them for. `free_on_public
+= true` made the error invisible on the corpus — all 55 repos are public — while it landed
+squarely on **private repos with self-hosted runners**, which item 24 calls "the commercial
+case". We were overstating the paying audience's dollar figures, which is the one direction
+this project treats as unacceptable.
+
+**How it was found.** Not by a test. A competitor's blog post cited the $0.002 fee while
+researching Depot; verifying that citation surfaced the retraction. Three of the project's
+worst errors (items 31, 33, 38) share the shape: a plausible fact asserted without being
+checked. This one shipped in a customer-facing dollar figure.
+
+**Fixed** by migration `008` — card 20260901 prices the sentinel at $0.000. Cards are
+superseded, never rewritten, so a figure published under 20260301 still reproduces —
+wrongly, but auditably.
+
+**And turned into the feature it was blocking.** GitHub bills $0 for self-hosted, so every
+CI cost tool reports $0, while the EC2 instance is real money nobody attributes.
+`CostContext.self_hosted_usd_per_minute` lets an operator supply their own rate. `None`
+stays $0 rather than becoming a guess, and it never overrides a known hosted rate — GitHub's
+bill is not ours to restate.
+
+### 54. Queue time was clamped silently · Medium · FIXED 2026-09-21
+
+**What.** `aggregate_spans` computed `max(0.0, first_start - min(created))`. The clamp is
+correct — a negative queue is impossible — but it was silent.
+
+The negatives are entirely a re-run artifact: **9,179 of 9,182 affected jobs are in re-run
+runs, zero in first-attempt runs**, with starts up to 90 hours before creation. GitHub
+carries the previous attempt's jobs forward with their original `started_at` while
+`created_at` advances. Same root cause as item 31.
+
+**Why it matters.** Eight corpus repos are affected — **moby/moby at 20.4% of its jobs**,
+astral-sh/uv at 8.7% — so a fifth of moby's queue observations were discarded with nothing
+said. `queue_bound` under-fires on exactly the repos where re-runs are common, and that
+verdict is load-bearing: it is the only vendor-neutral answer to *"will faster runners help
+me?"*
+
+**Fixed.** `NodeTiming.queue_unknown` records a clamped observation, `summarize_pipeline`
+publishes `queue_coverage`, and `queue_bound` withholds unless every node's queue was
+observable — the same discipline the critical path applies below 80% mapping.
+
+**Detected per leg, not per node.** Legs `{created 100, started 130}` and `{created 150,
+started 100}` aggregate to a clean zero that hides one leg being impossible; a contradictory
+leg means that leg's timestamps came from another attempt, so the node's `min()` mixes
+attempts.
+
+**Note on my own measurement.** The ad-hoc SQL that found this reported queue shares like
+**−223%** for microsoft/TypeScript, and I nearly reported that the product emitted negative
+queue figures. It does not — `aggregate_spans` has always clamped. The defect was silence,
+not wrong arithmetic, and the raw-SQL number was my error, not the product's.
 
 ## Environmental and tooling notes
 

@@ -201,3 +201,62 @@ class TestAggregateSpans:
         from cadence.dag import aggregate_spans
 
         assert aggregate_spans([("a", 0.0, None, None)]) == {}
+
+
+class TestQueueUnknownIsReported:
+    """A clamped queue must announce itself.
+
+    A re-run carries the previous attempt's jobs forward with their original `started_at`
+    while `created_at` advances, so start precedes creation by up to days — same root
+    cause as CAVEATS 31. Clamping to zero is right; doing it silently is not. Measured
+    2026-09-21: 8 corpus repos affected, moby/moby at 20.4% of its jobs.
+    """
+
+    def test_a_normal_queue_is_measured_and_marked_known(self):
+        from cadence.dag import aggregate_spans
+
+        (t,) = aggregate_spans([("build", 100.0, 130.0, 200.0)]).values()
+        assert t.queue_seconds == 30.0
+        assert t.queue_unknown is False
+
+    def test_a_start_before_creation_is_clamped_and_flagged(self):
+        """The impossible observation: started 50s before it was created."""
+        from cadence.dag import aggregate_spans
+
+        (t,) = aggregate_spans([("build", 150.0, 100.0, 200.0)]).values()
+        assert t.queue_seconds == 0.0
+        assert t.queue_unknown is True
+
+    def test_exec_is_still_measured_when_the_queue_is_unknown(self):
+        """Losing the queue must not cost us the execution time as well."""
+        from cadence.dag import aggregate_spans
+
+        (t,) = aggregate_spans([("build", 150.0, 100.0, 200.0)]).values()
+        assert t.exec_seconds == 100.0
+
+    def test_a_zero_queue_is_not_confused_with_an_unknown_one(self):
+        """Starting the instant it was created is a real observation of no wait."""
+        from cadence.dag import aggregate_spans
+
+        (t,) = aggregate_spans([("build", 100.0, 100.0, 200.0)]).values()
+        assert t.queue_seconds == 0.0
+        assert t.queue_unknown is False
+
+    def test_one_bad_leg_marks_the_node(self):
+        """Legs collapse to one node; if any leg's queue is unobservable the node's is."""
+        from cadence.dag import aggregate_spans
+
+        (t,) = aggregate_spans([
+            ("test", 100.0, 130.0, 200.0),
+            ("test", 150.0, 100.0, 210.0),
+        ]).values()
+        assert t.queue_unknown is True
+
+    def test_missing_created_is_not_flagged_as_unknown(self):
+        """No `created_at` at all is absent data, not a contradiction — the existing
+        behaviour of reporting zero stays, without claiming a re-run artifact."""
+        from cadence.dag import aggregate_spans
+
+        (t,) = aggregate_spans([("build", None, 100.0, 200.0)]).values()
+        assert t.queue_seconds == 0.0
+        assert t.queue_unknown is False
