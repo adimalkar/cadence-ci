@@ -7,12 +7,18 @@ three lines of YAML that change no build semantics.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Any
+
 from cadence.detectors.base import EvidenceDraft, FindingDraft
 from cadence.detectors.context import AuditContext, RunObservation
 from cadence.simulate import find_superseded_runs, replay_cancellation_savings
 
 DETECTOR_ID = "waste.no_run_cancellation"
-DETECTOR_VERSION = "no_run_cancellation@1"
+# @2: titles, suggested actions and evidence now describe the workflow's actual concurrency
+# state instead of asserting "no cancel-in-progress" for all of them (CAVEATS 55). Bumped
+# because persisted findings carry the old wording and must stay attributable to it.
+DETECTOR_VERSION = "no_run_cancellation@2"
 
 SUGGESTED = """\
 concurrency:
@@ -33,6 +39,105 @@ concurrency:
 # would invent a number for a run we cannot measure, and the count of exclusions is
 # reported as evidence instead.
 MAX_PLAUSIBLE_RUN_SECONDS = 24 * 3600.0
+
+
+@dataclass(frozen=True, slots=True)
+class CancellationState:
+    """What a workflow's concurrency config actually says, so the finding can say it too.
+
+    The title used to read *"no cancel-in-progress in ci.yml"* for every workflow the
+    detector fired on. For 25 corpus workflows that was false — they cancel via an
+    expression, most often `${{ github.event_name == 'pull_request' }}` — and a maintainer
+    can check it in ten seconds (CAVEATS 55). A false claim a reader can verify that fast
+    costs trust in every other number on the page.
+
+    **The parser still does not evaluate expressions**, deliberately: guessing at GitHub's
+    semantics is worse than naming what we cannot evaluate. What changes is the wording —
+    each state is described as what it is.
+    """
+
+    kind: str          # absent | group_only | explicit_false | conditional | unrecognised
+    expression: str | None = None
+
+    def title(self, superseded: int, path: str) -> str:
+        if self.kind == "conditional":
+            return (
+                f"{superseded} superseded runs still finished — cancel-in-progress in "
+                f"{path} is conditional"
+            )
+        if self.kind == "explicit_false":
+            return (
+                f"{superseded} superseded runs finished anyway — cancel-in-progress is "
+                f"set to false in {path}"
+            )
+        if self.kind == "group_only":
+            return (
+                f"{superseded} superseded runs finished anyway — concurrency in {path} "
+                f"groups runs but does not cancel them"
+            )
+        if self.kind == "unrecognised":
+            return (
+                f"{superseded} superseded runs finished anyway — cancel-in-progress in "
+                f"{path} has a value we could not interpret"
+            )
+        return f"{superseded} superseded runs finished anyway — no cancel-in-progress in {path}"
+
+    def suggested(self) -> str:
+        if self.kind == "conditional":
+            return (
+                f"`cancel-in-progress: {self.expression}` leaves some superseded runs "
+                "running to completion — usually pushes to the default branch, which the "
+                "condition excludes. If those runs are not needed, widen the condition or "
+                "set it to `true`. If they are needed, suppress this finding with that "
+                "reason."
+            )
+        if self.kind == "explicit_false":
+            return (
+                "`cancel-in-progress: false` is set explicitly. If that is deliberate — for "
+                "runs that must always finish — suppress this finding with the reason. "
+                "Otherwise set it to `true`."
+            )
+        if self.kind == "group_only":
+            return (
+                "A concurrency group already exists but only queues runs; add "
+                "`cancel-in-progress: true` to it so a newer run cancels the one it replaces."
+            )
+        if self.kind == "unrecognised":
+            return (
+                "Set `cancel-in-progress: true`, or confirm the current value does what you "
+                "intend."
+            )
+        return SUGGESTED
+
+    @property
+    def evidence(self) -> dict[str, str]:
+        """What the config says, stated positively. The old payload said
+        `{"missing": ...}` even when the key was present."""
+        if self.kind == "conditional":
+            return {"cancel_in_progress": "conditional", "expression": self.expression or ""}
+        if self.kind == "explicit_false":
+            return {"cancel_in_progress": "false"}
+        if self.kind == "group_only":
+            return {"cancel_in_progress": "absent", "concurrency": "group only"}
+        if self.kind == "unrecognised":
+            return {"cancel_in_progress": "unrecognised", "value": self.expression or ""}
+        return {"missing": "concurrency.cancel-in-progress"}
+
+
+def cancellation_state(concurrency: dict[str, Any] | None) -> CancellationState:
+    """Classify a workflow's concurrency config. Never evaluates an expression."""
+    if concurrency is None:
+        return CancellationState("absent")
+    if "cancel-in-progress" not in concurrency:
+        return CancellationState("group_only")
+    value = concurrency["cancel-in-progress"]
+    if value is False:
+        return CancellationState("explicit_false")
+    if isinstance(value, str) and "${{" in value:
+        return CancellationState("conditional", expression=value.strip())
+    # `true` never reaches here: the detector skips workflows that already cancel. Anything
+    # else — a quoted "true", a number — is named as unrecognised rather than guessed at.
+    return CancellationState("unrecognised", expression=repr(value))
 
 
 class NoRunCancellationDetector:
@@ -95,6 +200,7 @@ class NoRunCancellationDetector:
             # Superseded runs burn every job that was still executing, not one job's
             # worth of elapsed time, so the billed multiplier is the run's job count.
             avg_jobs = _avg_job_count(wf_runs)
+            state = cancellation_state(wf.concurrency)
 
             drafts.append(
                 FindingDraft(
@@ -103,12 +209,9 @@ class NoRunCancellationDetector:
                     severity=3,
                     confidence=0.95,
                     dedupe_key=f"no_run_cancellation:{wf.path}",
-                    title=(
-                        f"{len(superseded)} superseded runs finished anyway "
-                        f"— no cancel-in-progress in {wf.path}"
-                    ),
+                    title=state.title(len(superseded), wf.path),
                     detector_version=DETECTOR_VERSION,
-                    suggested_action=SUGGESTED,
+                    suggested_action=state.suggested(),
                     savings=savings,
                     parallel_jobs=avg_jobs,
                     evidence=[
@@ -117,7 +220,7 @@ class NoRunCancellationDetector:
                             file_path=wf.path,
                             line_start=1,
                             line_end=1,
-                            payload={"missing": "concurrency.cancel-in-progress"},
+                            payload=state.evidence,
                         ),
                         EvidenceDraft(
                             kind="run_history",

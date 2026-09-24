@@ -473,3 +473,77 @@ class TestCancellationIgnoresQueueTime:
         found = self._findings(runs)
         if found:
             assert found[0].savings.seconds_per_run <= 300.0
+
+
+class TestCancellationWordingMatchesTheFile:
+    """The finding must describe the concurrency config that is actually there.
+
+    It used to title every finding "no cancel-in-progress in <file>". For 25 corpus
+    workflows that was false — they cancel via an expression — and a maintainer can check
+    it in ten seconds (CAVEATS 55). The parser still never evaluates an expression; what
+    changed is that each state is named as what it is.
+    """
+
+    RUNS = [run_obs(1, "main", 0, 100), run_obs(2, "main", 40, 140)]
+
+    def _draft(self, concurrency_block: str):
+        wf = NO_CONCURRENCY.replace("jobs:", concurrency_block + "jobs:")
+        (d,) = NoRunCancellationDetector().run(make_ctx(wf, runs=self.RUNS))
+        return d
+
+    def test_absent_keeps_the_original_wording(self):
+        (d,) = NoRunCancellationDetector().run(make_ctx(NO_CONCURRENCY, runs=self.RUNS))
+        assert "no cancel-in-progress" in d.title
+        assert d.evidence[0].payload == {"missing": "concurrency.cancel-in-progress"}
+
+    def test_a_conditional_expression_is_not_called_missing(self):
+        """The CAVEATS 55 case, verbatim from astral-sh/ruff."""
+        d = self._draft(
+            "concurrency:\n  group: x\n"
+            "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n"
+        )
+        assert "no cancel-in-progress" not in d.title
+        assert "conditional" in d.title
+        assert d.evidence[0].payload["cancel_in_progress"] == "conditional"
+        assert "github.event_name" in d.evidence[0].payload["expression"]
+
+    def test_the_conditional_advice_names_the_expression_and_offers_suppression(self):
+        d = self._draft(
+            "concurrency:\n  group: x\n"
+            "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n"
+        )
+        assert "github.event_name" in d.suggested_action
+        assert "suppress" in d.suggested_action
+
+    def test_an_explicit_false_is_named_as_deliberate(self):
+        """Someone wrote `false`. Calling it "missing" tells them we did not read their file."""
+        d = self._draft("concurrency:\n  group: x\n  cancel-in-progress: false\n")
+        assert "set to false" in d.title
+        assert "no cancel-in-progress" not in d.title
+        assert "deliberate" in d.suggested_action
+        assert d.evidence[0].payload == {"cancel_in_progress": "false"}
+
+    def test_a_group_only_block_is_described_as_queueing(self):
+        d = self._draft("concurrency:\n  group: x\n")
+        assert "does not cancel" in d.title
+        assert "add `cancel-in-progress: true`" in d.suggested_action
+
+    def test_the_shorthand_string_form_is_group_only(self):
+        """`concurrency: name` is a group with no cancellation."""
+        d = self._draft("concurrency: ci-${{ github.ref }}\n")
+        assert "does not cancel" in d.title
+
+    def test_a_quoted_true_is_unrecognised_not_guessed(self):
+        """`"true"` is a string to YAML. We name it rather than assume GitHub coerces it."""
+        d = self._draft('concurrency:\n  group: x\n  cancel-in-progress: "true"\n')
+        assert "could not interpret" in d.title
+        assert d.evidence[0].payload["cancel_in_progress"] == "unrecognised"
+
+    def test_a_literal_true_still_stays_silent(self):
+        runs = self.RUNS
+        assert NoRunCancellationDetector().run(make_ctx(WITH_CONCURRENCY, runs=runs)) == []
+
+    def test_the_detector_version_moved(self):
+        """Persisted findings carry the old wording and must stay attributable to it."""
+        (d,) = NoRunCancellationDetector().run(make_ctx(NO_CONCURRENCY, runs=self.RUNS))
+        assert d.detector_version == "no_run_cancellation@2"

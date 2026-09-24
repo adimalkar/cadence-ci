@@ -51,7 +51,9 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 52 | Directory-level fragility is noise — F13's headline measured at 1.33x and will not be built | Medium | ✅ Closed 2026-09-13 |
 | 53 | Rate card billed self-hosted runners $0.002/min for a GitHub charge that never took effect | **High** | ✅ Fixed 2026-09-21 |
 | 54 | Queue time was clamped silently on re-run jobs — up to 20.4% of a repo's observations | Medium | ✅ Fixed 2026-09-21 |
-| 55 | `no_run_cancellation` titled 8 findings "no cancel-in-progress" when their file said otherwise | Medium | Open |
+| 55 | `no_run_cancellation` titled 8 findings "no cancel-in-progress" when their file said otherwise | Medium | ✅ Fixed 2026-09-24 |
+| 56 | Corpus measurements read a throwaway cache and printed empty tables as results when it vanished | Medium | Open |
+| 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
 | 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — **kill criterion overridden 2026-09-07**, Phase 2 proceeding |
 | 47 | Reusable-workflow mapping <80% on 16 of 50 repos, and it gates criterion 2 as well as the critical path | **High** | Open |
 | 48 | Two Phase 1 items are not closable by engineering (App write scope, maintainer contact) | Medium | Carried to Phase 2 |
@@ -1203,12 +1205,70 @@ actually known: when `cancel-in-progress` is an expression, retitle to *"cancel-
 conditional; N superseded runs still finished"*, and describe the saving as coming from the
 runs the condition leaves running. Small, deterministic, needs its own tests.
 
+**Fixed 2026-09-24**, detector version `no_run_cancellation@2`. `cancellation_state()`
+classifies the config into five states and each gets its own title, suggested action and
+evidence — without ever evaluating an expression:
+
+| State | n | Title now says |
+|---|---:|---|
+| absent | 86 | *no cancel-in-progress* — unchanged, and true |
+| explicit `false` | 3 | *cancel-in-progress is set to false* |
+| group only | 3 | *concurrency groups runs but does not cancel them* |
+| conditional | 2 | *cancel-in-progress is conditional* |
+| unrecognised | 0 | *has a value we could not interpret* (e.g. a quoted `"true"`) |
+
+Three details worth keeping. The **evidence payload** used to say `{"missing": ...}` even
+when the key was present; it now states the actual value. The **suggested action** for
+`false` and conditional offers **suppression with a reason** as a first-class answer, because
+those settings are often deliberate — runs that must always finish. And the version bump is
+not cosmetic: persisted findings carry the old wording and must stay attributable to it.
+
 **Related trade-off, recorded so it is not rediscovered.** The same parser rule is why
 `concurrency.add` inserts a literal `true` rather than the PR-only expression: the expression
 would leave the detector unsatisfied and the fix would be re-proposed after merging. So the
 fixer cancels superseded default-branch runs too — correct for CI, and the reason
 deploy-shaped workflows are declined. A maintainer who hand-edits to the PR-only form will see
 this detector fire again, and can suppress it with a reason (item 37).
+
+### 56. Measurements read a cache that vanishes, and fail silently when it does · Medium
+
+**What.** Every corpus measurement since Phase 1 — the recoverable-criterion curve, the F6
+and fragility kills, the fixer evaluation — needs each repo's workflow YAML, and fetches it
+into a throwaway directory under `/tmp`. That directory does not survive between sessions.
+
+**The failure it caused.** On 2026-09-24 a measurement globbed a cache directory that had been
+cleaned, found no files, and **printed an empty table** — which reads exactly like "the corpus
+has no workflows in any of these states." It was caught only because an empty result for a
+55-repo corpus looked implausible. A result that is merely *smaller* than expected would not
+have been.
+
+**Why it keeps happening.** Workflow YAML *has* a durable home — `workflow_snapshot` and
+`workflow_blob` in Postgres (migration `005`) — but item 28 records that snapshots are captured
+only by `cadence audit`, never by ingest. So for most of the corpus the database holds no
+config, every measurement re-fetches roughly 150 API calls into a scratch directory, and each
+one is exposed to the same silent-empty failure.
+
+**Mitigated for now.** The fetch helper moved to `~/.cache/cadence/`, which survives `/tmp`
+cleanup, and refuses to continue on an empty cache rather than reporting nothing as a result.
+
+**What would close it.** Capture workflow snapshots during ingest (which also closes item 28),
+read measurements from Postgres, and give every measurement script a non-empty assertion on
+its input. The last part is cheap and should apply to any script that could silently produce
+zero rows.
+
+### 57. No-cancellation evidence points at line 1 · Low
+
+**What.** `no_run_cancellation` emits a `code_range` evidence item with `line_start=1,
+line_end=1` regardless of the file. When there is no concurrency block that is fair — there is
+nothing to point at. But for the 8 findings where a block exists (item 55), it sits at a known
+line, and the evidence should point there.
+
+**Why it is not fixed yet.** `Workflow` does not record where `concurrency:` sits; the parser
+keeps line numbers for jobs and steps only. Adding it is a small parser change with its own
+tests, and it is a presentation improvement rather than a correctness one.
+
+**What would close it.** Track the top-level `concurrency:` line in `parse_workflow`, and use
+it for the evidence range when the block exists.
 
 ## Environmental and tooling notes
 
