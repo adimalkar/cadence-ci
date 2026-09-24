@@ -51,6 +51,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 52 | Directory-level fragility is noise — F13's headline measured at 1.33x and will not be built | Medium | ✅ Closed 2026-09-13 |
 | 53 | Rate card billed self-hosted runners $0.002/min for a GitHub charge that never took effect | **High** | ✅ Fixed 2026-09-21 |
 | 54 | Queue time was clamped silently on re-run jobs — up to 20.4% of a repo's observations | Medium | ✅ Fixed 2026-09-21 |
+| 55 | `no_run_cancellation` titles 25 workflows "no cancel-in-progress" when they cancel conditionally | Medium | Open |
 | 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — **kill criterion overridden 2026-09-07**, Phase 2 proceeding |
 | 47 | Reusable-workflow mapping <80% on 16 of 50 repos, and it gates criterion 2 as well as the critical path | **High** | Open |
 | 48 | Two Phase 1 items are not closable by engineering (App write scope, maintainer contact) | Medium | Carried to Phase 2 |
@@ -1158,6 +1159,48 @@ attempts.
 **−223%** for microsoft/TypeScript, and I nearly reported that the product emitted negative
 queue figures. It does not — `aggregate_spans` has always clamped. The defect was silence,
 not wrong arithmetic, and the raw-SQL number was my error, not the product's.
+
+### 55. The cancellation detector says "no cancel-in-progress" when there is one · Medium
+
+**What.** `Workflow.cancel_in_progress` returns True only for a **literal** `true` — the parser
+deliberately refuses to evaluate expressions. So a workflow with
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+```
+
+reads as not cancelling, and `no_run_cancellation` titles the finding *"N superseded runs
+finished anyway — no cancel-in-progress in ci.yml"*. **25 corpus workflows** use an expression
+here — most often exactly this PR-only form, e.g. astral-sh/ruff. A maintainer reading that
+title can see the key in their own file.
+
+Found 2026-09-24 while evaluating the first fixer, which declined these correctly ("already
+declares concurrency") — so no bad fix PR results from it. The defect is the detector's
+**wording**, not the fixer.
+
+**Why it matters, and how much.** The savings figure is probably close to right: it is
+computed from observed run overlap, so runs the expression actually cancelled contribute
+little, and what remains is mostly superseded pushes — which the expression genuinely lets
+finish. The **claim**, though, is false, and a false claim a reader can verify in ten seconds
+costs trust in every other number on the page.
+
+**The tempting fix is the wrong one.** Evaluating the expression would make the parser guess
+at GitHub's semantics, which the docstring rules out for good reason. And treating any
+expression as "cancels" would silence real waste on the push side.
+
+**What would close it.** Keep the refusal to evaluate, and make the finding say what is
+actually known: when `cancel-in-progress` is an expression, retitle to *"cancel-in-progress is
+conditional; N superseded runs still finished"*, and describe the saving as coming from the
+runs the condition leaves running. Small, deterministic, needs its own tests.
+
+**Related trade-off, recorded so it is not rediscovered.** The same parser rule is why
+`concurrency.add` inserts a literal `true` rather than the PR-only expression: the expression
+would leave the detector unsatisfied and the fix would be re-proposed after merging. So the
+fixer cancels superseded default-branch runs too — correct for CI, and the reason
+deploy-shaped workflows are declined. A maintainer who hand-edits to the PR-only form will see
+this detector fire again, and can suppress it with a reason (item 37).
 
 ## Environmental and tooling notes
 

@@ -287,10 +287,46 @@ Moved from `ROADMAP.md` 2026-08-30.
 
 ## Core
 
-- [ ] Comment-preserving YAML round-trip editor
-- [ ] **Round-trip test: 200 corpus workflows, byte-identical when no fix applied**
-- [ ] Fixers: `cache.*`, `cache.key`, `cache.run_id_bug`, `concurrency.cancel`
-- [ ] `preview()` returns `None` on unfamiliar shapes — declining is always correct
+- [x] Comment-preserving YAML round-trip editor — `fixers/edit.py`, #20. Measured 71.8% of
+      928 real workflows byte-identical; the finding that mattered is that additive fixes
+      should be **text insertions**, which preserve 100%
+- [x] **Round-trip test: 200 corpus workflows, byte-identical when no fix applied** — #20;
+      220 generated files on every commit, plus the real corpus wherever its cache exists
+- [ ] Fixers: `cache.*`, `cache.key`, `cache.run_id_bug`, `concurrency.cancel` —
+      **1 of 4 shipped:** `concurrency.add` (2026-09-24), see below
+- [x] `preview()` declines rather than guessing — every decline carries a reason, because
+      across strangers' repositories nobody can ask us why a fix did not appear
+
+### `concurrency.add` — the first fixer, measured on the corpus
+
+For `no_run_cancellation`, the widest rule at 76.5% reach. Text-first: it inserts four lines
+above `jobs:` and never re-serialises the file. Run against **every real finding**, with the
+actual detector re-run on each patched workflow:
+
+| | |
+|---|---:|
+| Real `no_run_cancellation` findings | 94 |
+| **Accepted — diff produced** | **64 (68%)** |
+| **Accepted, but the detector still fires** | **0** |
+| Lines changed per diff | 4 — every one |
+
+The 30 declines are all deliberate: 8 already declare concurrency, 11 have write permissions,
+5 target an environment, 4 have deploy-shaped names, 3 run on tag or release events.
+**Over-declining is the intended failure mode** — a false decline costs one unopened PR, a
+false accept can cancel a production deploy mid-flight.
+
+**Why it inserts a literal `true`.** The fashionable PR-only form —
+`cancel-in-progress: ${{ github.event_name == 'pull_request' }}` — was rejected because
+`Workflow.cancel_in_progress` is True **only for a literal**; the parser refuses to evaluate
+expressions. The expression would leave the detector unsatisfied and it would **re-propose
+the fix after it merged**. The "0 still fires" row above is what proves the literal choice
+works. The trade-off is that superseded default-branch runs get cancelled too, which is
+correct for CI and is why anything deploy-shaped is declined.
+
+**What this does not do.** It produces diffs. It does **not** open pull requests — that needs
+the opt-in write scope below and the anti-spam rules above, neither built. The 64 diffs are
+**not** to be opened against the corpus repositories: rule 4 forbids unsolicited PRs on
+repos ingested read-only.
 - [ ] Opt-in `pull_requests:write` / `contents:write`, separate from read scopes
 - [ ] Anti-spam: 1 open PR max → 3 after first merge; report-first; closed = suppressed;
       **never an unsolicited PR on a read-only-ingested repo**
@@ -346,7 +382,8 @@ re-litigated.
 
 ## Ship criteria
 
-- [ ] Each fixer has a ≥20-workflow before/after corpus
+- [ ] Each fixer has a ≥20-workflow before/after corpus — `concurrency.add`: **94 real
+      findings**, 64 accepted, 0 re-fire. Three fixers still to build
 - [ ] Round-trip test green
 - [ ] **≥5 Cadence PRs merged in repos we don't own**
 - [ ] Realized-vs-predicted recorded for every merged PR
