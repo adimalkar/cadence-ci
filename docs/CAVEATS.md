@@ -51,7 +51,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 52 | Directory-level fragility is noise — F13's headline measured at 1.33x and will not be built | Medium | ✅ Closed 2026-09-13 |
 | 53 | Rate card billed self-hosted runners $0.002/min for a GitHub charge that never took effect | **High** | ✅ Fixed 2026-09-21 |
 | 54 | Queue time was clamped silently on re-run jobs — up to 20.4% of a repo's observations | Medium | ✅ Fixed 2026-09-21 |
-| 55 | `no_run_cancellation` titles 25 workflows "no cancel-in-progress" when they cancel conditionally | Medium | Open |
+| 55 | `no_run_cancellation` titled 8 findings "no cancel-in-progress" when their file said otherwise | Medium | Open |
 | 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — **kill criterion overridden 2026-09-07**, Phase 2 proceeding |
 | 47 | Reusable-workflow mapping <80% on 16 of 50 repos, and it gates criterion 2 as well as the critical path | **High** | Open |
 | 48 | Two Phase 1 items are not closable by engineering (App write scope, maintainer contact) | Medium | Carried to Phase 2 |
@@ -1172,19 +1172,27 @@ concurrency:
 ```
 
 reads as not cancelling, and `no_run_cancellation` titles the finding *"N superseded runs
-finished anyway — no cancel-in-progress in ci.yml"*. **25 corpus workflows** use an expression
-here — most often exactly this PR-only form, e.g. astral-sh/ruff. A maintainer reading that
-title can see the key in their own file.
+finished anyway — no cancel-in-progress in ci.yml"*. A maintainer reading that title can see
+the key in their own file.
+
+**Measured, and smaller than first written.** An earlier draft of this entry said the
+detector mis-titles *"25 corpus workflows."* 25 is how many workflows **have** an expression
+here (most often this PR-only form, e.g. astral-sh/ruff) — but the detector only **fires** on
+2 of them; the rest cancel successfully and produce no finding. The same misleading title also
+landed on workflows with `cancel-in-progress: false` (3) and group-only blocks (3). **8
+findings of 94**, which matches the fixer's 8 "already declares concurrency" declines exactly.
+The error was conflating a population with the findings emitted on it.
 
 Found 2026-09-24 while evaluating the first fixer, which declined these correctly ("already
 declares concurrency") — so no bad fix PR results from it. The defect is the detector's
 **wording**, not the fixer.
 
-**Why it matters, and how much.** The savings figure is probably close to right: it is
-computed from observed run overlap, so runs the expression actually cancelled contribute
-little, and what remains is mostly superseded pushes — which the expression genuinely lets
-finish. The **claim**, though, is false, and a false claim a reader can verify in ten seconds
-costs trust in every other number on the page.
+**Why it matters, and how much.** The savings figure is close to right, **measured**:
+`find_superseded_runs` ignores conclusion, so runs the expression genuinely cancelled are
+still counted — but only for the cancellation latency. On the corpus they are 1 of 46
+superseded runs and **51 of 4,195 claimed seconds (1.2%)**. What remains is superseded pushes,
+which the expression genuinely lets finish. The **claim**, though, is false, and a false claim
+a reader can verify in ten seconds costs trust in every other number on the page.
 
 **The tempting fix is the wrong one.** Evaluating the expression would make the parser guess
 at GitHub's semantics, which the docstring rules out for good reason. And treating any
