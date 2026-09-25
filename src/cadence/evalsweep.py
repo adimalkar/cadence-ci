@@ -16,8 +16,14 @@ from pathlib import Path
 
 import structlog
 
-from cadence.audit import build_context, run_audit, summarize_pipeline
+from cadence.audit import (
+    build_context,
+    fetch_root_package_json,
+    run_audit,
+    summarize_pipeline,
+)
 from cadence.db import connect
+from cadence.detectors.context import RootPackageJson
 from cadence.providers.base import CIProvider
 
 log = structlog.get_logger(__name__)
@@ -75,6 +81,10 @@ async def sweep(
             else:
                 files = await provider.fetch_workflow_files(repo)
                 cache.write_text(json.dumps(files))
+            # A subdirectory, not a sibling: readers glob `*.json` here as workflow maps.
+            package_json = await _root_package_json(
+                provider, repo, files, cache_dir / "package_json" / f"{owner}__{name}.json"
+            )
         except Exception as exc:  # one unreachable repo must not end the sweep
             out.append(RepoResult(repo=slug, ok=False, error=str(exc)[:200]))
             log.warning("sweep.fetch_failed", repo=slug, error=str(exc))
@@ -87,7 +97,8 @@ async def sweep(
         try:
             with connect() as conn:
                 ctx = build_context(
-                    conn, repo.id, files, window_days=window_days, limit_runs=limit_runs
+                    conn, repo.id, files, window_days=window_days, limit_runs=limit_runs,
+                    root_package_json=package_json,
                 )
                 if not ctx.runs:
                     out.append(RepoResult(repo=slug, ok=False, error="no ingested runs"))
@@ -131,3 +142,19 @@ async def sweep(
 
 def write_report(results: list[RepoResult], path: Path) -> None:
     path.write_text(json.dumps([asdict(r) for r in results], indent=2))
+
+
+async def _root_package_json(provider, repo, files: dict[str, str], path: Path) -> RootPackageJson:
+    """Cached beside the workflow files, so a re-run of the sweep costs no request.
+
+    Only a *fetched* answer is cached: an unfetched one (not needed, or the request failed)
+    is recomputed next time rather than frozen.
+    """
+    if path.exists():
+        stored = json.loads(path.read_text())
+        return RootPackageJson(fetched=True, data=stored["data"])
+    result = await fetch_root_package_json(provider, repo, files)
+    if result.fetched:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"data": result.data}))
+    return result

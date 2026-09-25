@@ -15,9 +15,15 @@ from cadence.config import settings
 from cadence.cost import CostContext, load_rate_card
 from cadence.dag import aggregate_spans, critical_path, theoretical_floor
 from cadence.detectors.billing import JobBillingRoundingDetector
-from cadence.detectors.cache import DependencyCacheDetector
+from cadence.detectors.cache import DependencyCacheDetector, needs_root_package_json
 from cadence.detectors.cancellation import NoRunCancellationDetector
-from cadence.detectors.context import AuditContext, JobFailure, RunObservation, StepSeries
+from cadence.detectors.context import (
+    AuditContext,
+    JobFailure,
+    RootPackageJson,
+    RunObservation,
+    StepSeries,
+)
 from cadence.detectors.failure import FirstFailingStepDetector
 from cadence.detectors.longtail import LongTailStepDetector
 from cadence.detectors.matrix import NonDiscriminatingMatrixLegDetector
@@ -60,8 +66,12 @@ def build_context(
     # power rather than a threshold picked to pass. 500 covers the median repo's full
     # window without paying for the long tail.
     limit_runs: int = 500,
+    root_package_json: RootPackageJson | None = None,
 ) -> AuditContext:
     from psycopg.rows import dict_row
+
+    # Parsed first: resolving step timings to config jobs needs them.
+    workflows = [parse_workflow(path, content) for path, content in workflow_files.items()]
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
@@ -111,27 +121,21 @@ def build_context(
 
         # Step duration history, keyed by (job name_base, step name), for cache analysis.
         step_series: dict[tuple[str, str], StepSeries] = {}
+        step_series_resolved: dict[tuple[str, str, str], StepSeries] = {}
         if run_ids:
             cur.execute(
                 """
-                SELECT j.name_base, s.name AS step_name, j.run_id,
+                SELECT j.name_base, j.name AS job_name, r.workflow_path,
+                       s.name AS step_name, j.run_id,
                        extract(epoch FROM (s.completed_at - s.started_at)) AS dur
-                FROM step s JOIN job j ON j.id = s.job_id
+                FROM step s JOIN job j ON j.id = s.job_id JOIN run r ON r.id = j.run_id
                 WHERE j.run_id = ANY(%s)
                   AND s.started_at IS NOT NULL AND s.completed_at IS NOT NULL
                   AND s.conclusion = 'success'
                 """,
                 (run_ids,),
             )
-            for row in cur.fetchall():
-                key = (row["name_base"], row["step_name"])
-                series = step_series.get(key)
-                if series is None:
-                    series = StepSeries(job_key=row["name_base"], step_name=row["step_name"])
-                    step_series[key] = series
-                if row["dur"] is not None:
-                    series.durations.append(float(row["dur"]))
-                    series.run_ids.append(row["run_id"])
+            step_series, step_series_resolved = index_step_rows(cur.fetchall(), workflows)
 
         # Where each failed job first went wrong. DISTINCT ON picks the lowest step
         # number with a failing conclusion, which is the cause -- later failing steps in
@@ -192,7 +196,6 @@ def build_context(
                 if row["exec_s"] is not None:
                     leg_durations.setdefault((wf_path, leg), []).append(float(row["exec_s"]))
 
-    workflows = [parse_workflow(path, content) for path, content in workflow_files.items()]
     runs = _observations(run_rows, jobs_by_run, workflows)
 
     rate_card = load_rate_card(conn, settings.rate_card_version)
@@ -212,6 +215,7 @@ def build_context(
         workflows=workflows,
         runs=runs,
         step_series=step_series,
+        step_series_resolved=step_series_resolved,
         cost=cost,
         window_days=window_days,
         leg_outcomes=leg_outcomes,
@@ -222,7 +226,49 @@ def build_context(
         # fired on 0 of 51 corpus repos -- evalsweep never called it (CAVEATS 44, 45).
         # Empty is still a legitimate state: it means this repo's commits are unfetched.
         changed_paths=load_changed_paths(conn, repo_id, run_ids),
+        root_package_json=root_package_json or RootPackageJson(),
     )
+
+
+def index_step_rows(
+    rows, workflows: list[Workflow]
+) -> tuple[dict[tuple[str, str], StepSeries], dict[tuple[str, str, str], StepSeries]]:
+    """Step durations two ways: by recorded display name, and resolved to config.
+
+    Each row needs `name_base`, `job_name`, `workflow_path`, `step_name`, `run_id`, `dur`.
+    The resolved index goes through `job_for_runtime_name` inside the row's own workflow,
+    so a job is found under its config key and two workflows' `build` jobs stay apart.
+    A job that does not resolve is left out of it rather than guessed.
+    """
+    by_name: dict[tuple[str, str], StepSeries] = {}
+    resolved: dict[tuple[str, str, str], StepSeries] = {}
+    by_path = {wf.path: wf for wf in workflows if not wf.parse_error}
+    job_keys: dict[tuple[str, str | None, str | None], str | None] = {}
+    for row in rows:
+        key = (row["name_base"], row["step_name"])
+        series = by_name.get(key)
+        if series is None:
+            series = by_name[key] = StepSeries(job_key=row["name_base"], step_name=row["step_name"])
+        if row["dur"] is None:
+            continue
+        series.durations.append(float(row["dur"]))
+        series.run_ids.append(row["run_id"])
+
+        job_id = (row["workflow_path"], row["job_name"], row["name_base"])
+        if job_id not in job_keys:
+            wf = by_path.get(row["workflow_path"])
+            job = wf.job_for_runtime_name(row["job_name"], row["name_base"]) if wf else None
+            job_keys[job_id] = job.key if job else None
+        job_key = job_keys[job_id]
+        if job_key is None:
+            continue
+        rkey = (row["workflow_path"], job_key, row["step_name"])
+        rseries = resolved.get(rkey)
+        if rseries is None:
+            rseries = resolved[rkey] = StepSeries(job_key=job_key, step_name=row["step_name"])
+        rseries.durations.append(float(row["dur"]))
+        rseries.run_ids.append(row["run_id"])
+    return by_name, resolved
 
 
 def _observations(run_rows, jobs_by_run, workflows: list[Workflow]) -> list[RunObservation]:
@@ -319,6 +365,24 @@ async def enrich_changed_paths(provider, repo, ctx: AuditContext, *, max_runs: i
         if seen[sha]:
             ctx.changed_paths[run.run_id] = seen[sha]
     return len(ctx.changed_paths)
+
+
+async def fetch_root_package_json(
+    provider, repo, workflow_files: dict[str, str]
+) -> RootPackageJson:
+    """The root `package.json`, fetched only when a setup-node step's caching depends on it.
+
+    One request, and best-effort: a failure leaves it unfetched, which is the conservative
+    state, rather than "absent", which would turn every setup-node job into a candidate.
+    """
+    workflows = [parse_workflow(path, content) for path, content in workflow_files.items()]
+    if not needs_root_package_json(workflows):
+        return RootPackageJson()
+    try:
+        text = await provider.fetch_text_file(repo, "package.json")
+    except Exception:  # never fail an audit over a file that only refines one rule
+        return RootPackageJson()
+    return RootPackageJson.from_text(text)
 
 
 def run_audit(conn, ctx: AuditContext, *, commit_sha: str, persist: bool = True) -> dict:

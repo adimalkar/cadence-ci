@@ -100,7 +100,7 @@ radius is understood.
 |---|---|---|
 | No dependency cache | ✅ | Well-known snippet per ecosystem; additive |
 | Cache key thrashing | ✅ | Rewrite key to `OS + hashFiles(lockfile)` |
-| `run_id` in cache key | ✅ | Unambiguous bug; single-line fix |
+| `run_id` in cache key | ⏸ no targets | **Refuted 2026-09-24:** 9 of 9 corpus hits were working caches (`restore-keys` or same-run handoff). After `dependency_cache@2` the rule fires on 0 repos ([`CAVEATS`](../CAVEATS.md) 58) |
 | No `concurrency` block | ✅ | Three lines, additive, no semantics change |
 | Irrelevant path triggers | ⚠️ manual | Requires judgement about what "relevant" means |
 | False `needs:` edge | ⚠️ manual | Removing a real dependency breaks builds |
@@ -293,7 +293,13 @@ Moved from `ROADMAP.md` 2026-08-30.
 - [x] **Round-trip test: 200 corpus workflows, byte-identical when no fix applied** — #20;
       220 generated files on every commit, plus the real corpus wherever its cache exists
 - [ ] Fixers: `cache.*`, `cache.key`, `cache.run_id_bug`, `concurrency.cancel` —
-      **1 of 4 shipped:** `concurrency.add` (2026-09-24), see below
+      **1 of 4 shipped:** `concurrency.add` (2026-09-24), see below. `cache.run_id_bug`
+      moved last: the detector it rests on was 0 for 9 on the corpus and now has no targets
+      ([`CAVEATS`](../CAVEATS.md) 58). `cache.*` rests on `no_dependency_cache`, whose reach
+      was understated by the setup-node gap (fixed, [`CAVEATS`](../CAVEATS.md) 59) and whose
+      precision is fixed in `dependency_cache@4` ([`CAVEATS`](../CAVEATS.md) 61): 50 findings,
+      each an install-only step priced from its own timings. **`cache.*` is next**, with its
+      own savings floor above the detector's ([`CAVEATS`](../CAVEATS.md) 63)
 - [x] `preview()` declines rather than guessing — every decline carries a reason, because
       across strangers' repositories nobody can ask us why a fix did not appear
 

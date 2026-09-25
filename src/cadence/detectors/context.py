@@ -7,11 +7,33 @@ up disagreeing about the same repo.
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from cadence.cost import CostContext
 from cadence.dag import NodeTiming
-from cadence.workflow import Workflow
+from cadence.workflow import Step, Workflow
+
+_EXPRESSION = re.compile(r"\$\{\{")
+
+
+def step_runtime_name(step: Step) -> str | None:
+    """The name GitHub records for a step, where config alone can say.
+
+    `name:` verbatim; for an unnamed `run:` step, `Run ` plus the script's first line; for
+    an unnamed `uses:` step, `Run ` plus the reference. None when the name is an expression,
+    since the recorded value depends on the run.
+    """
+    if step.name:
+        return None if _EXPRESSION.search(step.name) else step.name
+    if step.run:
+        first = next((ln.strip() for ln in step.run.splitlines() if ln.strip()), "")
+        return f"Run {first}" if first else None
+    if step.uses:
+        return f"Run {step.uses}"
+    return None
 
 
 @dataclass(slots=True)
@@ -93,6 +115,50 @@ class JobFailure:
     job_seconds: float
 
 
+# setup-node's own test, copied from its src/main.ts: "npm", "npm@…", "^npm@…".
+_NPM_PACKAGE_MANAGER = re.compile(r"^(\^)?npm(@.*)?$")
+
+
+@dataclass(frozen=True, slots=True)
+class RootPackageJson:
+    """The repository root's `package.json`, as far as a detector needs it.
+
+    Three states, because "we did not look" and "it is not there" lead to opposite answers:
+    from v5, `actions/setup-node` caches npm on its own when this file names npm as the
+    package manager, and not otherwise (CAVEATS 59). Unfetched is the default so a caller
+    that never asks gets the old, conservative behaviour.
+    """
+
+    fetched: bool = False
+    # Fetched and None: the file does not exist. Unparseable JSON is `{}` -- setup-node
+    # swallows the parse error and caches nothing, and so do we.
+    data: dict[str, Any] | None = None
+
+    @classmethod
+    def from_text(cls, text: str | None) -> RootPackageJson:
+        if text is None:
+            return cls(fetched=True, data=None)
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = {}
+        return cls(fetched=True, data=parsed if isinstance(parsed, dict) else {})
+
+    def declares_npm(self) -> bool:
+        """setup-node's `getNameFromPackageManagerField`: `devEngines.packageManager`
+        (an object or a list of them) first, then the top-level `packageManager`."""
+        if not self.data:
+            return False
+        dev = (self.data.get("devEngines") or {})
+        dev_pm = dev.get("packageManager") if isinstance(dev, dict) else None
+        for entry in dev_pm if isinstance(dev_pm, list) else [dev_pm] if dev_pm else []:
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str) \
+                    and _NPM_PACKAGE_MANAGER.match(entry["name"]):
+                return True
+        top = self.data.get("packageManager")
+        return isinstance(top, str) and bool(_NPM_PACKAGE_MANAGER.match(top))
+
+
 @dataclass(slots=True)
 class AuditContext:
     repo_id: int
@@ -101,6 +167,9 @@ class AuditContext:
     is_private: bool
     workflows: list[Workflow]
     runs: list[RunObservation]
+    # Keyed by (job name_base, step name), as recorded: the display name, merged across
+    # every workflow that has a job by that name. Right for ranking (long tail); wrong for
+    # asking about one step in one config job -- use `series_for_step` for that.
     step_series: dict[tuple[str, str], StepSeries]
     cost: CostContext
     window_days: int
@@ -117,6 +186,13 @@ class AuditContext:
     # Failed jobs with the step they first failed at. Empty for a repo whose runs all
     # passed, which is a legitimate state and not a coverage problem.
     failures: list[JobFailure] = field(default_factory=list)
+    # Read only when a workflow runs setup-node without `cache:`; see RootPackageJson.
+    root_package_json: RootPackageJson = field(default_factory=RootPackageJson)
+    # The same step durations, resolved to config: (workflow path, job key, step name).
+    # Resolution uses `Workflow.job_for_runtime_name`, the mapping the run DAG uses, within
+    # the run's own workflow -- so `build` in ci.yml and `build` in release.yml stay apart,
+    # and a job with `name: Build` is found under its key `build` (CAVEATS 61).
+    step_series_resolved: dict[tuple[str, str, str], StepSeries] = field(default_factory=dict)
     # NOTE: class E (runner fit) is deliberately NOT built. Detecting "single-threaded
     # job on an 8-core runner" needs CPU utilisation, which the Actions API does not
     # expose -- only labels. Inferring it from duration alone would be a guess presented
@@ -125,6 +201,18 @@ class AuditContext:
     @property
     def full_name(self) -> str:
         return f"{self.owner}/{self.name}"
+
+    def series_for_step(self, workflow_path: str, job_key: str, step: Step) -> StepSeries | None:
+        """Observed durations of exactly this config step, or None.
+
+        An unnamed `run:` step is recorded as `Run <first line of the script>`, which is
+        GitHub's default. There is deliberately no fallback to another step: a series from
+        a different step is not evidence about this one (CAVEATS 61).
+        """
+        name = step_runtime_name(step)
+        if name is None:
+            return None
+        return self.step_series_resolved.get((workflow_path, job_key, name))
 
     def runs_for_workflow(self, path: str) -> list[RunObservation]:
         return [r for r in self.runs if r.timings]

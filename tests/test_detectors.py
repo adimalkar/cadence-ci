@@ -19,11 +19,12 @@ RATE_CARD = RateCard(
 
 
 def make_ctx(workflow_yaml: str, *, runs=None, step_series=None, is_private=False,
-             path="ci.yml") -> AuditContext:
+             path="ci.yml", step_series_resolved=None) -> AuditContext:
     wf = parse_workflow(path, workflow_yaml)
     return AuditContext(
         repo_id=1, owner="acme", name="widget", is_private=is_private,
         workflows=[wf], runs=runs or [], step_series=step_series or {},
+        step_series_resolved=step_series_resolved or {},
         cost=CostContext(is_private=is_private, runs_per_month=200.0, rate_card=RATE_CARD),
         window_days=90,
     )
@@ -349,11 +350,14 @@ class TestCacheDetector:
         kinds = [d.kind for d in drafts]
         assert "cache_key_never_hits" in kinds
         never = next(d for d in drafts if d.kind == "cache_key_never_hits")
-        assert never.confidence > 0.9  # config alone is conclusive
+        # 0.9, not 0.98: "nothing restores it" is a claim about the files we can see,
+        # and the rule was 0 for 9 on the corpus before it checked (CAVEATS 58).
+        assert never.confidence == pytest.approx(0.9)
 
     def test_missing_cache_flagged_when_install_duration_is_flat(self):
-        series = {("build", "npm ci"): StepSeries("build", "npm ci", [90.0] * 20, list(range(20)))}
-        ctx = make_ctx(NO_CACHE, step_series=series)
+        series = {("ci.yml", "build", "Run npm ci"):
+                  StepSeries("build", "Run npm ci", [90.0] * 20, list(range(20)))}
+        ctx = make_ctx(NO_CACHE, step_series_resolved=series)
         drafts = DependencyCacheDetector().run(ctx)
         found = [d for d in drafts if d.kind == "no_dependency_cache"]
         assert len(found) == 1
@@ -362,19 +366,159 @@ class TestCacheDetector:
     def test_bimodal_duration_suppresses_the_finding(self):
         """Wide spread means something is already being restored -- flagging it would be
         a false positive."""
-        series = {("build", "npm ci"): StepSeries(
-            "build", "npm ci", [90.0, 5.0] * 10, list(range(20)))}
-        ctx = make_ctx(NO_CACHE, step_series=series)
+        series = {("ci.yml", "build", "Run npm ci"): StepSeries(
+            "build", "Run npm ci", [90.0, 5.0] * 10, list(range(20)))}
+        ctx = make_ctx(NO_CACHE, step_series_resolved=series)
         drafts = [d for d in DependencyCacheDetector().run(ctx)
                   if d.kind == "no_dependency_cache"]
         assert drafts == []
 
     def test_setup_action_cache_counts_as_cached(self):
-        series = {("build", "npm ci"): StepSeries("build", "npm ci", [90.0] * 20, list(range(20)))}
-        ctx = make_ctx(WITH_SETUP_CACHE, step_series=series)
+        series = {("ci.yml", "build", "Run npm ci"):
+                  StepSeries("build", "Run npm ci", [90.0] * 20, list(range(20)))}
+        ctx = make_ctx(WITH_SETUP_CACHE, step_series_resolved=series)
         drafts = [d for d in DependencyCacheDetector().run(ctx)
                   if d.kind == "no_dependency_cache"]
         assert drafts == []
+
+
+
+def _cache_wf(steps: str, *, jobs: str = "") -> str:
+    return (
+        "on: push\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n"
+        + steps + jobs
+    )
+
+
+def _never_hits(*workflows: tuple[str, str]) -> list[FindingDraft]:
+    ctx = AuditContext(
+        repo_id=1, owner="acme", name="widget", is_private=False,
+        workflows=[parse_workflow(path, text) for path, text in workflows],
+        runs=[], step_series={},
+        cost=CostContext(is_private=False, runs_per_month=200.0, rate_card=RATE_CARD),
+        window_days=90,
+    )
+    return [d for d in DependencyCacheDetector().run(ctx) if d.kind == "cache_key_never_hits"]
+
+
+class TestCacheKeyNeverHitsOnlyWhenNothingRestores:
+    """CAVEATS 58: on the corpus, 9 of 9 flagged steps were working caches. Each shape
+    below is one that was flagged, taken from the repository it was found in."""
+
+    def test_restore_keys_prefix_is_a_working_cache(self):
+        """pytest-dev/pytest: restore the newest entry by prefix, save a fresh one."""
+        wf = _cache_wf(
+            "      - uses: actions/cache@v4\n        with:\n          path: ~/.cache\n"
+            "          key: plugins-http-cache-${{ github.run_id }}\n"
+            "          restore-keys: plugins-http-cache-\n"
+        )
+        assert _never_hits(("a.yml", wf)) == []
+
+    def test_multiline_restore_keys_with_sha(self):
+        """webpack/webpack: per-commit key, two fallback prefixes."""
+        wf = _cache_wf(
+            "      - uses: actions/cache@v4\n        with:\n          path: .jest-cache\n"
+            "          key: jest-${{ runner.os }}-${{ hashFiles('yarn.lock') }}-${{ github.sha }}\n"
+            "          restore-keys: |\n"
+            "            jest-${{ runner.os }}-${{ hashFiles('yarn.lock') }}-\n"
+            "            jest-${{ runner.os }}-\n"
+        )
+        assert _never_hits(("a.yml", wf)) == []
+
+    def test_a_later_job_restoring_the_same_key_is_a_handoff(self):
+        """moby/moby: build-dev saves `dev-image-<arch>-<run_id>`, validate restores
+        `dev-image-amd64-<run_id>` in the same run. The key hits every time."""
+        wf = (
+            "on: push\njobs:\n"
+            "  build-dev:\n    runs-on: ubuntu-latest\n"
+            "    strategy:\n      matrix:\n        arch: [amd64, arm64]\n    steps:\n"
+            "      - uses: actions/cache@v4\n        with:\n          path: /tmp/img\n"
+            "          key: dev-image-${{ matrix.arch }}-${{ github.run_id }}\n"
+            "  validate:\n    runs-on: ubuntu-latest\n    needs: build-dev\n    steps:\n"
+            "      - uses: actions/cache@v4\n        with:\n          path: /tmp/img\n"
+            "          key: dev-image-amd64-${{ github.run_id }}\n"
+        )
+        assert _never_hits(("test.yml", wf)) == []
+
+    def test_a_restore_only_step_counts_as_a_restorer(self):
+        wf = _cache_wf(
+            "      - uses: actions/cache@v4\n        with:\n          path: out\n"
+            "          key: out-${{ github.run_id }}\n",
+            jobs=(
+                "  use:\n    runs-on: ubuntu-latest\n    steps:\n"
+                "      - uses: actions/cache/restore@v4\n        with:\n"
+                "          path: out\n          key: out-${{ github.run_id }}\n"
+            ),
+        )
+        assert _never_hits(("a.yml", wf)) == []
+
+    def test_another_workflows_restore_keys_can_restore_it(self):
+        saver = _cache_wf(
+            "      - uses: actions/cache@v4\n        with:\n          path: out\n"
+            "          key: out-${{ github.run_id }}\n"
+        )
+        reader = _cache_wf(
+            "      - uses: actions/cache/restore@v4\n        with:\n          path: out\n"
+            "          key: out-${{ github.event.workflow_run.id }}\n"
+            "          restore-keys: out-\n"
+        )
+        assert _never_hits(("save.yml", saver), ("read.yml", reader)) == []
+
+    def test_head_ref_or_run_id_is_not_per_run(self):
+        """python/cpython: per-branch on a pull request. Mentioning run_id is not
+        being keyed on it."""
+        wf = _cache_wf(
+            "      - uses: actions/cache@v4\n        with:\n          path: .hypothesis\n"
+            "          key: hypothesis-${{ github.head_ref || github.run_id }}\n"
+        )
+        assert _never_hits(("a.yml", wf)) == []
+
+    def test_a_dead_key_still_fires_and_says_which_scope(self):
+        found = _never_hits(("a.yml", RUN_ID_KEY))
+        assert len(found) == 1
+        assert "unique per run" in found[0].title
+        assert "never restores" in found[0].title
+        assert found[0].evidence[0].payload["unique_per"] == "run"
+
+    def test_an_unrelated_cache_does_not_count_as_a_restorer(self):
+        wf = _cache_wf(
+            "      - uses: actions/cache@v4\n        with:\n          path: ~/.npm\n"
+            "          key: npm-${{ github.run_id }}\n"
+            "      - uses: actions/cache@v4\n        with:\n          path: ~/.cargo\n"
+            "          key: cargo-${{ hashFiles('Cargo.lock') }}\n"
+            "          restore-keys: cargo-\n"
+        )
+        found = _never_hits(("a.yml", wf))
+        assert [d.evidence[0].payload["key"] for d in found] == ["npm-${{ github.run_id }}"]
+
+    def test_empty_restore_keys_restores_nothing(self):
+        wf = _cache_wf(
+            "      - uses: actions/cache@v4\n        with:\n          path: x\n"
+            "          key: x-${{ github.run_id }}\n          restore-keys: ''\n"
+        )
+        assert len(_never_hits(("a.yml", wf))) == 1
+
+    @pytest.mark.parametrize(("expr", "scope", "words"), [
+        ("github.run_attempt", "attempt", "not even on a re-run"),
+        ("github.sha", "commit", "that commit is rebuilt"),
+        ("github.run_number", "run", "a fresh run never"),
+    ])
+    def test_title_names_the_scope_the_key_is_unique_at(self, expr, scope, words):
+        wf = _cache_wf(
+            "      - uses: actions/cache@v4\n        with:\n          path: x\n"
+            f"          key: x-${{{{ {expr} }}}}\n"
+        )
+        (found,) = _never_hits(("a.yml", wf))
+        assert found.evidence[0].payload["unique_per"] == scope
+        assert words in found.title
+
+    def test_the_narrowest_scope_wins(self):
+        wf = _cache_wf(
+            "      - uses: actions/cache@v4\n        with:\n          path: x\n"
+            "          key: x-${{ github.sha }}-${{ github.run_attempt }}\n"
+        )
+        (found,) = _never_hits(("a.yml", wf))
+        assert found.evidence[0].payload["unique_per"] == "attempt"
 
 
 # ───────────────────────────────────────────────────────── drafts + cost
