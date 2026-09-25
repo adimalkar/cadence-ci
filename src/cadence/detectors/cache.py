@@ -29,7 +29,7 @@ from cadence.simulate import duration_is_flat, project_cache_savings
 from cadence.workflow import Job, Step, Workflow
 
 DETECTOR_ID = "waste.dependency_cache"
-DETECTOR_VERSION = "dependency_cache@3"
+DETECTOR_VERSION = "dependency_cache@4"
 
 _CACHE_ACTION = "actions/cache"
 # Setup actions with built-in caching; `cache:` set on any of them counts as cached.
@@ -51,11 +51,33 @@ _CHECKOUT = "actions/checkout"
 _SETUP_NODE_AUTO_CACHE_MAJOR = 5
 _MAJOR = re.compile(r"^v?(\d+)(\.|$)")
 
+# Language dependency installs -- what a lockfile-keyed cache speeds up. Not
+# `apt-get install`: system packages have no lockfile, and the suggested fix cannot apply
+# to them. Until @4 it was here, and 16 of 50 corpus findings were apt (CAVEATS 61).
 _INSTALL_PATTERNS = re.compile(
     r"\b(npm (ci|install)|yarn install|pnpm install|bundle install|"
     r"pip install|poetry install|uv sync|uv pip install|"
     r"go mod download|cargo fetch|mvn .*dependency:go-offline|gradle .*dependencies|"
-    r"composer install|apt-get install)\b",
+    r"composer install)\b",
+    re.IGNORECASE,
+)
+# Commands that can share a step with the install without changing what its duration
+# measures: shell bookkeeping, version probes, and the package manager updating itself.
+# Anything else -- a build, a test run, apt -- means the step's time is not the install's,
+# and projecting from it prices that other work as "cache savings".
+_BOOKKEEPING = re.compile(
+    r"^(\#|cd\b|echo\b|printf\b|export\b|set\b|mkdir\b|source\b|\.\s|which\b|"
+    r"corepack\b|true$|:$|"
+    r"(python\d*(\.\d+)?\s+-m\s+)?pip\d*\s+(uninstall|list|freeze|config|--version)\b|"
+    r"(node|npm|npx|pnpm|yarn|python\d*(\.\d+)?|pip\d*|uv|go|cargo|ruby|bundle|java|mvn|"
+    r"gradle|composer)\s+(--version|-v|-V|version)\s*$)",
+    re.IGNORECASE,
+)
+# The package manager upgrading itself. Bookkeeping, and never the dependency install.
+_SELF_UPDATE = re.compile(
+    r"^((python\d*(\.\d+)?\s+-m\s+)?pip\d*\s+install\s+(-U|--upgrade)\s+"
+    r"(pip|setuptools|wheel)(\s+(pip|setuptools|wheel))*|"
+    r"npm\s+(install|i)\s+(-g|--global)\s+(npm|corepack)(@\S+)?)\s*$",
     re.IGNORECASE,
 )
 
@@ -161,9 +183,9 @@ class DependencyCacheDetector:
         if install is None:
             return None
 
-        series = ctx.step_series.get((job_key, install.name or install.run or ""))
-        if series is None:
-            series = _best_series_for(ctx, job_key)
+        # This step's own durations or nothing. Until @4 a miss fell back to the job's
+        # longest-running step, which priced 40 corpus jobs from a test or upload step.
+        series = ctx.series_for_step(wf.path, job_key, install)
         if series is None or len(series.durations) < 5:
             return None
 
@@ -296,23 +318,38 @@ def _checkout_before(job: Job, step: Step) -> Step | None:
     return None
 
 
-def _install_step(job: Job):
+def _install_step(job: Job) -> Step | None:
+    """The first step that is a dependency install and nothing heavier.
+
+    A step that also builds or tests is skipped, not priced: its duration is the sum, and a
+    projection from it would call the build time "cache savings" (redis's `apt-get install
+    tcl` then `./runtest` came out at 594-705 s per run; CAVEATS 61).
+    """
     for step in job.steps:
-        if step.run and _INSTALL_PATTERNS.search(step.run):
+        if step.run and install_only(step.run):
             return step
     return None
 
 
-def _best_series_for(ctx: AuditContext, job_key: str):
-    """Longest-running observed step for this job, as a stand-in when the step name in
-    config does not match the recorded one (composite actions rename steps)."""
-    best = None
-    for (jk, _name), series in ctx.step_series.items():
-        if jk != job_key or not series.durations:
-            continue
-        if best is None or sum(series.durations) > sum(best.durations):
-            best = series
-    return best
+def install_only(script: str) -> bool:
+    """True if the script installs dependencies and does nothing else of substance."""
+    commands = _commands(script)
+    installs = [c for c in commands if _INSTALL_PATTERNS.search(c) and not _SELF_UPDATE.match(c)]
+    if not installs:
+        return False
+    return all(
+        c in installs or _SELF_UPDATE.match(c) or _BOOKKEEPING.match(c) for c in commands
+    )
+
+
+def _commands(script: str) -> list[str]:
+    """Split a `run:` script into commands: line continuations joined, then split on
+    newlines, `&&`, `||` and `;`. A shell parser would be exact; this is enough to tell
+    `npm ci` from `npm ci && npm test`, and it errs toward "mixed", which declines."""
+    joined = re.sub(r"\\\s*\n", " ", script)
+    parts = re.split(r"\n|&&|\|\||;", joined)
+    return [p.strip() for p in parts if p.strip()]
+
 
 
 

@@ -19,11 +19,12 @@ RATE_CARD = RateCard(
 
 
 def make_ctx(workflow_yaml: str, *, runs=None, step_series=None, is_private=False,
-             path="ci.yml") -> AuditContext:
+             path="ci.yml", step_series_resolved=None) -> AuditContext:
     wf = parse_workflow(path, workflow_yaml)
     return AuditContext(
         repo_id=1, owner="acme", name="widget", is_private=is_private,
         workflows=[wf], runs=runs or [], step_series=step_series or {},
+        step_series_resolved=step_series_resolved or {},
         cost=CostContext(is_private=is_private, runs_per_month=200.0, rate_card=RATE_CARD),
         window_days=90,
     )
@@ -354,8 +355,9 @@ class TestCacheDetector:
         assert never.confidence == pytest.approx(0.9)
 
     def test_missing_cache_flagged_when_install_duration_is_flat(self):
-        series = {("build", "npm ci"): StepSeries("build", "npm ci", [90.0] * 20, list(range(20)))}
-        ctx = make_ctx(NO_CACHE, step_series=series)
+        series = {("ci.yml", "build", "Run npm ci"):
+                  StepSeries("build", "Run npm ci", [90.0] * 20, list(range(20)))}
+        ctx = make_ctx(NO_CACHE, step_series_resolved=series)
         drafts = DependencyCacheDetector().run(ctx)
         found = [d for d in drafts if d.kind == "no_dependency_cache"]
         assert len(found) == 1
@@ -364,16 +366,17 @@ class TestCacheDetector:
     def test_bimodal_duration_suppresses_the_finding(self):
         """Wide spread means something is already being restored -- flagging it would be
         a false positive."""
-        series = {("build", "npm ci"): StepSeries(
-            "build", "npm ci", [90.0, 5.0] * 10, list(range(20)))}
-        ctx = make_ctx(NO_CACHE, step_series=series)
+        series = {("ci.yml", "build", "Run npm ci"): StepSeries(
+            "build", "Run npm ci", [90.0, 5.0] * 10, list(range(20)))}
+        ctx = make_ctx(NO_CACHE, step_series_resolved=series)
         drafts = [d for d in DependencyCacheDetector().run(ctx)
                   if d.kind == "no_dependency_cache"]
         assert drafts == []
 
     def test_setup_action_cache_counts_as_cached(self):
-        series = {("build", "npm ci"): StepSeries("build", "npm ci", [90.0] * 20, list(range(20)))}
-        ctx = make_ctx(WITH_SETUP_CACHE, step_series=series)
+        series = {("ci.yml", "build", "Run npm ci"):
+                  StepSeries("build", "Run npm ci", [90.0] * 20, list(range(20)))}
+        ctx = make_ctx(WITH_SETUP_CACHE, step_series_resolved=series)
         drafts = [d for d in DependencyCacheDetector().run(ctx)
                   if d.kind == "no_dependency_cache"]
         assert drafts == []

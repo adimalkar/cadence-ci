@@ -14,7 +14,26 @@ from typing import Any
 
 from cadence.cost import CostContext
 from cadence.dag import NodeTiming
-from cadence.workflow import Workflow
+from cadence.workflow import Step, Workflow
+
+_EXPRESSION = re.compile(r"\$\{\{")
+
+
+def step_runtime_name(step: Step) -> str | None:
+    """The name GitHub records for a step, where config alone can say.
+
+    `name:` verbatim; for an unnamed `run:` step, `Run ` plus the script's first line; for
+    an unnamed `uses:` step, `Run ` plus the reference. None when the name is an expression,
+    since the recorded value depends on the run.
+    """
+    if step.name:
+        return None if _EXPRESSION.search(step.name) else step.name
+    if step.run:
+        first = next((ln.strip() for ln in step.run.splitlines() if ln.strip()), "")
+        return f"Run {first}" if first else None
+    if step.uses:
+        return f"Run {step.uses}"
+    return None
 
 
 @dataclass(slots=True)
@@ -148,6 +167,9 @@ class AuditContext:
     is_private: bool
     workflows: list[Workflow]
     runs: list[RunObservation]
+    # Keyed by (job name_base, step name), as recorded: the display name, merged across
+    # every workflow that has a job by that name. Right for ranking (long tail); wrong for
+    # asking about one step in one config job -- use `series_for_step` for that.
     step_series: dict[tuple[str, str], StepSeries]
     cost: CostContext
     window_days: int
@@ -166,6 +188,11 @@ class AuditContext:
     failures: list[JobFailure] = field(default_factory=list)
     # Read only when a workflow runs setup-node without `cache:`; see RootPackageJson.
     root_package_json: RootPackageJson = field(default_factory=RootPackageJson)
+    # The same step durations, resolved to config: (workflow path, job key, step name).
+    # Resolution uses `Workflow.job_for_runtime_name`, the mapping the run DAG uses, within
+    # the run's own workflow -- so `build` in ci.yml and `build` in release.yml stay apart,
+    # and a job with `name: Build` is found under its key `build` (CAVEATS 61).
+    step_series_resolved: dict[tuple[str, str, str], StepSeries] = field(default_factory=dict)
     # NOTE: class E (runner fit) is deliberately NOT built. Detecting "single-threaded
     # job on an 8-core runner" needs CPU utilisation, which the Actions API does not
     # expose -- only labels. Inferring it from duration alone would be a guess presented
@@ -174,6 +201,18 @@ class AuditContext:
     @property
     def full_name(self) -> str:
         return f"{self.owner}/{self.name}"
+
+    def series_for_step(self, workflow_path: str, job_key: str, step: Step) -> StepSeries | None:
+        """Observed durations of exactly this config step, or None.
+
+        An unnamed `run:` step is recorded as `Run <first line of the script>`, which is
+        GitHub's default. There is deliberately no fallback to another step: a series from
+        a different step is not evidence about this one (CAVEATS 61).
+        """
+        name = step_runtime_name(step)
+        if name is None:
+            return None
+        return self.step_series_resolved.get((workflow_path, job_key, name))
 
     def runs_for_workflow(self, path: str) -> list[RunObservation]:
         return [r for r in self.runs if r.timings]

@@ -1413,6 +1413,68 @@ it. It is unique within a repo, which is where it is used, but any cross-repo ag
 on it silently merges findings (it did in the measurement script, and was caught only by a
 repo count that did not add up).
 
+**Fixed, `dependency_cache@4` (2026-09-25).** Three causes, not the two first diagnosed:
+
+1. **`apt-get install` removed** from the install patterns.
+2. **Only install-only steps are priced.** A step qualifies when every command in it is a
+   dependency install or bookkeeping: `cd`, `echo`, version probes, `pip uninstall`, and the
+   package manager updating itself. Anything else, a build, a test or apt, and the step is
+   skipped in favour of a later pure one, or the job declines.
+3. **The timing lookup was wrong in two ways.**
+   - Series were keyed by the job's *display* name, and the detector looked them up by
+     *config key*, so any job with `name:` never matched.
+   - On a miss it fell back to **the job's longest-running step**. Series were also merged
+     across every workflow with a same-named job.
+
+   Timings are now resolved to config with `job_for_runtime_name` (the mapping the run DAG
+   already uses), inside the run's own workflow. Unnamed steps are matched by GitHub's
+   default `Run <first line>`. The fallback is gone: a series from another step is never
+   evidence about this one.
+
+Lookup coverage across 488 install-step jobs:
+
+| Before | After |
+|---|---|
+| 137 matched exactly | **273** matched their own step |
+| 40 priced from the longest step in the job | 0 |
+| 311 not found | 215 not found; they decline |
+
+**Measured effect** against #29's code, both with the real `package.json`: the count stays at
+50 but the composition turned over, and repos with a finding went from 11 to 9 of 53.
+
+| Change | Findings | What they were |
+|---|---:|---|
+| removed | 21 | **all wrong:** redis ×15 (apt, `make`, the test suite at 594–931 s), numpy `Meson Build` and its apt+pip benchmark step, requests `Run pre-commit`, django priced from `flake8`, fastapi priced from `Upload coverage to Smokeshow`, and ruff `publish-playground.yml`, priced from a *different* workflow with the same job and step names |
+| added | 21 | genuine install steps the old lookup could not reach: eslint ×5, remix ×10, django-rest-framework ×2, vscode, numpy ×3 |
+| repriced | 10 | angular ~1 s each, once workflows stopped being merged |
+
+**Still open.** Item 62 (the long-tail rule reads the same merged series) and item 63 (half
+the findings sit at the savings floor).
+
+### 62. `long_tail_step` ranks series merged across workflows · Medium
+
+**What.** `ctx.step_series` is still keyed by (job display name, step name) and merged across
+every workflow with a job of that name. Item 61 moved the cache rule to the resolved index
+and deliberately left this one alone, because re-keying changes the long-tail rule's titles and
+dedupe keys. But the same merge that priced ruff's `publish-playground.yml` from another
+workflow's runs also feeds the long tail. A `build` job in `ci.yml` and a `build` job in
+`release.yml` rank as one step. **Not measured.**
+
+**What would close it.** Move `long_tail_step` to `step_series_resolved`, with the dedupe key
+`long_tail_step:{workflow}:{job}:{step}`, and measure the change in its 27.5% reach.
+
+### 63. Half the cache findings sit at the 5-second floor · Low
+
+**What.** After item 61, 50 findings remain, and remix alone has 10 at a 5–6 s projected
+saving each. The floor is `savings.high >= 5.0` s per run, never argued with evidence. It
+decides whether a finding appears at all, and at 5 s a fixer PR would be noise to a
+maintainer. The fixer's minimum is a separate question from the detector's, and neither is
+set.
+
+**What would close it.** Set the detector floor from where maintainers act. When the `cache.*`
+fixer is built, give it its own minimum, higher than the detector's, so small findings stay
+visible in the report without generating PRs.
+
 ## Environmental and tooling notes
 
 ### 20. Reddit is unreachable directly · Info

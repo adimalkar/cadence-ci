@@ -125,8 +125,9 @@ class TestSetupNodeAutoCaches:
 def _ctx(wf, package_json: RootPackageJson, durations: list[float]) -> AuditContext:
     return AuditContext(
         repo_id=1, owner="acme", name="widget", is_private=False, workflows=[wf], runs=[],
-        step_series={("build", "npm ci"): StepSeries("build", "npm ci", durations,
-                                                       list(range(len(durations))))},
+        step_series={},
+        step_series_resolved={("ci.yml", "build", "Run npm ci"): StepSeries(
+            "build", "Run npm ci", durations, list(range(len(durations))))},
         cost=CostContext(is_private=False, runs_per_month=200.0, rate_card=RATE_CARD),
         window_days=90, root_package_json=package_json,
     )
