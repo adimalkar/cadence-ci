@@ -7,7 +7,10 @@ up disagreeing about the same repo.
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from cadence.cost import CostContext
 from cadence.dag import NodeTiming
@@ -93,6 +96,50 @@ class JobFailure:
     job_seconds: float
 
 
+# setup-node's own test, copied from its src/main.ts: "npm", "npm@…", "^npm@…".
+_NPM_PACKAGE_MANAGER = re.compile(r"^(\^)?npm(@.*)?$")
+
+
+@dataclass(frozen=True, slots=True)
+class RootPackageJson:
+    """The repository root's `package.json`, as far as a detector needs it.
+
+    Three states, because "we did not look" and "it is not there" lead to opposite answers:
+    from v5, `actions/setup-node` caches npm on its own when this file names npm as the
+    package manager, and not otherwise (CAVEATS 59). Unfetched is the default so a caller
+    that never asks gets the old, conservative behaviour.
+    """
+
+    fetched: bool = False
+    # Fetched and None: the file does not exist. Unparseable JSON is `{}` -- setup-node
+    # swallows the parse error and caches nothing, and so do we.
+    data: dict[str, Any] | None = None
+
+    @classmethod
+    def from_text(cls, text: str | None) -> RootPackageJson:
+        if text is None:
+            return cls(fetched=True, data=None)
+        try:
+            parsed = json.loads(text)
+        except ValueError:
+            parsed = {}
+        return cls(fetched=True, data=parsed if isinstance(parsed, dict) else {})
+
+    def declares_npm(self) -> bool:
+        """setup-node's `getNameFromPackageManagerField`: `devEngines.packageManager`
+        (an object or a list of them) first, then the top-level `packageManager`."""
+        if not self.data:
+            return False
+        dev = (self.data.get("devEngines") or {})
+        dev_pm = dev.get("packageManager") if isinstance(dev, dict) else None
+        for entry in dev_pm if isinstance(dev_pm, list) else [dev_pm] if dev_pm else []:
+            if isinstance(entry, dict) and isinstance(entry.get("name"), str) \
+                    and _NPM_PACKAGE_MANAGER.match(entry["name"]):
+                return True
+        top = self.data.get("packageManager")
+        return isinstance(top, str) and bool(_NPM_PACKAGE_MANAGER.match(top))
+
+
 @dataclass(slots=True)
 class AuditContext:
     repo_id: int
@@ -117,6 +164,8 @@ class AuditContext:
     # Failed jobs with the step they first failed at. Empty for a repo whose runs all
     # passed, which is a legitimate state and not a coverage problem.
     failures: list[JobFailure] = field(default_factory=list)
+    # Read only when a workflow runs setup-node without `cache:`; see RootPackageJson.
+    root_package_json: RootPackageJson = field(default_factory=RootPackageJson)
     # NOTE: class E (runner fit) is deliberately NOT built. Detecting "single-threaded
     # job on an 8-core runner" needs CPU utilisation, which the Actions API does not
     # expose -- only labels. Inferring it from duration alone would be a guess presented

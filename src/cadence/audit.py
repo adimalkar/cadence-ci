@@ -15,9 +15,15 @@ from cadence.config import settings
 from cadence.cost import CostContext, load_rate_card
 from cadence.dag import aggregate_spans, critical_path, theoretical_floor
 from cadence.detectors.billing import JobBillingRoundingDetector
-from cadence.detectors.cache import DependencyCacheDetector
+from cadence.detectors.cache import DependencyCacheDetector, needs_root_package_json
 from cadence.detectors.cancellation import NoRunCancellationDetector
-from cadence.detectors.context import AuditContext, JobFailure, RunObservation, StepSeries
+from cadence.detectors.context import (
+    AuditContext,
+    JobFailure,
+    RootPackageJson,
+    RunObservation,
+    StepSeries,
+)
 from cadence.detectors.failure import FirstFailingStepDetector
 from cadence.detectors.longtail import LongTailStepDetector
 from cadence.detectors.matrix import NonDiscriminatingMatrixLegDetector
@@ -60,6 +66,7 @@ def build_context(
     # power rather than a threshold picked to pass. 500 covers the median repo's full
     # window without paying for the long tail.
     limit_runs: int = 500,
+    root_package_json: RootPackageJson | None = None,
 ) -> AuditContext:
     from psycopg.rows import dict_row
 
@@ -222,6 +229,7 @@ def build_context(
         # fired on 0 of 51 corpus repos -- evalsweep never called it (CAVEATS 44, 45).
         # Empty is still a legitimate state: it means this repo's commits are unfetched.
         changed_paths=load_changed_paths(conn, repo_id, run_ids),
+        root_package_json=root_package_json or RootPackageJson(),
     )
 
 
@@ -319,6 +327,24 @@ async def enrich_changed_paths(provider, repo, ctx: AuditContext, *, max_runs: i
         if seen[sha]:
             ctx.changed_paths[run.run_id] = seen[sha]
     return len(ctx.changed_paths)
+
+
+async def fetch_root_package_json(
+    provider, repo, workflow_files: dict[str, str]
+) -> RootPackageJson:
+    """The root `package.json`, fetched only when a setup-node step's caching depends on it.
+
+    One request, and best-effort: a failure leaves it unfetched, which is the conservative
+    state, rather than "absent", which would turn every setup-node job into a candidate.
+    """
+    workflows = [parse_workflow(path, content) for path, content in workflow_files.items()]
+    if not needs_root_package_json(workflows):
+        return RootPackageJson()
+    try:
+        text = await provider.fetch_text_file(repo, "package.json")
+    except Exception:  # never fail an audit over a file that only refines one rule
+        return RootPackageJson()
+    return RootPackageJson.from_text(text)
 
 
 def run_audit(conn, ctx: AuditContext, *, commit_sha: str, persist: bool = True) -> dict:
