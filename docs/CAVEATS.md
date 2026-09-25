@@ -1270,6 +1270,149 @@ tests, and it is a presentation improvement rather than a correctness one.
 **What would close it.** Track the top-level `concurrency:` line in `parse_workflow`, and use
 it for the evidence range when the block exists.
 
+### 58. `cache_key_never_hits` was wrong on every corpus finding · High
+
+**What.** The rule flagged any `actions/cache` step whose key interpolates `github.run_id`,
+`run_number`, `run_attempt` or `sha`, at confidence 0.98, titled *"written every run, restored
+never."* Measured on the 55-repo corpus (2026-09-24): **9 steps in 4 repos, and all 9 were
+working caches.** Those 4 repos are the rule's entire 7.8% reach in item 45.
+
+| Shape | Steps | Repos | Why it hits |
+|---|---:|---|---|
+| `restore-keys:` prefix | 7 | pytest, cpython, webpack | restores the newest entry by prefix and saves a fresh one; the documented pattern for incremental caches (jest, hypothesis, HTTP) |
+| same-run handoff | 2 | moby | `build-dev` saves `dev-image-<arch>-<run_id>`, `validate` restores `dev-image-amd64-<run_id>` later in the same run |
+
+Also found: cpython's key is `${{ github.head_ref || github.run_id }}`. On a pull request
+that key is per-branch, so the regex matched a word the key mentions, not what the key is.
+
+**Why it got through.** The rule relied on config alone, so nothing ever checked it against a
+real cache. Its test fixture was the one shape (bare `run_id`, no `restore-keys`) that is
+actually broken, and the Phase 2 plan filed the fix under *"Unambiguous bug; single-line fix."*
+A fixer built on it would have rewritten 9 working caches in 4 repositories.
+
+**Fixed, `dependency_cache@2`.**
+- The rule now stays silent when the step has any `restore-keys`.
+- It also stays silent when any `actions/cache` or `actions/cache/restore` step in any of the
+  repo's workflows can read the key back, whether by exact key or by `restore-keys` prefix.
+  Non-unique expressions are wildcards, so the matrix leg matches `amd64`.
+- It counts only whole expressions: `a || github.run_id` is not per-run.
+- The title now names the scope (run, attempt or commit). A `run_id` key *does* restore on a
+  re-run, so "restored never" was untrue there too.
+- Confidence drops from 0.98 to 0.9. 13 regression tests cover it, 6 of them the corpus
+  shapes.
+
+**What remains open.**
+- **The rule now fires on 0 of 55 repos.** It joins the zero-reach rules in item 45. The
+  `cache.run_id_bug` fixer has no target in the corpus and moves to the back of Phase 2.
+- **Restorers we cannot see still silence nothing.** A composite action or a reusable
+  workflow in another repository that restores the key is invisible, the same blind spot as
+  item 47.
+- **Wildcarding over-silences.** Two parallel jobs with copy-pasted per-run keys will match
+  each other and suppress a real finding. The error is deliberate: this rule tells people a
+  cache is dead, so silence is the safer mistake.
+- **The broader lesson:** every config-only rule is still unchecked against the corpus. That
+  is `no_run_cancellation` (its wording was already wrong once, item 55), `false_needs_edge`'s
+  config verdict, and `irrelevant_path_trigger`. Each needs the same labelled sample of real
+  hits before it gets a fixer.
+
+### 59. `actions/setup-node` counts as a cache even without `cache:` · Medium
+
+**What.** `_CACHE_EQUIVALENT` in `detectors/cache.py` lists `actions/setup-node`, so any job
+that uses it is "cached" and `no_dependency_cache` never looks at it. On the corpus, **84 of
+513 jobs with an install step (15 repos)** are silenced this way: setup-node with no `cache:`
+input and no other caching. That is more than the rule's whole current reach.
+
+**Why it is not fixed here.** From v5, setup-node can enable npm caching automatically,
+depending on `package.json`, which the audit does not read. The corpus pins are v6, v7 and
+SHAs. Deleting the entry could turn real caches into findings. The duration-flatness gate
+would catch most of those, but that is a guess, not a measurement.
+
+**What would close it.** Confirm the exact v5+ auto-cache condition from setup-node's source,
+not a changelog summary. Then either read `package.json` (one more API call per repo) or treat
+v5+ without `cache:` as unknown rather than cached. Finally, re-measure the finding delta
+against real timing series before it ships.
+
+**Fixed, `dependency_cache@3` (2026-09-24).** The condition, read from setup-node's
+`src/main.ts`: without `cache:`, it caches only when it is v5.0.0 or later,
+`package-manager-cache` isn't `false`, and the **workspace-root** `package.json` names npm in
+`devEngines.packageManager` or `packageManager` (`/^(\^)?npm(@.*)?$/`). pnpm and yarn get no
+auto-cache. Every corpus pin is v6 or v7 (the SHAs resolve to v7.0.0 and v6.3.0), so the
+84 jobs came down to the file:
+
+| Actual state | Jobs |
+|---|---:|
+| auto-cached, root `package.json` names npm (TypeScript only) | 19 |
+| `package-manager-cache: false` set explicitly | 20 |
+| `package.json` names pnpm or yarn, or has no `packageManager` | 37 |
+| no root `package.json` | 8 |
+
+**65 of 84 were counted as cached and aren't.** The root `package.json` is now fetched, one
+request, and only when a setup-node step's caching depends on it. It is tri-state:
+- *unfetched* keeps the old answer;
+- *absent* means no auto-cache;
+- a failed request stays *unfetched*, never *absent*, so a network blip cannot turn every
+  setup-node job into a candidate.
+
+A setup-node step that runs before any checkout reads nothing. A checkout into `path:` or of
+another `repository:` counts as unknown.
+
+**Measured effect**, whole corpus against stored timing: `no_dependency_cache` goes from
+**45 to 50 findings, 7 to 11 of 53 repos**. The new findings are babel `test262` (19–22 s/run),
+eslint `build` (31–37 s), vite (8–9 s) and ruff ×2 (5–6 s). Only 5 of the 65 newly examined
+jobs fire: 26 have no timing series under their job key, 5 have fewer than 5 observations, and
+1 is bimodal. The timing gate is doing its job, and the reach gain is small because the timing
+data is thin, not because the config is right.
+
+### 60. `actions/cache/save` is invisible to both cache rules · Low
+
+**What.** The corpus has 199 `actions/cache` steps (25 repos), 126 `actions/cache/restore`
+(10 repos) and 64 `actions/cache/save` (10 repos). Save steps count neither as "has caching"
+in `_job_has_caching` nor as a candidate in `_never_hits`. Measured: 53 save steps use a
+per-run or per-commit key, and **all 53 are read back** by a restore step, so extending the
+never-hits rule to them would find nothing today.
+
+**Related, unmeasured.** The `restore-keys` pattern that item 58 now treats as healthy still
+saves a new entry every run. In a busy repository that fills the 10 GB cache and evicts the
+entries other jobs need. That is the `cache_evicted_before_reuse` candidate in
+`PHASE_2_FIX_PRS.md`, which needs the cache-usage API, not config.
+
+**What would close it.** Add `actions/cache/save` to the caching-equivalent set (it needs a
+restorer in the same job to be useful, so check for one), and add it to the never-hits
+candidates, where the handoff check already covers it.
+
+### 61. `no_dependency_cache` prices work that is not a dependency install · High
+
+**What.** Found while measuring item 59. On the corpus, **about 18 of 50 findings are
+wrong:**
+
+| Cause | Findings | Example |
+|---|---:|---|
+| `apt-get install` counts as a dependency install | 16 | redis ×15, numpy ×1 |
+| the install shares its step with a build or check | 2 | numpy `Meson Build` (`docker run …`), requests `Run pre-commit` |
+
+The projection is taken from the **whole step's** duration. redis's `test` step runs
+`sudo apt-get install tcl8.6 tclx` followed by `./runtest`, so the finding says caching would
+save **594–705 s per run**. That is the test suite. Its suggested fix, "actions/cache keyed on
+your lockfile", cannot apply to apt packages either.
+
+The other 32 are single-purpose install steps (`pnpm install`, `pip install`, `npm ci`,
+`uv sync`), where the step duration is the install duration. 3 numpy steps include a
+`pip uninstall` or `python --version`; those are counted as clean.
+
+**Why it matters now.** The `cache.*` fixer would write a lockfile-keyed cache into these
+jobs, and redis's findings alone carry the largest projected savings on the corpus.
+
+**What would close it.** Take `apt-get install` out of `_INSTALL_PATTERNS`: system packages
+are a different fix (a pre-built image or `cache-apt-pkgs-action`) and a different finding,
+if one at all. Then only project from a step whose `run:` is the install and nothing heavier.
+When the install shares a step, either decline or say the number is an upper bound. Re-measure
+the 50.
+
+The same run also found that the dedupe key `no_dependency_cache:{path}:{job}` has no repo in
+it. It is unique within a repo, which is where it is used, but any cross-repo aggregation keyed
+on it silently merges findings (it did in the measurement script, and was caught only by a
+repo count that did not add up).
+
 ## Environmental and tooling notes
 
 ### 20. Reddit is unreachable directly · Info

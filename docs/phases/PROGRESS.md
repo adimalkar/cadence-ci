@@ -232,6 +232,9 @@ not by size. Each links to the entry holding the detail.
 | `non_discriminating_matrix_leg` | Revived from 0% to 3.9% by the higher run limit. `MIN_RUNS = 150` may still be too tight — never re-argued with evidence |
 | Phase 4 kill criterion | Every other phase has one; Phase 4 has none, and it is now a 6-week pillar ([`CAVEATS`](../CAVEATS.md) 39) |
 | Dollars-only findings | Cannot be ranked — `Savings` implies wall-clock ([`CAVEATS`](../CAVEATS.md) 30). Needs a `PRODUCT.md` §6 decision |
+| `cache_key_never_hits` | Was wrong on **9 of 9** corpus findings; fixed in `dependency_cache@2` and now fires on 0 repos. Every other config-only rule needs the same check before it gets a fixer ([`CAVEATS`](../CAVEATS.md) 58) |
+| `no_dependency_cache` precision | **~18 of 50 findings price non-install work**: `apt-get install` counts as an install, and a mixed step's whole duration is projected — redis's test suite shows up as 594–705 s of "cache savings". Blocks the `cache.*` fixer ([`CAVEATS`](../CAVEATS.md) 61) |
+| `no_dependency_cache` reach | setup-node counting as a cache is fixed in `dependency_cache@3` (7 → 11 of 53 repos; [`CAVEATS`](../CAVEATS.md) 59); `actions/cache/save` not recognised ([`CAVEATS`](../CAVEATS.md) 60) |
 | Suppression surfaces | `.cadenceignore` costs one API call per audit and is fetched best-effort. No `closed_pr` writer yet — that arrives with the first fixer |
 
 ### Measured and deliberately not built
