@@ -219,7 +219,8 @@ def _as_list(value: Any) -> list[str]:
     return []
 
 
-def _parse_steps(raw_steps: Any) -> list[Step]:
+def parse_steps(raw_steps: Any) -> list[Step]:
+    """A YAML `steps:` list as Steps. Shared by workflows and composite actions."""
     steps: list[Step] = []
     if not isinstance(raw_steps, list):
         return steps
@@ -297,7 +298,7 @@ def parse_workflow(path: str, content: str) -> Workflow:
                 name=raw.get("name"),
                 needs=_as_list(raw.get("needs")),
                 runs_on=_as_list(raw.get("runs-on")),
-                steps=_parse_steps(raw.get("steps")),
+                steps=parse_steps(raw.get("steps")),
                 matrix=_parse_matrix(raw.get("strategy")),
                 services=list(services.keys()) if isinstance(services, dict) else [],
                 raw=dict(raw),

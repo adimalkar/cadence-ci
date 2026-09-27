@@ -234,6 +234,7 @@ not by size. Each links to the entry holding the detail.
 | Dollars-only findings | Cannot be ranked — `Savings` implies wall-clock ([`CAVEATS`](../CAVEATS.md) 30). Needs a `PRODUCT.md` §6 decision |
 | `cache_key_never_hits` | Was wrong on **9 of 9** corpus findings; fixed in `dependency_cache@2` and now fires on 0 repos. Every other config-only rule needs the same check before it gets a fixer ([`CAVEATS`](../CAVEATS.md) 58) |
 | `no_dependency_cache` precision | Fixed in `dependency_cache@4`: 21 wrong findings removed (apt, build and test steps, other steps' and other workflows' timings), 21 genuine ones found by resolving timings to config ([`CAVEATS`](../CAVEATS.md) 61). Floor of 5 s never argued ([`CAVEATS`](../CAVEATS.md) 63) |
+| `no_dependency_cache` config blindness | Fixed in `dependency_cache@5`: composite actions are read through, so 30 findings on already-cached jobs and 2 deliberate opt-outs are gone (50 → 18, 9 → 4 repos; [`CAVEATS`](../CAVEATS.md) 64). setup-go/ruby/uv cache inputs still unmodelled ([`CAVEATS`](../CAVEATS.md) 65) |
 | `long_tail_step` series | Still ranks timings merged across workflows with a same-named job ([`CAVEATS`](../CAVEATS.md) 62) |
 | `no_dependency_cache` reach | setup-node counting as a cache is fixed in `dependency_cache@3` (7 → 11 of 53 repos; [`CAVEATS`](../CAVEATS.md) 59); `actions/cache/save` not recognised ([`CAVEATS`](../CAVEATS.md) 60) |
 | Suppression surfaces | `.cadenceignore` costs one API call per audit and is fetched best-effort. No `closed_pr` writer yet — that arrives with the first fixer |

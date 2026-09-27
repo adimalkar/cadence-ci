@@ -256,19 +256,24 @@ class GitHubProvider:
             matrix=matrix,
         )
 
-    async def fetch_text_file(self, repo: Repo, path: str) -> str | None:
-        """One text file from the default branch, or None if it is not there.
+    async def fetch_text_file(
+        self, repo: Repo, path: str, *, ref: str | None = None
+    ) -> str | None:
+        """One text file from the default branch (or `ref`), or None if it is not there.
 
         Absence is the common case and not an error: most repos have no `.cadenceignore`,
         and an audit of such a repo simply suppresses nothing.
         """
         try:
             resp = await self._get_with_backoff(
-                f"/repos/{repo.owner}/{repo.name}/contents/{path}"
+                f"/repos/{repo.owner}/{repo.name}/contents/{path}",
+                params={"ref": ref} if ref else None,
             )
         except NotFound:
             return None
         payload = resp.json()
+        if not isinstance(payload, dict):  # a directory listing, not a file
+            return None
         content = payload.get("content")
         if not content or payload.get("encoding") != "base64":
             return None

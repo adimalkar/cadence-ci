@@ -1475,6 +1475,69 @@ set.
 fixer is built, give it its own minimum, higher than the detector's, so small findings stay
 visible in the report without generating PRs.
 
+### 64. 28 of 50 cache findings were jobs cached inside a composite action · High
+
+**What.** I measured the 50 `no_dependency_cache` findings before building the `cache.*` fixer
+on them. 30 were jobs that already cache, and 2 had turned caching off on purpose:
+
+| Repo | Findings | Where the cache is |
+|---|---:|---|
+| angular | 15 | `angular/dev-infra/github-actions/npm/checkout-and-setup-node@<sha>`, a remote composite that runs `pnpm/action-setup` with `cache:` |
+| remix | 14 | `./.github/actions/setup-node-pnpm-cache`, a local composite that runs `actions/cache` on the pnpm store |
+| vscode | 1 | `./.github/actions/restore-node-modules` |
+| ruff, vite | 2 | not cached: `package-manager-cache: false`, set deliberately in publish workflows |
+
+**Why the timing gate let them through.** The rule's premise was that a working cache is
+*bimodal*, fast on a hit and slow on a miss, so a flat install means nothing is restored. **A
+cache that almost always hits is flat too.** pnpm still spends about 20 s linking
+`node_modules` from a warm store. Timing cannot tell "always hits" from "never cached", so
+config is the only discriminator. And config stopped at `uses:`.
+
+**Fixed, `dependency_cache@5`.**
+- `cadence/actions.py` resolves the actions a job runs *before its install*, local (`./…`)
+  and remote (`owner/repo/path@ref`). It follows composites into what they use, up to 3 levels
+  and 30 lookups, and caches manifests on disk in the sweep.
+- `cache_state()` is four-way: `cached`, `uncached`, `disabled` or `unknown`, and only
+  `uncached` is a finding.
+- An action that cannot be read is **unknown**. So is one that was never looked up, the
+  default for any caller that doesn't resolve. A JavaScript or Docker action that *was* read
+  counts as doing nothing we measure, except the setup actions the rule models.
+- An unreadable action after the install cannot make the job unknown. A cache step anywhere
+  still makes it cached, as before.
+- `package-manager-cache: false` is `disabled` and declines. Turning a cache off is a
+  decision, and in a publish workflow it is the one zizmor recommends.
+
+**Measured effect.** 34 manifests resolved and no fetch failed. **50 → 18 findings, 9 → 4 of 53
+repos.** All 32 removals were positively cached (30) or disabled (2); none was dropped as
+merely unknown.
+
+**What the fixer now faces.** The 18 are eslint ×6, numpy ×9, django-rest-framework ×2 and
+babel ×1, and they do not share one shape:
+- **eslint commits no lockfile.** setup-node's `cache: npm` errors when there is no lockfile to
+  hash, so the obvious one-line fix would have broken its CI.
+- DRF has only `pyproject.toml`, and numpy keeps its requirements under `requirements/`, so
+  `setup-python`'s `cache: pip` needs an explicit `cache-dependency-path`.
+- Several numpy jobs have no setup action at all (containers, macOS), so there is no `cache:`
+  to add.
+
+The fixer has to know which files exist, which it currently cannot.
+
+### 65. `setup-go`, `setup-ruby` and `setup-uv` cache under inputs the rule does not read · Medium
+
+**What.** `_SETUP_ACTIONS` treats one input, `cache:`, as "cached" for every setup action.
+From memory, and not yet checked against each action's source:
+- `actions/setup-go` caches **by default** from v4;
+- `ruby/setup-ruby` uses `bundler-cache:`;
+- `astral-sh/setup-uv` uses `enable-cache:`, with a default that may be on.
+
+On the corpus, 22 setup-uv, 2 setup-go and 2 setup-ruby steps sit in jobs the rule could
+misjudge as uncached. For setup-uv, 10 of those set `enable-cache` explicitly. **None of the 18
+current findings is one of these.** They are shielded only by the timing gate, which item 64
+shows cannot tell a warm cache from none.
+
+**What would close it.** Read each action's own source for its cache inputs and defaults, the
+way item 59 did for setup-node, and model them per action, not with one shared `cache:` check.
+
 ## Environmental and tooling notes
 
 ### 20. Reddit is unreachable directly · Info
