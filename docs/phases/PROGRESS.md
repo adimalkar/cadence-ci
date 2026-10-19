@@ -232,6 +232,8 @@ not by size. Each links to the entry holding the detail.
 | `non_discriminating_matrix_leg` | Revived from 0% to 3.9% by the higher run limit. `MIN_RUNS = 150` may still be too tight — never re-argued with evidence |
 | Phase 4 kill criterion | Every other phase has one; Phase 4 has none, and it is now a 6-week pillar ([`CAVEATS`](../CAVEATS.md) 39) |
 | Dollars-only findings | Cannot be ranked — `Savings` implies wall-clock ([`CAVEATS`](../CAVEATS.md) 30). Needs a `PRODUCT.md` §6 decision |
+| `cache_key_never_hits` | Was wrong on **9 of 9** corpus findings; fixed in `dependency_cache@2` and now fires on 0 repos. Every other config-only rule needs the same check before it gets a fixer ([`CAVEATS`](../CAVEATS.md) 58) |
+| `no_dependency_cache` reach | `actions/setup-node` without `cache:` counts as cached — 84 install jobs in 15 repos never examined ([`CAVEATS`](../CAVEATS.md) 59); `actions/cache/save` not recognised ([`CAVEATS`](../CAVEATS.md) 60) |
 | Suppression surfaces | `.cadenceignore` costs one API call per audit and is fetched best-effort. No `closed_pr` writer yet — that arrives with the first fixer |
 
 ### Measured and deliberately not built

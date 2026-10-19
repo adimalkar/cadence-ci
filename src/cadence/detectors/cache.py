@@ -7,9 +7,13 @@ Two findings share this module because they are the same measurement read differ
     is bimodal (fast on hit, slow on miss), so consistently-slow-with-low-variance means
     nothing is being restored.
   * **A key that cannot hit** — a key interpolating `github.run_id` (or `github.sha`)
-    is unique per run, so the cache is written every time and read never. That is a
-    deterministic bug, not a tuning problem, and it earns high confidence on config
-    alone.
+    is unique per run, so a fresh run never restores it. That is *only* a bug when nothing
+    else restores the entry, and on the corpus nothing-else was the exception: all 9
+    flagged steps were working caches (CAVEATS 58). Two patterns restore a per-run key:
+    `restore-keys:` (restore the newest entry by prefix, save a fresh one each run — the
+    documented pattern for incremental caches), and a *handoff*, where a later job in the
+    same run, or another workflow, restores the exact key to pass a build along. Either one
+    silences the finding.
 
 Savings here are **projection**, never replay: we have no observation of this repo in a
 cached state, so the number is an estimate with a range and a named basis.
@@ -22,10 +26,10 @@ import re
 from cadence.detectors.base import EvidenceDraft, FindingDraft
 from cadence.detectors.context import AuditContext
 from cadence.simulate import duration_is_flat, project_cache_savings
-from cadence.workflow import Job, Workflow
+from cadence.workflow import Job, Step, Workflow
 
 DETECTOR_ID = "waste.dependency_cache"
-DETECTOR_VERSION = "dependency_cache@1"
+DETECTOR_VERSION = "dependency_cache@2"
 
 _CACHE_ACTION = "actions/cache"
 # Setup actions with built-in caching; `cache:` set on any of them counts as cached.
@@ -48,8 +52,18 @@ _INSTALL_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# Keys interpolating these are unique per run and can never be restored.
-_NEVER_HITS = re.compile(r"github\s*\.\s*(run_id|run_number|run_attempt|sha)\b")
+# An expression that *is* one of these -- not one that merely mentions it, since
+# `github.head_ref || github.run_id` is per-branch on a pull request -- makes the key
+# unique at that scope. run_id and run_number survive a re-run; run_attempt does not.
+_UNIQUE_SCOPE = {
+    "github.run_id": "run",
+    "github.run_number": "run",
+    "github.run_attempt": "attempt",
+    "github.sha": "commit",
+}
+# Steps that read a cache entry back, and so can make a per-run key hit.
+_RESTORERS = {_CACHE_ACTION, "actions/cache/restore"}
+_EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 
 
 class DependencyCacheDetector:
@@ -58,41 +72,56 @@ class DependencyCacheDetector:
 
     def run(self, ctx: AuditContext) -> list[FindingDraft]:
         drafts: list[FindingDraft] = []
+        # Every restoring step in the repo: a handoff can cross workflows (`workflow_run`).
+        restorers = [
+            step
+            for wf in ctx.workflows if not wf.parse_error
+            for job in wf.jobs.values()
+            for step in job.steps if step.action in _RESTORERS
+        ]
         for wf in ctx.workflows:
             if wf.parse_error:
                 continue
             for job_key, job in wf.jobs.items():
-                drafts.extend(self._never_hits(wf, job_key, job))
+                drafts.extend(self._never_hits(wf, job_key, job, restorers))
                 draft = self._missing_cache(ctx, wf, job_key, job)
                 if draft is not None:
                     drafts.append(draft)
         return drafts
 
     # ── a key that can never hit ───────────────────────────────────────────────
-    def _never_hits(self, wf: Workflow, job_key: str, job: Job) -> list[FindingDraft]:
+    def _never_hits(
+        self, wf: Workflow, job_key: str, job: Job, restorers: list[Step]
+    ) -> list[FindingDraft]:
         out: list[FindingDraft] = []
         for step in job.steps:
             if step.action != _CACHE_ACTION:
                 continue
             key = str(step.with_.get("key", ""))
-            if not _NEVER_HITS.search(key):
+            scope = unique_scope(key)
+            if scope is None:
                 continue
+            if _restore_keys(step):
+                continue  # restores the newest entry by prefix: a working cache
+            if any(_restores(other, step, key) for other in restorers):
+                continue  # handed to another job or workflow, by key or by prefix
             out.append(
                 FindingDraft(
                     kind="cache_key_never_hits",
                     module="waste",
                     severity=4,
-                    confidence=0.98,  # config alone is conclusive here
+                    # Down from 0.98: the rule was 0 for 9 on the corpus before the two
+                    # restore paths were checked (CAVEATS 58). What is left is structural,
+                    # but "nothing restores it" is a claim about the files we could see.
+                    confidence=0.9,
                     dedupe_key=f"cache_key_never_hits:{wf.path}:{job_key}:{step.index}",
-                    title=(
-                        f"Cache key in `{job_key}` is unique per run — written every "
-                        f"run, restored never"
-                    ),
+                    title=_NEVER_HITS_TITLE[scope].format(job=job_key),
                     detector_version=DETECTOR_VERSION,
                     suggested_action=(
                         "Key on content, not the run: "
-                        "`${{ runner.os }}-${{ hashFiles('**/lockfile') }}`. "
-                        "A key containing github.run_id/sha cannot match a previous run."
+                        "`${{ runner.os }}-${{ hashFiles('**/lockfile') }}`. If a fresh "
+                        "entry every run is the point, add `restore-keys:` with the key's "
+                        "prefix so the newest one is restored."
                     ),
                     savings=None,  # the waste is the whole restore; sizing needs a baseline
                     evidence=[
@@ -101,7 +130,13 @@ class DependencyCacheDetector:
                             file_path=wf.path,
                             line_start=step.line,
                             line_end=step.line,
-                            payload={"key": key[:200], "job": job_key},
+                            payload={
+                                "key": key[:200],
+                                "job": job_key,
+                                "unique_per": scope,
+                                "restore_keys": None,
+                                "restoring_steps_checked": len(restorers) - 1,
+                            },
                         )
                     ],
                 )
@@ -207,3 +242,84 @@ def _best_series_for(ctx: AuditContext, job_key: str):
         if best is None or sum(series.durations) > sum(best.durations):
             best = series
     return best
+
+
+
+_NEVER_HITS_TITLE = {
+    "run": "Cache key in `{job}` is unique per run — a fresh run never restores it",
+    "attempt": (
+        "Cache key in `{job}` is unique per attempt — never restored, not even on a re-run"
+    ),
+    "commit": (
+        "Cache key in `{job}` is unique per commit — restored only when that commit is rebuilt"
+    ),
+}
+_SCOPE_RANK = {"attempt": 0, "run": 1, "commit": 2}
+
+
+def _norm_expr(expr: str) -> str:
+    return " ".join(expr.split())
+
+
+def unique_scope(key: str) -> str | None:
+    """The narrowest scope a key is unique at, or None if it can repeat across runs.
+
+    Only whole expressions count. `${{ github.head_ref || github.run_id }}` is per-branch on
+    a pull request and would be a false positive to treat as per-run.
+    """
+    scopes = [
+        _UNIQUE_SCOPE[e]
+        for e in (_norm_expr(m) for m in _EXPR.findall(key))
+        if e in _UNIQUE_SCOPE
+    ]
+    return min(scopes, key=_SCOPE_RANK.__getitem__) if scopes else None
+
+
+def _key_pattern(key: str, *, prefix: bool = False) -> re.Pattern[str]:
+    """A key as a pattern: per-run expressions stay literal, every other expression
+    (`matrix.arch`, `hashFiles(...)`, `runner.os`) matches anything.
+
+    Wildcarding errs toward *finding a restorer*, which silences the finding -- the right
+    direction for a rule that claims a cache is dead.
+    """
+    parts: list[str] = []
+    pos = 0
+    for m in _EXPR.finditer(key):
+        parts.append(re.escape(key[pos:m.start()]))
+        expr = _norm_expr(m.group(1))
+        parts.append(re.escape(f"${{{{ {expr} }}}}") if expr in _UNIQUE_SCOPE else ".*")
+        pos = m.end()
+    parts.append(re.escape(key[pos:]))
+    return re.compile("".join(parts) + (".*" if prefix else ""), re.S)
+
+
+def _canonical(key: str) -> str:
+    return _EXPR.sub(lambda m: f"${{{{ {_norm_expr(m.group(1))} }}}}", key.strip())
+
+
+def _key_matches(a: str, b: str) -> bool:
+    """Could lookup key `a` hit an entry saved under `b`? Symmetric: either side may carry
+    the matrix value literally (`dev-image-amd64-…` against `…-${{ matrix.arch }}-…`)."""
+    a, b = a.strip(), b.strip()
+    if not a or not b:
+        return False
+    return bool(
+        _key_pattern(a).fullmatch(_canonical(b)) or _key_pattern(b).fullmatch(_canonical(a))
+    )
+
+
+def _restores(other: Step, step: Step, key: str) -> bool:
+    """Does `other` read back what `step` saves under `key`? By exact key (a different
+    step), or by any of its `restore-keys` prefixes (itself included)."""
+    if other is not step and _key_matches(str(other.with_.get("key", "")), key):
+        return True
+    return any(_key_pattern(p, prefix=True).fullmatch(_canonical(key))
+               for p in _restore_keys(other))
+
+
+def _restore_keys(step: Step) -> list[str]:
+    raw = step.with_.get("restore-keys")
+    if raw is None:
+        return []
+    lines = raw if isinstance(raw, list) else str(raw).splitlines()
+    return [str(line).strip() for line in lines if str(line).strip()]
