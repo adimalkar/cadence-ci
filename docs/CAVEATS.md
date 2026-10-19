@@ -53,6 +53,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 54 | Queue time was clamped silently on re-run jobs — up to 20.4% of a repo's observations | Medium | ✅ Fixed 2026-09-21 |
 | 55 | `no_run_cancellation` titled 8 findings "no cancel-in-progress" when their file said otherwise | Medium | ✅ Fixed 2026-09-24 |
 | 56 | Corpus measurements read a throwaway cache and printed empty tables as results when it vanished | Medium | Open |
+| 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
 | 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — **kill criterion overridden 2026-09-07**, Phase 2 proceeding |
 | 47 | Reusable-workflow mapping <80% on 16 of 50 repos, and it gates criterion 2 as well as the critical path | **High** | Open |
@@ -1522,22 +1523,6 @@ babel ×1, and they do not share one shape:
 
 The fixer has to know which files exist, which it currently cannot.
 
-### 65. `setup-go`, `setup-ruby` and `setup-uv` cache under inputs the rule does not read · Medium
-
-**What.** `_SETUP_ACTIONS` treats one input, `cache:`, as "cached" for every setup action.
-From memory, and not yet checked against each action's source:
-- `actions/setup-go` caches **by default** from v4;
-- `ruby/setup-ruby` uses `bundler-cache:`;
-- `astral-sh/setup-uv` uses `enable-cache:`, with a default that may be on.
-
-On the corpus, 22 setup-uv, 2 setup-go and 2 setup-ruby steps sit in jobs the rule could
-misjudge as uncached. For setup-uv, 10 of those set `enable-cache` explicitly. **None of the 18
-current findings is one of these.** They are shielded only by the timing gate, which item 64
-shows cannot tell a warm cache from none.
-
-**What would close it.** Read each action's own source for its cache inputs and defaults, the
-way item 59 did for setup-node, and model them per action, not with one shared `cache:` check.
-
 ## Environmental and tooling notes
 
 ### 20. Reddit is unreachable directly · Info
@@ -1580,6 +1565,7 @@ PR→run linkage that does not exist until Phase 5.
 
 | Date | Item | Closed by |
 |---|---|---|
+| 2026-10-18 | 65 — Go/Ruby/uv caching inputs and version defaults were unmodelled | `12e2ac4` — `dependency_cache@6`; action-specific states, uv runner context, 66 regression cases |
 | 2026-08-26 | Test suite was order-dependent; `TestReplayAtScale` asserted on whole-table counts and passed only by file ordering — while being the evidence for a Phase 0 ship criterion | `eb6fb5a` — fixture cleans on entry as well as teardown; verified across 5 seeds |
 | 2026-08-26 | zizmor reported 20 findings / 9 high against our own workflows (`unpinned-uses`, `artipacked`) | `eb6fb5a` — SHA-pinned all 11 actions, `persist-credentials: false`, caching off on the release path |
 | 2026-08-26 | CI could report green while silently skipping the 6 DB-backed test files | `eb6fb5a` — Postgres service, explicit reachability assert, and a skip guard |
@@ -1592,3 +1578,50 @@ PR→run linkage that does not exist until Phase 5.
 | 2026-08-28 | Ingest stopped for ~4 days; no durable worker existed | `1066d66` — systemd user unit + install script; staleness 2d23h → 14s, zero failures |
 | 2026-08-26 | Node 20 deprecation warnings on 3 actions | `eb6fb5a` — superseded by SHA pinning at current majors |
 | 2026-08-26 | Adding a CI job silently weakened branch protection | `eb6fb5a` — protection requires only `ci-gate`, which aggregates every job |
+
+### 65. Setup-action cache inputs and defaults · Resolved 2026-10-18
+
+**Original finding (2026-09-27).** `_SETUP_ACTIONS` treats one input, `cache:`, as "cached" for every setup action.
+From memory, and not yet checked against each action's source:
+- `actions/setup-go` caches **by default** from v4;
+- `ruby/setup-ruby` uses `bundler-cache:`;
+- `astral-sh/setup-uv` uses `enable-cache:`, with a default that may be on.
+
+On the corpus, 22 setup-uv, 2 setup-go and 2 setup-ruby steps sit in jobs the rule could
+misjudge as uncached. For setup-uv, 10 of those set `enable-cache` explicitly. **None of the 18
+current findings is one of these.** They are shielded only by the timing gate, which item 64
+shows cannot tell a warm cache from none.
+
+**What would close it.** Read each action's own source for its cache inputs and defaults, the
+way item 59 did for setup-node, and model them per action, not with one shared `cache:` check.
+
+**Closed by `12e2ac4`, `dependency_cache@6`.** Checked each action's own manifest and implementation:
+
+- [`setup-go` v3](https://github.com/actions/setup-go/blob/v3/action.yml) defaults caching
+  off; [v4](https://github.com/actions/setup-go/blob/v4/action.yml) defaults it on.
+  [`src/main.ts`](https://github.com/actions/setup-go/blob/v4/src/main.ts) reads a boolean
+  `cache` input. A quoted `"false"` is an opt-out, not a truthy cache flag. v1/v2 do not
+  implement this input.
+- [`setup-ruby` v1](https://github.com/ruby/setup-ruby/blob/v1/index.js) reads
+  `bundler-cache`, default false. An unrelated `cache: true` cannot make it cached.
+- [`setup-uv` v4](https://github.com/astral-sh/setup-uv/blob/v4/action.yml) defaults
+  `enable-cache` off. [v5](https://github.com/astral-sh/setup-uv/blob/v5/src/utils/inputs.ts)
+  defaults to `auto`, enabled only on GitHub-hosted runners. Explicit `self-hosted` therefore
+  stays uncached; dynamic/custom runners remain unknown. Runner context is carried through
+  composites too.
+- [`setup-uv` v6.7.0](https://github.com/astral-sh/setup-uv/blob/v6.7.0/action.yml) adds
+  `restore-cache`; false is a deliberate opt-out. **It is absent in v6.0.0–v6.6.0**, so
+  those exact pins ignore it. Reading only today's floating `v6` manifest would incorrectly
+  apply the knob to older releases.
+
+Explicit false inputs yield `disabled`; unresolved expressions or version-dependent defaults
+on SHA/branch refs yield `unknown`. Neither emits a missing-cache finding. An independent
+cache still takes precedence. The rule's timing comments now reflect item 64: a flat install
+can also be an always-warm cache.
+
+**Verification.** 66 regression cases cover versions, quoted booleans, deliberate opt-outs,
+SHA/branch refs, uv runner environments, composites, and full detector runs with flat timings.
+The full suite passes **565 tests without skips**, with **74.46% coverage**; lint and type
+checks pass. **No new corpus count is
+claimed:** the temporary workflow cache is absent on this machine (item 56). The previous
+18 findings remain the last measurement, not a result re-verified here.

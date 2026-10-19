@@ -300,6 +300,9 @@ Moved from `ROADMAP.md` 2026-08-30.
       precision is fixed in `dependency_cache@4` ([`CAVEATS`](../CAVEATS.md) 61). Measuring its
       targets found 30 of 50 already cached inside composite actions; `dependency_cache@5`
       reads through them, leaving **18 findings in 4 repos** ([`CAVEATS`](../CAVEATS.md) 64).
+      `dependency_cache@6` also models setup-go/ruby/uv cache inputs and defaults, including
+      deliberate opt-outs and uv's hosted-runner-only `auto` mode ([`CAVEATS`](../CAVEATS.md) 65).
+      The prior **18 findings are not re-measured**: the temporary corpus cache is absent.
       **`cache.*` is next**, and must check the lockfile exists: eslint has none, and
       `cache: npm` fails the build without one. Its savings floor sits above the detector's
       ([`CAVEATS`](../CAVEATS.md) 63)
