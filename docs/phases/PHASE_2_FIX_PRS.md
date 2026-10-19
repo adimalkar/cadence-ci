@@ -297,7 +297,9 @@ Moved from `ROADMAP.md` 2026-08-30.
       moved last: the detector it rests on was 0 for 9 on the corpus and now has no targets
       ([`CAVEATS`](../CAVEATS.md) 58). `cache.*` rests on `no_dependency_cache`, whose reach
       was understated by the setup-node gap (fixed, [`CAVEATS`](../CAVEATS.md) 59) and whose
-      precision is not yet good enough to write fixes from ([`CAVEATS`](../CAVEATS.md) 61)
+      precision is fixed in `dependency_cache@4` ([`CAVEATS`](../CAVEATS.md) 61): 50 findings,
+      each an install-only step priced from its own timings. **`cache.*` is next**, with its
+      own savings floor above the detector's ([`CAVEATS`](../CAVEATS.md) 63)
 - [x] `preview()` declines rather than guessing — every decline carries a reason, because
       across strangers' repositories nobody can ask us why a fix did not appear
 
