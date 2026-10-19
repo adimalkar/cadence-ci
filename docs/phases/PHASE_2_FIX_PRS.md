@@ -302,6 +302,9 @@ Moved from `ROADMAP.md` 2026-08-30.
       reads through them, leaving **18 findings in 4 repos** ([`CAVEATS`](../CAVEATS.md) 64).
       `dependency_cache@6` also models setup-go/ruby/uv cache inputs and defaults, including
       deliberate opt-outs and uv's hosted-runner-only `auto` mode ([`CAVEATS`](../CAVEATS.md) 65).
+      `dependency_cache@7` also keeps unreadable action runtime declarations unknown,
+      including saved metadata. The same 51 saved sources yielded 17 findings at both
+      @6 and @7; full action-schema validation remains open ([`CAVEATS`](../CAVEATS.md) 69–70).
       `cache.setup@1` now provides **npm/pip previews** through `cadence fix preview`.
       It verifies a complete file inventory, workflow bytes and setup inputs at one commit,
       checks dependency files exist, preserves formatting, and respects suppressions.

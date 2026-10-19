@@ -55,7 +55,8 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 56 | Corpus measurements read a throwaway cache and printed empty tables as results when it vanished | Medium | Open |
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
-| 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 69 | An unreadable action runtime could be classified as known non-caching | Low | ✅ Resolved 2026-10-19 |
+| 70 | Malformed composite step lists can be silently treated as empty | Low | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1575,20 +1576,23 @@ successful captures. The failure is visible in the evaluation report and CLI.
 lookups at the same commit, keeping missing distinct from unknown. Preserve the current
 truncation regression tests and add an oversized-tree fixture for the fallback.
 
-### 69. Malformed action metadata is not always unknown in the detector · Low
+### 70. Malformed composite step lists can be silently treated as empty · Low
 
-**What.** `ActionManifest.from_text` represents unreadable metadata with `using=None`, but
-`manifest_steps()` currently returns `[]` for any read non-composite manifest. A direct
-`cache_state()` reproduction with an action indexed as `ActionManifest(None)` returns
-`uncached`, rather than `unknown`.
+**What.** A separate, pre-existing parser gap surfaced while fixing item 69. A manifest
+containing `runs: {using: composite, steps: not-a-list}` becomes
+`ActionManifest(using='composite', steps=[])`. `parse_steps` also skips non-mapping list
+entries. Ahead of a dependency install, the empty result can still yield `uncached`.
+The runtime-declaration fix in `dependency_cache@7` does not validate the full action schema.
 
-**Why it matters.** The detector should not infer the effects of metadata it could not
-parse. The new cache fixer independently rejects malformed setup metadata and ambiguous
-prefix actions, so it does not produce a fix through this path. The general detector gap
-predates the preview implementation and remains recorded rather than folded into this work.
+**Why it matters.** A malformed step list cannot establish an action's effects. This is a
+detector precision gap; the cache fixer already declines arbitrary prefix actions. No
+invalid runtime declaration was found in the 70 saved manifests evaluated for item 69;
+that runtime count is not a claim that every composite step schema was validated.
 
-**What would close it.** Treat manifests with no valid `using` as unreadable in
-`manifest_steps`, add invalid-metadata cache-state tests and version the detector change.
+**What would close it.** Preserve invalid composite structures as unknown, including
+mixed valid/invalid entries, instead of dropping unreadable steps. Test nested propagation
+and saved snapshot compatibility, and version the detector behavior. Keep the general
+workflow parser's intentionally permissive behavior separate from action validity checks.
 
 ## Environmental and tooling notes
 
@@ -1632,6 +1636,7 @@ PR→run linkage that does not exist until Phase 5.
 
 | Date | Item | Closed by |
 |---|---|---|
+| 2026-10-19 | 69 — Missing or unrecognized action runtimes were inferred non-caching | `9d0d33f` — `dependency_cache@7`; parser and indexed-manifest guards, 30 regression cases |
 | 2026-10-18 | 66 — Locked CI dependency urllib3 2.7.0 failed pip-audit with three advisories | `3f5f79b` — merge of Dependabot PR #33, urllib3 2.8.0; brought into the cache branch by `5254e2b` |
 | 2026-10-18 | 65 — Go/Ruby/uv caching inputs and version defaults were unmodelled | `12e2ac4` — `dependency_cache@6`; action-specific states, uv runner context, 66 regression cases |
 | 2026-08-26 | Test suite was order-dependent; `TestReplayAtScale` asserted on whole-table counts and passed only by file ordering — while being the evidence for a Phase 0 ship criterion | `eb6fb5a` — fixture cleans on entry as well as teardown; verified across 5 seeds |
@@ -1646,6 +1651,37 @@ PR→run linkage that does not exist until Phase 5.
 | 2026-08-28 | Ingest stopped for ~4 days; no durable worker existed | `1066d66` — systemd user unit + install script; staleness 2d23h → 14s, zero failures |
 | 2026-08-26 | Node 20 deprecation warnings on 3 actions | `eb6fb5a` — superseded by SHA pinning at current majors |
 | 2026-08-26 | Adding a CI job silently weakened branch protection | `eb6fb5a` — protection requires only `ci-gate`, which aggregates every job |
+
+### 69. Unreadable action runtime declarations · Resolved 2026-10-19
+
+**Original finding.** `ActionManifest(None)` represented unreadable metadata, but
+`manifest_steps` returned an empty list for it. A job invoking that action before its
+dependency install was classified `uncached` and could produce an unsupported finding.
+Non-string `runs.using` values were also converted to strings and treated as code actions.
+
+**Closed by `9d0d33f`, `dependency_cache@7`.** Parsing now requires a string runtime
+recognized by the [GitHub runner's action manifest reader](https://github.com/actions/runner/blob/main/src/Runner.Worker/ActionManifestManager.cs):
+`composite`, `docker`, `node12`, `node16`, `node20` or `node24`, ignoring case. Missing,
+blank, malformed and unrecognized declarations become unknown. `manifest_steps` repeats
+the runtime guard for saved snapshots and directly constructed models, which bypass parsing.
+The existing recognized JavaScript/Docker action policy remains: their code effects are
+not inspected. This is runtime validation, not full metadata-schema validation (item 70).
+
+Unknown propagates through nested composites and suppresses missing-cache findings even
+with eligible flat install timings. A separate cache still establishes `cached`, and an
+unreadable action after the install does not make its earlier setup unknown. Thirty new
+regression cases cover these boundaries, runtime types, legacy/current runtimes, case
+normalization and provider resolution through the full detector. The positive detector
+control still produces an evidence-bearing finding stamped `dependency_cache@7`.
+
+**Offline measurement, 2026-10-19.** Read-only comparison of the same 51 saved sources / 955
+workflows at @6 and @7 produced identical finding keys: **17 → 17**. All 70 indexed action
+manifests declared recognized runtimes (18 composite, 41 node24, 2 node16, 9 node20), so this
+closes a reproduced structural bug with no observed corpus delta. Two saved sources came
+from the separate large-tree work in PR #38; this runtime-only change does not add that
+capture fallback. Before/after reports remain gitignored in
+`data/corpus/action-metadata-{before,after}.json`. Full suite: 675 passed, no skips;
+78.53% coverage. Ruff and mypy passed.
 
 ### 65. Setup-action cache inputs and defaults · Resolved 2026-10-18
 
