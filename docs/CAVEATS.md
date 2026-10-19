@@ -1332,6 +1332,37 @@ not a changelog summary. Then either read `package.json` (one more API call per 
 v5+ without `cache:` as unknown rather than cached. Finally, re-measure the finding delta
 against real timing series before it ships.
 
+**Fixed, `dependency_cache@3` (2026-09-24).** The condition, read from setup-node's
+`src/main.ts`: without `cache:`, it caches only when it is v5.0.0 or later,
+`package-manager-cache` isn't `false`, and the **workspace-root** `package.json` names npm in
+`devEngines.packageManager` or `packageManager` (`/^(\^)?npm(@.*)?$/`). pnpm and yarn get no
+auto-cache. Every corpus pin is v6 or v7 (the SHAs resolve to v7.0.0 and v6.3.0), so the
+84 jobs came down to the file:
+
+| Actual state | Jobs |
+|---|---:|
+| auto-cached, root `package.json` names npm (TypeScript only) | 19 |
+| `package-manager-cache: false` set explicitly | 20 |
+| `package.json` names pnpm or yarn, or has no `packageManager` | 37 |
+| no root `package.json` | 8 |
+
+**65 of 84 were counted as cached and aren't.** The root `package.json` is now fetched, one
+request, and only when a setup-node step's caching depends on it. It is tri-state:
+- *unfetched* keeps the old answer;
+- *absent* means no auto-cache;
+- a failed request stays *unfetched*, never *absent*, so a network blip cannot turn every
+  setup-node job into a candidate.
+
+A setup-node step that runs before any checkout reads nothing. A checkout into `path:` or of
+another `repository:` counts as unknown.
+
+**Measured effect**, whole corpus against stored timing: `no_dependency_cache` goes from
+**45 to 50 findings, 7 to 11 of 53 repos**. The new findings are babel `test262` (19–22 s/run),
+eslint `build` (31–37 s), vite (8–9 s) and ruff ×2 (5–6 s). Only 5 of the 65 newly examined
+jobs fire: 26 have no timing series under their job key, 5 have fewer than 5 observations, and
+1 is bimodal. The timing gate is doing its job, and the reach gain is small because the timing
+data is thin, not because the config is right.
+
 ### 60. `actions/cache/save` is invisible to both cache rules · Low
 
 **What.** The corpus has 199 `actions/cache` steps (25 repos), 126 `actions/cache/restore`
@@ -1348,6 +1379,39 @@ entries other jobs need. That is the `cache_evicted_before_reuse` candidate in
 **What would close it.** Add `actions/cache/save` to the caching-equivalent set (it needs a
 restorer in the same job to be useful, so check for one), and add it to the never-hits
 candidates, where the handoff check already covers it.
+
+### 61. `no_dependency_cache` prices work that is not a dependency install · High
+
+**What.** Found while measuring item 59. On the corpus, **about 18 of 50 findings are
+wrong:**
+
+| Cause | Findings | Example |
+|---|---:|---|
+| `apt-get install` counts as a dependency install | 16 | redis ×15, numpy ×1 |
+| the install shares its step with a build or check | 2 | numpy `Meson Build` (`docker run …`), requests `Run pre-commit` |
+
+The projection is taken from the **whole step's** duration. redis's `test` step runs
+`sudo apt-get install tcl8.6 tclx` followed by `./runtest`, so the finding says caching would
+save **594–705 s per run**. That is the test suite. Its suggested fix, "actions/cache keyed on
+your lockfile", cannot apply to apt packages either.
+
+The other 32 are single-purpose install steps (`pnpm install`, `pip install`, `npm ci`,
+`uv sync`), where the step duration is the install duration. 3 numpy steps include a
+`pip uninstall` or `python --version`; those are counted as clean.
+
+**Why it matters now.** The `cache.*` fixer would write a lockfile-keyed cache into these
+jobs, and redis's findings alone carry the largest projected savings on the corpus.
+
+**What would close it.** Take `apt-get install` out of `_INSTALL_PATTERNS`: system packages
+are a different fix (a pre-built image or `cache-apt-pkgs-action`) and a different finding,
+if one at all. Then only project from a step whose `run:` is the install and nothing heavier.
+When the install shares a step, either decline or say the number is an upper bound. Re-measure
+the 50.
+
+The same run also found that the dedupe key `no_dependency_cache:{path}:{job}` has no repo in
+it. It is unique within a repo, which is where it is used, but any cross-repo aggregation keyed
+on it silently merges findings (it did in the measurement script, and was caught only by a
+repo count that did not add up).
 
 ## Environmental and tooling notes
 

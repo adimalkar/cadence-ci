@@ -24,12 +24,12 @@ from __future__ import annotations
 import re
 
 from cadence.detectors.base import EvidenceDraft, FindingDraft
-from cadence.detectors.context import AuditContext
+from cadence.detectors.context import AuditContext, RootPackageJson
 from cadence.simulate import duration_is_flat, project_cache_savings
 from cadence.workflow import Job, Step, Workflow
 
 DETECTOR_ID = "waste.dependency_cache"
-DETECTOR_VERSION = "dependency_cache@2"
+DETECTOR_VERSION = "dependency_cache@3"
 
 _CACHE_ACTION = "actions/cache"
 # Setup actions with built-in caching; `cache:` set on any of them counts as cached.
@@ -39,10 +39,17 @@ _SETUP_ACTIONS = {
     "astral-sh/setup-uv", "pnpm/action-setup",
 }
 # Dedicated caching actions that make an explicit actions/cache step unnecessary.
+# Not `actions/setup-node`: until @3 it sat here, which marked every setup-node job as
+# cached. Without `cache:` it caches only in one narrow case -- see setup_node_auto_caches.
 _CACHE_EQUIVALENT = {
     "Swatinem/rust-cache", "actions/cache/restore", "buildjet/cache",
-    "runs-on/cache", "useblacksmith/cache", "actions/setup-node",
+    "runs-on/cache", "useblacksmith/cache",
 }
+_SETUP_NODE = "actions/setup-node"
+_CHECKOUT = "actions/checkout"
+# setup-node gained automatic caching in v5.0.0 (2025-09-04).
+_SETUP_NODE_AUTO_CACHE_MAJOR = 5
+_MAJOR = re.compile(r"^v?(\d+)(\.|$)")
 
 _INSTALL_PATTERNS = re.compile(
     r"\b(npm (ci|install)|yarn install|pnpm install|bundle install|"
@@ -147,7 +154,7 @@ class DependencyCacheDetector:
     def _missing_cache(
         self, ctx: AuditContext, wf: Workflow, job_key: str, job: Job
     ) -> FindingDraft | None:
-        if _job_has_caching(job):
+        if _job_has_caching(job, ctx.root_package_json):
             return None
 
         install = _install_step(job)
@@ -213,7 +220,7 @@ class DependencyCacheDetector:
         )
 
 
-def _job_has_caching(job: Job) -> bool:
+def _job_has_caching(job: Job, package_json: RootPackageJson) -> bool:
     for step in job.steps:
         action = step.action
         if action is None:
@@ -222,7 +229,71 @@ def _job_has_caching(job: Job) -> bool:
             return True
         if action in _SETUP_ACTIONS and step.with_.get("cache"):
             return True
+        if action == _SETUP_NODE and setup_node_auto_caches(job, step, package_json):
+            return True
     return False
+
+
+def setup_node_auto_caches(job: Job, step: Step, package_json: RootPackageJson) -> bool:
+    """Does this `actions/setup-node` step cache with no `cache:` input?
+
+    Mirrors setup-node's `src/main.ts`, not its changelog. It caches on its own only when
+    all of these hold: v5 or later, `package-manager-cache` not false, and the
+    `package.json` at the workspace root names npm. That file exists only once something
+    has checked the repository out, so a setup-node before any checkout reads nothing.
+
+    Where we cannot know, the answer is "cached" -- the pre-@3 behaviour -- because this
+    decides whether a job is examined at all, and the timing gate is the only check left.
+    """
+    if step.with_.get("cache"):
+        return True
+    if str(step.with_.get("package-manager-cache", "")).strip().lower() == "false":
+        return False
+    major = setup_node_major(step)
+    if major is not None and major < _SETUP_NODE_AUTO_CACHE_MAJOR:
+        return False
+    checkout = _checkout_before(job, step)
+    if checkout is None:
+        return False  # nothing in the workspace to read yet
+    if checkout.with_.get("path") or checkout.with_.get("repository"):
+        return True  # it reads a package.json that is not our repo root
+    if not package_json.fetched:
+        return True
+    return package_json.declares_npm()
+
+
+def setup_node_major(step: Step) -> int | None:
+    """`4` from `@v4` or `@v4.1.0`; None for a SHA pin or a branch."""
+    ref = (step.uses or "").partition("@")[2].strip()
+    m = _MAJOR.match(ref)
+    return int(m.group(1)) if m else None
+
+
+def needs_root_package_json(workflows: list[Workflow]) -> bool:
+    """Is the root `package.json` worth an API call? Only if a setup-node step's caching
+    turns on it; most repos never pay the request."""
+    for wf in workflows:
+        if wf.parse_error:
+            continue
+        for job in wf.jobs.values():
+            for step in job.steps:
+                if step.action != _SETUP_NODE:
+                    continue
+                if setup_node_auto_caches(job, step, RootPackageJson(fetched=True)) != \
+                        setup_node_auto_caches(job, step, RootPackageJson()):
+                    return True
+    return False
+
+
+def _checkout_before(job: Job, step: Step) -> Step | None:
+    """The last `actions/checkout` ahead of `step` in the same job."""
+    found = None
+    for s in job.steps:
+        if s is step:
+            return found
+        if s.action == _CHECKOUT:
+            found = s
+    return None
 
 
 def _install_step(job: Job):
