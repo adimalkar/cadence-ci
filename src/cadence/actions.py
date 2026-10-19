@@ -74,6 +74,7 @@ class ActionManifest:
 
     using: str | None
     steps: list[Step] = field(default_factory=list)
+    inputs: frozenset[str] = frozenset()
 
     @property
     def is_composite(self) -> bool:
@@ -90,7 +91,9 @@ class ActionManifest:
             return cls(using=None)
         using = str(runs.get("using") or "") or None
         steps = parse_steps(runs.get("steps")) if using == "composite" else []
-        return cls(using=using, steps=steps)
+        inputs = doc.get("inputs", {})
+        return cls(using=using, steps=steps,
+                   inputs=frozenset(inputs) if isinstance(inputs, dict) else frozenset())
 
 
 # uses -> manifest, or None when it was looked up and does not exist. Absent: not looked up.

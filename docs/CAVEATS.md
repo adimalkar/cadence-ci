@@ -53,6 +53,9 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 54 | Queue time was clamped silently on re-run jobs — up to 20.4% of a repo's observations | Medium | ✅ Fixed 2026-09-21 |
 | 55 | `no_run_cancellation` titled 8 findings "no cancel-in-progress" when their file said otherwise | Medium | ✅ Fixed 2026-09-24 |
 | 56 | Corpus measurements read a throwaway cache and printed empty tables as results when it vanished | Medium | Open |
+| 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
+| 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
+| 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1253,6 +1256,13 @@ one is exposed to the same silent-empty failure.
 **Mitigated for now.** The fetch helper moved to `~/.cache/cadence/`, which survives `/tmp`
 cleanup, and refuses to continue on an empty cache rather than reporting nothing as a result.
 
+**2026-10-19 preview path.** `cadence fix preview` captures complete, commit-pinned source
+snapshots under the project-local `data/corpus/` directory and can read them offline.
+Rebuilt 931 workflow files across 49 repos; the round-trip tests now read that durable format
+and still accept legacy `CADENCE_WF_CACHE` maps. Two failed captures are explicit errors,
+not empty repos. This closes the preview's ephemeral-cache gap; ingest and the legacy sweep
+still need the unification below, so this item remains open.
+
 **What would close it.** Capture workflow snapshots during ingest (which also closes item 28),
 read measurements from Postgres, and give every measurement script a non-empty assertion on
 its input. The last part is cheap and should apply to any script that could silently produce
@@ -1523,6 +1533,62 @@ babel ×1, and they do not share one shape:
   to add.
 
 The fixer has to know which files exist, which it currently cannot.
+
+### 67. A working cache preview currently produces no eligible corpus changes · Medium
+
+**What.** `cache.setup@1` implements existing setup-node/npm and setup-python/pip inputs,
+including literal requirements/constraints, local manifests and root pip dependency groups.
+It verifies source files at one commit, preserves all original lines, checks the semantic
+diff and cached predicate, honours suppressions and exports evidence with its projections.
+The CLI only previews; it does not publish or apply changes.
+
+**Measured 2026-10-19.** 49/51 configured corpus repos captured successfully, **931 workflow
+files**. Current `no_dependency_cache` findings: eslint ×5, numpy ×10, DRF ×1, babel ×1.
+**17 findings → 0 accepted**: 15 have projected lower-bound savings below 30 s/run; one ESLint
+job has no npm lockfile; one numpy script also uninstalls a package and is outside the
+fixer's literal install shapes. These are current snapshots and stored successful timings,
+not a re-use of September's 18-finding count. Full local report and source refs are in
+`data/corpus/cache-preview-evaluation.json` (generated, gitignored).
+
+**Why it matters.** The implementation has positive before/after regression fixtures, but
+**not ≥20 real accepted workflow transformations**, so the fixer's field-validation gate
+has not passed. The 30-second lower-bound floor is a provisional product choice above the
+5-second detector floor, not a measured maintainer preference (item 63). Lowering it to
+manufacture corpus coverage would not validate the fix.
+
+**What would close it.** Find invited repos with meaningful uncached installs, measure
+which shapes are eligible, and validate ≥20 real before/after transformations before
+calling the cache fixer ready for automated publishing. Expand ecosystems/setup-less jobs
+only when source-file and execution-context proofs support them.
+
+### 68. Two corpus repositories exceed the recursive-tree response limit · Medium
+
+**What.** `microsoft/TypeScript` and `elastic/elasticsearch` return truncated recursive Git
+trees. `fetch_file_inventory` refuses the result, so preview capture explicitly fails for
+2/51 repos. Symlinks and submodules are also excluded from regular-file presence proofs.
+
+**Why it matters.** An omitted lockfile cannot be called absent, and a partly visible tree
+cannot establish that a cache input will work. Current corpus reach is **49**, not 51
+successful captures. The failure is visible in the evaluation report and CLI.
+
+**What would close it.** Traverse complete subtrees or implement per-path, three-state file
+lookups at the same commit, keeping missing distinct from unknown. Preserve the current
+truncation regression tests and add an oversized-tree fixture for the fallback.
+
+### 69. Malformed action metadata is not always unknown in the detector · Low
+
+**What.** `ActionManifest.from_text` represents unreadable metadata with `using=None`, but
+`manifest_steps()` currently returns `[]` for any read non-composite manifest. A direct
+`cache_state()` reproduction with an action indexed as `ActionManifest(None)` returns
+`uncached`, rather than `unknown`.
+
+**Why it matters.** The detector should not infer the effects of metadata it could not
+parse. The new cache fixer independently rejects malformed setup metadata and ambiguous
+prefix actions, so it does not produce a fix through this path. The general detector gap
+predates the preview implementation and remains recorded rather than folded into this work.
+
+**What would close it.** Treat manifests with no valid `using` as unreadable in
+`manifest_steps`, add invalid-metadata cache-state tests and version the detector change.
 
 ## Environmental and tooling notes
 

@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 
 from cadence.fixers.edit import RoundTrip, is_faithful, round_trip
+from cadence.source import CACHE_DIR, SHA
 
 SIMPLE = """\
 name: CI
@@ -113,26 +114,32 @@ class TestUnfaithfulFilesAreDetectedNotMangled:
 
 # --- the ship criterion, against real corpus files ------------------------------------------
 
-CORPUS = Path(
-    os.environ.get(
-        "CADENCE_WF_CACHE",
-        "/tmp/claude-1000/-mnt-1TB-Drive-Data-MyFiles-Projects-Cadence-System"
-        "/9506b450-4893-44c8-914f-1215833b531f/scratchpad/wf_cache",
-    )
-)
+CORPUS = Path(os.environ.get("CADENCE_WF_CACHE", str(CACHE_DIR)))
 
 
 def _corpus_files() -> list[tuple[str, str]]:
     if not CORPUS.is_dir():
         return []
-    out: list[tuple[str, str]] = []
-    for cf in sorted(CORPUS.glob("*.json")):
-        try:
-            for path, content in json.loads(cf.read_text()).items():
-                out.append((f"{cf.stem}:{path}", content))
-        except (ValueError, OSError):
+    # Current commit-pinned snapshots plus the legacy flat workflow maps selected by
+    # CADENCE_WF_CACHE. Ignore evaluation reports, and deduplicate repeated captures.
+    out: dict[tuple[str, str, str], str] = {}
+    for cf in sorted(CORPUS.rglob("*.json")):
+        if cf.parent == CORPUS and "__" not in cf.stem:
+            continue  # reports live here; legacy maps are owner__repo.json
+        if cf.parent != CORPUS and not SHA.fullmatch(cf.stem):
+            continue  # nested snapshots are commit-named; ignore unrelated cache metadata
+        data = json.loads(cf.read_text())
+        if not isinstance(data, dict):
             continue
-    return out
+        if "version" in data:
+            assert data["version"] == 1, f"unknown snapshot version: {cf}"
+            files, repo = data["workflows"], data["repo"]
+        else:
+            files, repo = data, cf.stem
+        for path, content in files.items():
+            assert isinstance(content, str), f"invalid workflow content: {cf}:{path}"
+            out[(repo, path, content)] = f"{repo}:{path}"
+    return [(name, key[2]) for key, name in out.items()]
 
 
 def _generated_corpus(n: int = 220) -> list[tuple[str, str]]:
