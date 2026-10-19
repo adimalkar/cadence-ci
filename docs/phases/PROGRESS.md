@@ -22,8 +22,8 @@ The dashboard in [`../ROADMAP.md`](../ROADMAP.md) says *where we are*. This file
 | **[6 · Security](PHASE_6_SECURITY.md)** | 0/25 | Nothing | All of it. 6A justified, 6B/6C behind demand |
 
 **Phase 2 has started.** `fixers/edit.py` and `fixers/concurrency.py` produce verified diffs;
-PR publishing and realized-savings writeback are still unbuilt. The latest cache-detector
-precision fixes are on open PRs #28–31 against `main`; they must land in that order.
+PR publishing and realized-savings writeback are still unbuilt. The cache-detector precision
+fixes landed in `main` through PRs #28–31, including the Go/Ruby/uv input models in @6.
 Phases 3–6 remain design documents. The remaining historical measurements below retain
 their original dates.
 
