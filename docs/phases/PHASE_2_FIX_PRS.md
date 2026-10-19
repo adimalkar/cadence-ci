@@ -305,9 +305,10 @@ Moved from `ROADMAP.md` 2026-08-30.
       `cache.setup@1` now provides **npm/pip previews** through `cadence fix preview`.
       It verifies a complete file inventory, workflow bytes and setup inputs at one commit,
       checks dependency files exist, preserves formatting, and respects suppressions.
-      **Re-measured 2026-10-19: 17 findings on 49 captured repos, zero accepted**; 15 fall below
+      **Measured 2026-10-19: 17 findings on 51 captured repos, zero accepted**; 15 fall below
       the provisional 30-second lower-bound minimum, one has no lockfile and one is an
-      unsupported mixed install script. Two of 51 corpus repos have truncated inventories.
+      unsupported mixed install script. Bounded subtree traversal recovered the two repos
+      whose recursive inventories were truncated; neither added findings.
       The ≥20 real before/after workflow gate remains **unmet**; wider ecosystem support
       and PR publishing remain future work ([`CAVEATS`](../CAVEATS.md) 67–68).
 - [x] `preview()` declines rather than guessing — every decline carries a reason, because
@@ -332,9 +333,13 @@ including workflow bytes, regular-file inventory, action manifests and suppressi
 JSON exports carry the pinned revision, evidence, savings range, diff and revert instruction.
 The database transaction is read-only. No workflow file or remote repository is modified.
 
-**49 of 51 repos captured, 931 workflows, 17 findings, 0 accepted.** This is a tested first
+**51 of 51 repos captured, 955 workflows, 17 findings, 0 accepted.** This is a tested first
 preview implementation with restricted field reach, not completion of the automated fixer
-ship criterion. The other two repos explicitly fail capture rather than count as empty.
+ship criterion. Source capture now recovers truncated recursive trees through complete
+subtree listings at the same commit. It refuses incomplete results, with limits of 128
+logical tree reads and 500,000 examined entries per capture (including discarded partial
+responses and reused subtree expansions). TypeScript and Elasticsearch added 24 workflows
+and no findings to the existing 49-repo evaluation; larger repositories may still decline.
 
 ### `concurrency.add` — the first fixer, measured on the corpus
 

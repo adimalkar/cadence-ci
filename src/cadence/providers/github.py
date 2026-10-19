@@ -23,6 +23,12 @@ log = structlog.get_logger(__name__)
 
 API_ROOT = "https://api.github.com"
 
+# Logical tree reads (transport retries are separately bounded), and total entries
+# examined including discarded partial responses and expansion of reused subtrees.
+# Exhaustion must mean unknown, never a complete inventory with missing files.
+MAX_TREE_REQUESTS = 128
+MAX_TREE_ENTRIES = 500_000
+
 # Matrix legs arrive only inside the job name, as "build (ubuntu-latest, 20)". The jobs
 # API does not expose the matrix dict. Parsing it out is what makes the
 # non-discriminating-leg rule possible.
@@ -262,26 +268,84 @@ class GitHubProvider:
         """Resolve a ref once, then list regular files from its immutable git tree.
 
         Symlinks and submodules are deliberately excluded: their targets are not files
-        whose presence at the workspace root this tree establishes. Truncation is unknown.
+        whose presence at the workspace root this tree establishes. When a recursive
+        response is truncated, discard it and split a complete shallow listing into
+        immutable subtrees. Any remaining gap or exhausted budget is unknown.
         """
         base = f"/repos/{repo.owner}/{repo.name}"
         commit = (await self._get_with_backoff(
             f"{base}/commits/{quote(ref or repo.default_branch or 'HEAD', safe='')}"
         )).json()
-        sha = commit.get("sha", "")
-        tree = commit.get("commit", {}).get("tree", {}).get("sha")
-        if not re.fullmatch(r"[0-9a-f]{40}", sha) or not tree:
+        sha = commit.get("sha") if isinstance(commit, dict) else None
+        metadata = commit.get("commit") if isinstance(commit, dict) else None
+        tree_info = metadata.get("tree") if isinstance(metadata, dict) else None
+        tree = tree_info.get("sha") if isinstance(tree_info, dict) else None
+        if any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{40}", value)
+               for value in (sha, tree)):
             raise SourceUnavailable("commit response does not identify an immutable tree")
-        payload = (await self._get_with_backoff(
-            f"{base}/git/trees/{tree}", params={"recursive": "1"}
-        )).json()
-        if payload.get("truncated") is not False or not isinstance(payload.get("tree"), list):
-            raise SourceUnavailable("repository tree is truncated or unavailable")
-        paths = frozenset(
-            e["path"] for e in payload["tree"]
-            if e.get("type") == "blob" and e.get("mode") in {"100644", "100755"}
-        )
-        return FileInventory(sha, paths, complete=True)
+
+        requests = 0
+        entries = 0
+        cache: dict[tuple[str, bool], dict] = {}
+
+        async def read_tree(tree_sha: str, *, recursive: bool) -> dict:
+            nonlocal requests, entries
+            key = (tree_sha, recursive)
+            if key not in cache:
+                if requests >= MAX_TREE_REQUESTS:
+                    raise SourceUnavailable("repository tree lookup budget exhausted")
+                requests += 1
+                try:
+                    payload = (await self._get_with_backoff(
+                        f"{base}/git/trees/{tree_sha}",
+                        # Even recursive=0 enables recursion in GitHub's API.
+                        params={"recursive": "1"} if recursive else None,
+                    )).json()
+                except (NotFound, Expired) as exc:
+                    raise SourceUnavailable("repository subtree is unavailable") from exc
+                if (not isinstance(payload, dict)
+                        or not isinstance(payload.get("truncated"), bool)
+                        or not isinstance(payload.get("tree"), list)):
+                    raise SourceUnavailable("repository tree response is malformed")
+                cache[key] = payload
+            payload = cache[key]
+            entries += len(payload["tree"])
+            if entries > MAX_TREE_ENTRIES:
+                raise SourceUnavailable("repository tree entry budget exhausted")
+            return payload
+
+        paths: set[str] = set()
+        pending: list[tuple[str, str, frozenset[str]]] = [("", tree, frozenset())]
+        while pending:
+            prefix, tree_sha, ancestors = pending.pop()
+            if tree_sha in ancestors:
+                raise SourceUnavailable("repository tree contains a cycle")
+            payload = await read_tree(tree_sha, recursive=True)
+            recursive = not payload["truncated"]
+            if not recursive:
+                payload = await read_tree(tree_sha, recursive=False)
+                if payload["truncated"]:
+                    raise SourceUnavailable("repository shallow tree is truncated")
+            seen: set[str] = set()
+            for entry in payload["tree"]:
+                path = entry.get("path") if isinstance(entry, dict) else None
+                if (not isinstance(path, str)
+                        or any(p in {"", ".", ".."} for p in path.split("/"))
+                        or (not recursive and "/" in path) or path in seen):
+                    raise SourceUnavailable("repository tree entry has an invalid path")
+                seen.add(path)
+                kind, mode = entry.get("type"), entry.get("mode")
+                if kind == "blob" and mode in ("100644", "100755"):
+                    paths.add(prefix + path)
+                elif kind == "tree" and mode == "040000":
+                    child = entry.get("sha")
+                    if not isinstance(child, str) or not re.fullmatch(r"[0-9a-f]{40}", child):
+                        raise SourceUnavailable("repository subtree has no immutable SHA")
+                    if not recursive:
+                        pending.append((prefix + path + "/", child, ancestors | {tree_sha}))
+                elif (kind, mode) not in (("blob", "120000"), ("commit", "160000")):
+                    raise SourceUnavailable("repository tree entry has an invalid type or mode")
+        return FileInventory(sha, frozenset(paths), complete=True)
 
     async def fetch_text_file(
         self, repo: Repo, path: str, *, ref: str | None = None

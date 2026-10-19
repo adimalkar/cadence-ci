@@ -198,8 +198,11 @@ worth reading before starting; what follows records the main remaining prerequis
 previews verify dependency files, workflow bytes and setup capabilities at one immutable
 revision. `dependency_cache@6` models Go/Ruby/uv inputs and defaults (CAVEATS 65).
 
-**Latest cache evaluation, 2026-10-19:** durable snapshots captured 49/51 repos and 931
-workflows. There are 17 missing-cache findings and **zero accepted previews** under the
+**Latest cache evaluation, 2026-10-19:** durable snapshots now cover 51/51 repos and 955
+workflows. Bounded subtree traversal recovered TypeScript and Elasticsearch, which
+previously failed on truncated recursive trees (CAVEATS 68). Their snapshots also passed
+the preview CLI with zero findings. Combined with the existing 49-repo evaluation,
+there are 17 missing-cache findings and **zero accepted previews** under the
 current floor and shape guards (CAVEATS 67). The ≥20 real before/after criterion is still
 unmet. Next, measure additional eligible shapes before expanding coverage; keep opt-in
 publishing and its anti-spam controls separate.

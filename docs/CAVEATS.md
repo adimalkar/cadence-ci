@@ -54,7 +54,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 55 | `no_run_cancellation` titled 8 findings "no cancel-in-progress" when their file said otherwise | Medium | ✅ Fixed 2026-09-24 |
 | 56 | Corpus measurements read a throwaway cache and printed empty tables as results when it vanished | Medium | Open |
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
-| 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
+| 68 | Complete recursive inventories were unavailable on 2/51 corpus repos | Medium | ✅ Resolved 2026-10-19 |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
@@ -1542,13 +1542,18 @@ It verifies source files at one commit, preserves all original lines, checks the
 diff and cached predicate, honours suppressions and exports evidence with its projections.
 The CLI only previews; it does not publish or apply changes.
 
-**Measured 2026-10-19.** 49/51 configured corpus repos captured successfully, **931 workflow
+**Initial measurement, 2026-10-19.** 49/51 configured corpus repos captured successfully, **931 workflow
 files**. Current `no_dependency_cache` findings: eslint ×5, numpy ×10, DRF ×1, babel ×1.
 **17 findings → 0 accepted**: 15 have projected lower-bound savings below 30 s/run; one ESLint
 job has no npm lockfile; one numpy script also uninstalls a package and is outside the
 fixer's literal install shapes. These are current snapshots and stored successful timings,
 not a re-use of September's 18-finding count. Full local report and source refs are in
 `data/corpus/cache-preview-evaluation.json` (generated, gitignored).
+
+**Source-coverage update, 2026-10-19.** Item 68's subtree fallback captured the remaining two
+repos and 24 workflows. Neither added findings; combined coverage is now 51/51 repos and
+955 workflows, still 17 findings / zero accepted previews. The report includes both new
+evaluations alongside the existing 49; those earlier snapshots were not fetched again.
 
 **Why it matters.** The implementation has positive before/after regression fixtures, but
 **not ≥20 real accepted workflow transformations**, so the fixer's field-validation gate
@@ -1560,20 +1565,6 @@ manufacture corpus coverage would not validate the fix.
 which shapes are eligible, and validate ≥20 real before/after transformations before
 calling the cache fixer ready for automated publishing. Expand ecosystems/setup-less jobs
 only when source-file and execution-context proofs support them.
-
-### 68. Two corpus repositories exceed the recursive-tree response limit · Medium
-
-**What.** `microsoft/TypeScript` and `elastic/elasticsearch` return truncated recursive Git
-trees. `fetch_file_inventory` refuses the result, so preview capture explicitly fails for
-2/51 repos. Symlinks and submodules are also excluded from regular-file presence proofs.
-
-**Why it matters.** An omitted lockfile cannot be called absent, and a partly visible tree
-cannot establish that a cache input will work. Current corpus reach is **49**, not 51
-successful captures. The failure is visible in the evaluation report and CLI.
-
-**What would close it.** Traverse complete subtrees or implement per-path, three-state file
-lookups at the same commit, keeping missing distinct from unknown. Preserve the current
-truncation regression tests and add an oversized-tree fixture for the fallback.
 
 ### 69. Malformed action metadata is not always unknown in the detector · Low
 
@@ -1632,6 +1623,7 @@ PR→run linkage that does not exist until Phase 5.
 
 | Date | Item | Closed by |
 |---|---|---|
+| 2026-10-19 | 68 — TypeScript and Elasticsearch source capture failed on truncated recursive trees | `d0d2cee` — bounded immutable subtree traversal; both repos captured and previewed successfully |
 | 2026-10-18 | 66 — Locked CI dependency urllib3 2.7.0 failed pip-audit with three advisories | `3f5f79b` — merge of Dependabot PR #33, urllib3 2.8.0; brought into the cache branch by `5254e2b` |
 | 2026-10-18 | 65 — Go/Ruby/uv caching inputs and version defaults were unmodelled | `12e2ac4` — `dependency_cache@6`; action-specific states, uv runner context, 66 regression cases |
 | 2026-08-26 | Test suite was order-dependent; `TestReplayAtScale` asserted on whole-table counts and passed only by file ordering — while being the evidence for a Phase 0 ship criterion | `eb6fb5a` — fixture cleans on entry as well as teardown; verified across 5 seeds |
@@ -1646,6 +1638,42 @@ PR→run linkage that does not exist until Phase 5.
 | 2026-08-28 | Ingest stopped for ~4 days; no durable worker existed | `1066d66` — systemd user unit + install script; staleness 2d23h → 14s, zero failures |
 | 2026-08-26 | Node 20 deprecation warnings on 3 actions | `eb6fb5a` — superseded by SHA pinning at current majors |
 | 2026-08-26 | Adding a CI job silently weakened branch protection | `eb6fb5a` — protection requires only `ci-gate`, which aggregates every job |
+
+### 68. Oversized source trees · Resolved 2026-10-19
+
+**Original finding.** `microsoft/TypeScript` and `elastic/elasticsearch` return truncated
+recursive Git trees. Source capture refused both, leaving only 49/51 corpus repos and 931
+workflows. An omitted lockfile could not safely be called absent. The proposed fix was to
+traverse complete subtrees or use three-state per-path lookups at the same commit.
+
+**Closed by `d0d2cee`.** `fetch_file_inventory` keeps its recursive fast path. On truncation,
+it discards partial entries, requests a complete shallow listing (omitting `recursive`,
+since even `recursive=0` enables it), and follows child tree SHAs from that immutable tree.
+Nested truncation splits again; identical tree responses are reused at each path. No branch
+is re-resolved. Symlinks/submodules remain excluded. Malformed or unreadable subtrees,
+truncated shallow listings and exhausted budgets raise `SourceUnavailable`; no partial
+inventory is returned. This follows [GitHub's documented tree fallback](https://docs.github.com/en/rest/git/trees#get-a-tree).
+
+**Measured read-only on 2026-10-19:**
+
+| Repository / pinned commit | Regular files | Workflows | Tree reads | Entries examined |
+|---|---:|---:|---:|---:|
+| microsoft/TypeScript · `5237fd46890956e4bb8177a1a05dcd69e4166560` | 67,920 | 13 | 16 | 229,114 |
+| elastic/elasticsearch · `6b80ef032fadd4aab4926f29d41a9515b667bad7` | 50,681 | 11 | 25 | 113,420 |
+
+Both snapshots passed the offline preview CLI with zero findings/previews. Combined with
+the existing 49-repo evaluation, source coverage is **51/51 repos and 955 workflows**;
+the 17 findings / zero accepted previews in item 67 are unchanged. Durable snapshots and
+`data/corpus/large-tree-evaluation.json` remain gitignored. The 31 new regression cases
+cover nested fallback, discarded partial entries, shared subtrees, pinned file reads,
+budget boundaries, cycles, missing children and malformed responses.
+
+**Deliberate limit.** A capture allows at most 128 logical tree reads (each retains the
+provider's existing bounded transport retries) and 500,000 examined entries, including
+discarded partial listings and reused subtree expansions. Larger repositories can still
+decline explicitly. This closes the two measured failures; it does not promise arbitrary
+repository size. A later increase needs measured API/memory costs and the same refusal
+behavior when completeness cannot be proved.
 
 ### 65. Setup-action cache inputs and defaults · Resolved 2026-10-18
 
