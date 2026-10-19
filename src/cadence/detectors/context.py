@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from cadence.actions import ActionIndex
 from cadence.cost import CostContext
 from cadence.dag import NodeTiming
 from cadence.workflow import Step, Workflow
@@ -193,6 +194,9 @@ class AuditContext:
     # the run's own workflow -- so `build` in ci.yml and `build` in release.yml stay apart,
     # and a job with `name: Build` is found under its key `build` (CAVEATS 61).
     step_series_resolved: dict[tuple[str, str, str], StepSeries] = field(default_factory=dict)
+    # Manifests of the actions jobs run, keyed by `uses:`. Absent means not looked up, which
+    # a detector must read as unknown -- see cadence.actions.
+    actions: ActionIndex = field(default_factory=dict)
     # NOTE: class E (runner fit) is deliberately NOT built. Detecting "single-threaded
     # job on an 8-core runner" needs CPU utilisation, which the Actions API does not
     # expose -- only labels. Inferring it from duration alone would be a guess presented

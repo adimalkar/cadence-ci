@@ -12,7 +12,7 @@ import pytest
 
 from cadence.audit import index_step_rows
 from cadence.cost import CostContext, RateCard
-from cadence.detectors.cache import DependencyCacheDetector, _install_step, install_only
+from cadence.detectors.cache import DependencyCacheDetector, install_only, install_step
 from cadence.detectors.context import AuditContext, StepSeries, step_runtime_name
 from cadence.workflow import parse_workflow
 
@@ -82,10 +82,10 @@ class TestInstallStepChoice:
         job = _job("      - run: sudo apt-get install -y tcl\n"
                    "      - run: npm ci && npm test\n"
                    "      - run: npm ci\n")
-        assert _install_step(job).index == 2
+        assert install_step(job).index == 2
 
     def test_no_pure_install_means_no_candidate(self):
-        assert _install_step(_job("      - run: sudo apt-get install tcl\n        \n"
+        assert install_step(_job("      - run: sudo apt-get install tcl\n        \n"
                                   "      - run: ./runtest\n")) is None
 
 
@@ -125,7 +125,7 @@ class TestNoFallbackToAnotherStep:
             window_days=90,
         )
 
-    def test_the_install_steps_own_flat_series_is_a_finding(self):
+    def test_theinstall_steps_own_flat_series_is_a_finding(self):
         s = StepSeries("build", "Run npm ci", [90.0] * 20, list(range(20)))
         found = [d for d in DependencyCacheDetector().run(
             self._ctx({("ci.yml", "build", "Run npm ci"): s})) if d.kind == "no_dependency_cache"]

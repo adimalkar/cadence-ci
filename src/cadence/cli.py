@@ -10,6 +10,7 @@ from rich.table import Table
 from cadence.audit import (
     build_context,
     enrich_changed_paths,
+    fetch_action_index,
     fetch_root_package_json,
     run_audit,
     summarize_pipeline,
@@ -577,6 +578,7 @@ def audit(
                 root_package_json=await fetch_root_package_json(
                     provider2, gh_repo, workflow_files
                 ),
+                actions=await fetch_action_index(provider2, gh_repo, workflow_files),
             )
             if not ctx.runs:
                 console.print(

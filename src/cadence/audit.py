@@ -10,12 +10,18 @@ from __future__ import annotations
 
 import structlog
 
+from cadence.actions import ActionIndex, resolve_actions
 from cadence.commitstore import load_changed_paths
 from cadence.config import settings
 from cadence.cost import CostContext, load_rate_card
 from cadence.dag import aggregate_spans, critical_path, theoretical_floor
 from cadence.detectors.billing import JobBillingRoundingDetector
-from cadence.detectors.cache import DependencyCacheDetector, needs_root_package_json
+from cadence.detectors.cache import (
+    KNOWN_ACTIONS,
+    DependencyCacheDetector,
+    install_step,
+    needs_root_package_json,
+)
 from cadence.detectors.cancellation import NoRunCancellationDetector
 from cadence.detectors.context import (
     AuditContext,
@@ -67,6 +73,7 @@ def build_context(
     # window without paying for the long tail.
     limit_runs: int = 500,
     root_package_json: RootPackageJson | None = None,
+    actions: ActionIndex | None = None,
 ) -> AuditContext:
     from psycopg.rows import dict_row
 
@@ -227,6 +234,7 @@ def build_context(
         # Empty is still a legitimate state: it means this repo's commits are unfetched.
         changed_paths=load_changed_paths(conn, repo_id, run_ids),
         root_package_json=root_package_json or RootPackageJson(),
+        actions=actions or {},
     )
 
 
@@ -383,6 +391,30 @@ async def fetch_root_package_json(
     except Exception:  # never fail an audit over a file that only refines one rule
         return RootPackageJson()
     return RootPackageJson.from_text(text)
+
+
+async def fetch_action_index(provider, repo, workflow_files: dict[str, str]) -> ActionIndex:
+    """Manifests for the actions that run ahead of a dependency install.
+
+    Only those can decide whether the install is cached, so only those are fetched --
+    bounded by `actions.MAX_LOOKUPS`, following composites into what they use. Best-effort:
+    whatever is not fetched stays unknown, and the cache rule declines those jobs.
+    """
+    workflows = [parse_workflow(path, content) for path, content in workflow_files.items()]
+    wanted: dict[str, None] = {}
+    for wf in workflows:
+        if wf.parse_error:
+            continue
+        for job in wf.jobs.values():
+            install = install_step(job)
+            if install is None:
+                continue
+            for step in job.steps:
+                if step.index < install.index and step.uses and step.action not in KNOWN_ACTIONS:
+                    wanted.setdefault(step.uses, None)
+    if not wanted:
+        return {}
+    return await resolve_actions(provider, repo, list(wanted), known=KNOWN_ACTIONS)
 
 
 def run_audit(conn, ctx: AuditContext, *, commit_sha: str, persist: bool = True) -> dict:

@@ -2,10 +2,9 @@
 
 Two findings share this module because they are the same measurement read differently:
 
-  * **No cache at all** — no `actions/cache` step, no `cache:` input on a setup action,
-    and an install step whose duration is *flat*. Flatness is the tell: a working cache
-    is bimodal (fast on hit, slow on miss), so consistently-slow-with-low-variance means
-    nothing is being restored.
+  * **No cache configured** — action-specific inputs and defaults, including caches in
+    composites, leave the job uncached, and its install duration is *flat*. A warm cache
+    can be flat too: timing alone cannot establish that nothing is being restored.
   * **A key that cannot hit** — a key interpolating `github.run_id` (or `github.sha`)
     is unique per run, so a fresh run never restores it. That is *only* a bug when nothing
     else restores the entry, and on the corpus nothing-else was the exception: all 9
@@ -23,16 +22,18 @@ from __future__ import annotations
 
 import re
 
+from cadence.actions import ActionIndex, manifest_steps
 from cadence.detectors.base import EvidenceDraft, FindingDraft
 from cadence.detectors.context import AuditContext, RootPackageJson
 from cadence.simulate import duration_is_flat, project_cache_savings
 from cadence.workflow import Job, Step, Workflow
 
 DETECTOR_ID = "waste.dependency_cache"
-DETECTOR_VERSION = "dependency_cache@4"
+DETECTOR_VERSION = "dependency_cache@6"
 
 _CACHE_ACTION = "actions/cache"
-# Setup actions with built-in caching; `cache:` set on any of them counts as cached.
+# Setup actions with built-in caching. Go, Ruby and uv have their own input/default
+# models below; the remaining actions retain the explicit `cache:` check.
 _SETUP_ACTIONS = {
     "actions/setup-node", "actions/setup-python", "actions/setup-java",
     "actions/setup-go", "actions/setup-dotnet", "ruby/setup-ruby",
@@ -47,9 +48,27 @@ _CACHE_EQUIVALENT = {
 }
 _SETUP_NODE = "actions/setup-node"
 _CHECKOUT = "actions/checkout"
+# Actions whose effect on a dependency cache is modelled here or is nil, so they are never
+# looked up. Anything else ahead of the install is read through (a composite) or, if it
+# cannot be read, makes the job's cache state unknown (CAVEATS 64).
+_NON_CACHING = {
+    _CHECKOUT, "actions/upload-artifact", "actions/download-artifact",
+    "actions/github-script", "actions/create-github-app-token",
+    "step-security/harden-runner",
+}
+KNOWN_ACTIONS = frozenset(
+    _NON_CACHING | _SETUP_ACTIONS | _CACHE_EQUIVALENT | {_CACHE_ACTION, "actions/cache/save"}
+)
 # setup-node gained automatic caching in v5.0.0 (2025-09-04).
 _SETUP_NODE_AUTO_CACHE_MAJOR = 5
 _MAJOR = re.compile(r"^v?(\d+)(\.|$)")
+_VERSION = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$")
+# Only standard hosted labels establish setup-uv's `auto` behaviour. Expressions,
+# runner groups and custom labels remain unknown; explicit `self-hosted` is definitive.
+_HOSTED_RUNNER = re.compile(
+    r"^(ubuntu-(latest|\d+\.\d+)(-arm)?|"
+    r"windows-(latest|\d+)(-arm)?|macos-(latest|\d+)(-(large|xlarge|intel))?)$"
+)
 
 # Language dependency installs -- what a lockfile-keyed cache speeds up. Not
 # `apt-get install`: system packages have no lockfile, and the suggested fix cannot apply
@@ -176,11 +195,14 @@ class DependencyCacheDetector:
     def _missing_cache(
         self, ctx: AuditContext, wf: Workflow, job_key: str, job: Job
     ) -> FindingDraft | None:
-        if _job_has_caching(job, ctx.root_package_json):
-            return None
-
-        install = _install_step(job)
+        install = install_step(job)
         if install is None:
+            return None
+        # Only a job we can see to be uncached is a finding. `unknown` means an action ran
+        # before the install that we could not read; `disabled` means someone turned the
+        # cache off on purpose -- ruff and vite do, in publish workflows, which zizmor
+        # recommends against caching in. Neither is ours to call waste.
+        if cache_state(job, install, ctx.root_package_json, ctx.actions) != "uncached":
             return None
 
         # This step's own durations or nothing. Until @4 a miss fell back to the job's
@@ -189,8 +211,8 @@ class DependencyCacheDetector:
         if series is None or len(series.durations) < 5:
             return None
 
-        # Flat duration is the positive signal. Without it we cannot distinguish "no
-        # cache" from "cache configured elsewhere in a way we did not parse".
+        # Bimodal durations suggest a cache we did not model. Flat durations alone do
+        # not prove a cold install: an always-warm cache is flat too (CAVEATS 64).
         if not duration_is_flat(series.durations):
             return None
 
@@ -242,18 +264,144 @@ class DependencyCacheDetector:
         )
 
 
-def _job_has_caching(job: Job, package_json: RootPackageJson) -> bool:
-    for step in job.steps:
+def cache_state(
+    job: Job, install: Step, package_json: RootPackageJson, actions: ActionIndex
+) -> str:
+    """`cached`, `uncached`, `disabled` or `unknown`, for the dependencies `install` fetches.
+
+    A caching step anywhere in the job counts, as it always has. What is new in @5 is that
+    an action ahead of the install is read through when it is a composite, and makes the
+    answer `unknown` when it cannot be read at all: 28 of 50 corpus findings were jobs
+    cached inside a composite (CAVEATS 64).
+    """
+    before = [s for s in job.steps if s.index < install.index]
+    after = [s for s in job.steps if s.index > install.index]
+    state = _steps_state(before, package_json, actions, checkout=None, depth=0,
+                         runs_on=job.runs_on)
+    if state == "cached":
+        return state
+    # A cache step after the install still counts, as it always has. An unreadable action
+    # there does not: it runs too late to have set the install up.
+    checkout = next((s for s in reversed(before) if s.action == _CHECKOUT), None)
+    if _steps_state(after, package_json, actions, checkout=checkout, depth=0,
+                    runs_on=job.runs_on) == "cached":
+        return "cached"
+    return state
+
+
+def _steps_state(
+    steps: list[Step],
+    package_json: RootPackageJson,
+    actions: ActionIndex,
+    *,
+    checkout: Step | None,
+    depth: int,
+    runs_on: list[str],
+) -> str:
+    unknown = disabled = False
+    for step in steps:
         action = step.action
         if action is None:
             continue
+        if action == _CHECKOUT:
+            checkout = step
+            continue
         if action == _CACHE_ACTION or action in _CACHE_EQUIVALENT:
-            return True
+            return "cached"
+        state = _setup_cache_state(step, runs_on)
+        if state is not None:
+            if state == "cached":
+                return state
+            unknown = unknown or state == "unknown"
+            disabled = disabled or state == "disabled"
+            continue
         if action in _SETUP_ACTIONS and step.with_.get("cache"):
-            return True
-        if action == _SETUP_NODE and setup_node_auto_caches(job, step, package_json):
-            return True
-    return False
+            return "cached"
+        if action == _SETUP_NODE:
+            if _explicitly_disabled(step):
+                disabled = True
+            elif _setup_node_caches(step, checkout, package_json):
+                return "cached"
+            continue
+        if action in KNOWN_ACTIONS:
+            continue
+        inner = manifest_steps(actions, step.uses)
+        if inner is None or depth >= 2:
+            unknown = True
+            continue
+        state = _steps_state(inner, package_json, actions, checkout=checkout, depth=depth + 1,
+                             runs_on=runs_on)
+        if state == "cached":
+            return "cached"
+        unknown = unknown or state == "unknown"
+        disabled = disabled or state == "disabled"
+    if disabled:
+        return "disabled"
+    return "unknown" if unknown else "uncached"
+
+
+def _setup_cache_state(step: Step, runs_on: list[str]) -> str | None:
+    """Per-action cache semantics verified from upstream source (CAVEATS 65).
+
+    setup-go v3/action.yml defaults off, v4 defaults on; src/main.ts reads a boolean.
+    ruby/setup-ruby v1/index.js reads `bundler-cache`, default false, never `cache`.
+    setup-uv v1–v4/action.yml default off, v5+ default `auto`; src/utils/inputs.ts
+    enables auto only on GitHub-hosted runners. v6.7 adds `restore-cache`.
+    Unresolved versions/inputs remain unknown rather than becoming new findings.
+    """
+    if step.action == "ruby/setup-ruby":
+        return _boolean_cache_state(step, "bundler-cache", default="uncached")
+    if step.action == "actions/setup-go":
+        major = setup_node_major(step)  # parses the ref, independent of action identity
+        if major is not None and major < 3:
+            return "uncached"  # these versions do not implement the cache input
+        default = "unknown" if major is None else "cached" if major >= 4 else "uncached"
+        return _boolean_cache_state(step, "cache", default=default)
+    if step.action != "astral-sh/setup-uv":
+        return None
+
+    major = setup_node_major(step)
+    # A deliberate restore opt-out is not a missing-cache finding. The knob appeared
+    # in v6.7, not v6.0; floating @v6 now supports it, older exact pins do not.
+    version_match = _VERSION.fullmatch((step.uses or "").partition("@")[2].strip())
+    version = tuple(int(v) for v in version_match.groups() if v is not None) \
+        if version_match else ()
+    supports_restore = version == (6,) or version >= (6, 7)
+    if (not version or supports_restore) and "restore-cache" in step.with_:
+        restore = _boolean_cache_state(step, "restore-cache", default="unknown")
+        if restore != "cached":
+            return restore if supports_restore else "unknown"
+    if "enable-cache" in step.with_:
+        if step.with_["enable-cache"] != "auto":
+            return _boolean_cache_state(step, "enable-cache", default="unknown")
+        if major is None or major < 5:
+            return "unknown"  # `auto` was introduced in v5
+    elif major is None:
+        return "unknown"
+    elif major < 5:
+        return "uncached"
+    if "self-hosted" in runs_on:
+        return "uncached"
+    if len(runs_on) == 1 and _HOSTED_RUNNER.fullmatch(runs_on[0]):
+        return "cached"
+    return "unknown"
+
+
+def _boolean_cache_state(step: Step, key: str, *, default: str) -> str:
+    if key not in step.with_:
+        return default
+    value = step.with_[key]
+    # YAML booleans and string action inputs both occur in the corpus. Never use Python
+    # truthiness: the string "false" is truthy, and an expression is not a known boolean.
+    if value is True or isinstance(value, str) and value.strip() == "true":
+        return "cached"
+    if value is False or isinstance(value, str) and value.strip() == "false":
+        return "disabled"
+    return "unknown"
+
+
+def _explicitly_disabled(step: Step) -> bool:
+    return str(step.with_.get("package-manager-cache", "")).strip().lower() == "false"
 
 
 def setup_node_auto_caches(job: Job, step: Step, package_json: RootPackageJson) -> bool:
@@ -267,14 +415,19 @@ def setup_node_auto_caches(job: Job, step: Step, package_json: RootPackageJson) 
     Where we cannot know, the answer is "cached" -- the pre-@3 behaviour -- because this
     decides whether a job is examined at all, and the timing gate is the only check left.
     """
+    return _setup_node_caches(step, _checkout_before(job, step), package_json)
+
+
+def _setup_node_caches(
+    step: Step, checkout: Step | None, package_json: RootPackageJson
+) -> bool:
     if step.with_.get("cache"):
         return True
-    if str(step.with_.get("package-manager-cache", "")).strip().lower() == "false":
+    if _explicitly_disabled(step):
         return False
     major = setup_node_major(step)
     if major is not None and major < _SETUP_NODE_AUTO_CACHE_MAJOR:
         return False
-    checkout = _checkout_before(job, step)
     if checkout is None:
         return False  # nothing in the workspace to read yet
     if checkout.with_.get("path") or checkout.with_.get("repository"):
@@ -318,7 +471,7 @@ def _checkout_before(job: Job, step: Step) -> Step | None:
     return None
 
 
-def _install_step(job: Job) -> Step | None:
+def install_step(job: Job) -> Step | None:
     """The first step that is a dependency install and nothing heavier.
 
     A step that also builds or tests is skipped, not priced: its duration is the sum, and a

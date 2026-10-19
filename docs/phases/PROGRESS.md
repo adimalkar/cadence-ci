@@ -1,7 +1,7 @@
 # Phase progress — what is built, what is left
 
-Measured 2026-09-03 against the code, not against memory. Checkbox counts come from the
-phase files themselves; the "actually exists" column is the source tree and a live corpus
+Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-10-18. Checkbox
+counts come from the phase files themselves; the "actually exists" column is the source tree and a live corpus
 sweep.
 
 The dashboard in [`../ROADMAP.md`](../ROADMAP.md) says *where we are*. This file says
@@ -15,15 +15,17 @@ The dashboard in [`../ROADMAP.md`](../ROADMAP.md) says *where we are*. This file
 |---|---:|---|---|
 | **[0 · Ingest](PHASE_0_INGEST.md)** | **16/16 · 100%** | Shipped, audited, deployed | Nothing. Operational caveats only |
 | **[1 · Waste audit](PHASE_1_WASTE_AUDIT.md)** | **23/25 · 92%** | 9 rules, simulator, report, cost model, eval harness, suppression | **Closed 2026-09-07** with 2 items open — see below |
-| **[2 · Fix PRs](PHASE_2_FIX_PRS.md)** | 0/18 | Nothing | All of it. Prerequisite missing |
+| **[2 · Fix PRs](PHASE_2_FIX_PRS.md)** | 4/19 | YAML guard, `concurrency.add` previews, suppression | `cache.*` previews, opt-in PR publishing, anti-spam, linkage and realized savings |
 | **[3 · Flake](PHASE_3_FLAKE.md)** | 0/18 | Nothing | All of it. Reordered, not started |
 | **[4 · Observability](PHASE_4_OBSERVABILITY.md)** | 0/24 | Nothing | All of it — **rescoped to a pillar 2026-09-05** |
 | **[5 · Review](PHASE_5_REVIEW.md)** | 0/27 | Nothing | All of it. Prerequisite missing |
 | **[6 · Security](PHASE_6_SECURITY.md)** | 0/25 | Nothing | All of it. 6A justified, 6B/6C behind demand |
 
-**Everything shipped so far is Phase 0 and Phase 1.** Phases 2–6 are design documents with
-no code behind them. That is the honest shape of the project: one phase finished, one
-nearly finished, five specified.
+**Phase 2 has started.** `fixers/edit.py` and `fixers/concurrency.py` produce verified diffs;
+PR publishing and realized-savings writeback are still unbuilt. The latest cache-detector
+precision fixes are on open PRs #28–31 against `main`; they must land in that order.
+Phases 3–6 remain design documents. The remaining historical measurements below retain
+their original dates.
 
 ---
 
@@ -184,15 +186,20 @@ as `job_billing_rounding` being correctly silent on a public corpus.
 
 ---
 
-## Phases 2–6 — specified, not started
+## Phases 2–6 — implementation status
 
-Zero checkboxes ticked across all five. Each has a design doc worth reading before starting;
-what follows is only what blocks a start.
+Phase 2 has four checklist items complete; Phases 3–6 have not started. Each has a design doc
+worth reading before starting; what follows records the main remaining prerequisites.
 
 ### Phase 2 — Fix PRs
 
-**Blocked on PR → run linkage, which does not exist.** Nothing joins a pull request to the
-runs it caused, so realized-savings writeback cannot attribute correctly.
+**Preview generation is underway.** The YAML round-trip guard and `concurrency.add` are
+implemented. The next fixer is `cache.*`, which must verify dependency files exist before
+adding caching inputs (CAVEATS 64). `dependency_cache@6` now models Go/Ruby/uv inputs and
+defaults (CAVEATS 65), closing the last recorded setup-action precision prerequisite.
+
+**Realized savings is blocked on PR → run linkage.** Nothing joins a pull request to the
+runs it caused, so writeback cannot attribute correctly. This does not block local previews.
 
 One prerequisite satisfied: config persistence landed (migration `005`, `configstore.py`),
 so the round-trip ship criterion — *"200 corpus workflows, byte-identical when no fix
@@ -234,6 +241,7 @@ not by size. Each links to the entry holding the detail.
 | Dollars-only findings | Cannot be ranked — `Savings` implies wall-clock ([`CAVEATS`](../CAVEATS.md) 30). Needs a `PRODUCT.md` §6 decision |
 | `cache_key_never_hits` | Was wrong on **9 of 9** corpus findings; fixed in `dependency_cache@2` and now fires on 0 repos. Every other config-only rule needs the same check before it gets a fixer ([`CAVEATS`](../CAVEATS.md) 58) |
 | `no_dependency_cache` precision | Fixed in `dependency_cache@4`: 21 wrong findings removed (apt, build and test steps, other steps' and other workflows' timings), 21 genuine ones found by resolving timings to config ([`CAVEATS`](../CAVEATS.md) 61). Floor of 5 s never argued ([`CAVEATS`](../CAVEATS.md) 63) |
+| `no_dependency_cache` config blindness | Fixed in `dependency_cache@5`: composite actions are read through, so 30 findings on already-cached jobs and 2 deliberate opt-outs are gone (50 → 18, 9 → 4 repos; [`CAVEATS`](../CAVEATS.md) 64). setup-go/ruby/uv inputs/defaults are now modelled in `dependency_cache@6` ([`CAVEATS`](../CAVEATS.md) 65) |
 | `long_tail_step` series | Still ranks timings merged across workflows with a same-named job ([`CAVEATS`](../CAVEATS.md) 62) |
 | `no_dependency_cache` reach | setup-node counting as a cache is fixed in `dependency_cache@3` (7 → 11 of 53 repos; [`CAVEATS`](../CAVEATS.md) 59); `actions/cache/save` not recognised ([`CAVEATS`](../CAVEATS.md) 60) |
 | Suppression surfaces | `.cadenceignore` costs one API call per audit and is fetched best-effort. No `closed_pr` writer yet — that arrives with the first fixer |

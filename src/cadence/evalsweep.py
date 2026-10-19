@@ -18,6 +18,7 @@ import structlog
 
 from cadence.audit import (
     build_context,
+    fetch_action_index,
     fetch_root_package_json,
     run_audit,
     summarize_pipeline,
@@ -82,6 +83,9 @@ async def sweep(
                 files = await provider.fetch_workflow_files(repo)
                 cache.write_text(json.dumps(files))
             # A subdirectory, not a sibling: readers glob `*.json` here as workflow maps.
+            actions = await fetch_action_index(
+                _DiskCachedFiles(provider, cache_dir / "actions"), repo, files
+            )
             package_json = await _root_package_json(
                 provider, repo, files, cache_dir / "package_json" / f"{owner}__{name}.json"
             )
@@ -99,6 +103,7 @@ async def sweep(
                 ctx = build_context(
                     conn, repo.id, files, window_days=window_days, limit_runs=limit_runs,
                     root_package_json=package_json,
+                    actions=actions,
                 )
                 if not ctx.runs:
                     out.append(RepoResult(repo=slug, ok=False, error="no ingested runs"))
@@ -158,3 +163,25 @@ async def _root_package_json(provider, repo, files: dict[str, str], path: Path) 
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps({"data": result.data}))
     return result
+
+
+class _DiskCachedFiles:
+    """`fetch_text_file` with answers kept on disk, for action manifests.
+
+    Remote actions are mostly SHA-pinned, so an answer never goes stale; a sweep re-run
+    then costs no requests. Failures are not cached: they stay unknown and are retried.
+    """
+
+    def __init__(self, provider, directory: Path):
+        self._provider = provider
+        self._dir = directory
+
+    async def fetch_text_file(self, repo, path: str, *, ref: str | None = None) -> str | None:
+        name = f"{repo.owner}__{repo.name}__{path}__{ref or 'HEAD'}".replace("/", "~")
+        hit = self._dir / f"{name}.json"
+        if hit.exists():
+            return json.loads(hit.read_text())["text"]
+        text = await self._provider.fetch_text_file(repo, path, ref=ref)
+        self._dir.mkdir(parents=True, exist_ok=True)
+        hit.write_text(json.dumps({"text": text}))
+        return text
