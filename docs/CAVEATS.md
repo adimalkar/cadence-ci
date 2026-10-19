@@ -53,6 +53,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 54 | Queue time was clamped silently on re-run jobs — up to 20.4% of a repo's observations | Medium | ✅ Fixed 2026-09-21 |
 | 55 | `no_run_cancellation` titled 8 findings "no cancel-in-progress" when their file said otherwise | Medium | ✅ Fixed 2026-09-24 |
 | 56 | Corpus measurements read a throwaway cache and printed empty tables as results when it vanished | Medium | Open |
+| 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
 | 46 | Criterion 2's recoverable half is unreachable on a public corpus — median headroom is 0.1% | **High** | Open — **kill criterion overridden 2026-09-07**, Phase 2 proceeding |
@@ -1565,6 +1566,7 @@ PR→run linkage that does not exist until Phase 5.
 
 | Date | Item | Closed by |
 |---|---|---|
+| 2026-10-18 | 66 — Locked CI dependency urllib3 2.7.0 failed pip-audit with three advisories | `3f5f79b` — merge of Dependabot PR #33, urllib3 2.8.0; brought into the cache branch by `5254e2b` |
 | 2026-10-18 | 65 — Go/Ruby/uv caching inputs and version defaults were unmodelled | `12e2ac4` — `dependency_cache@6`; action-specific states, uv runner context, 66 regression cases |
 | 2026-08-26 | Test suite was order-dependent; `TestReplayAtScale` asserted on whole-table counts and passed only by file ordering — while being the evidence for a Phase 0 ship criterion | `eb6fb5a` — fixture cleans on entry as well as teardown; verified across 5 seeds |
 | 2026-08-26 | zizmor reported 20 findings / 9 high against our own workflows (`unpinned-uses`, `artipacked`) | `eb6fb5a` — SHA-pinned all 11 actions, `persist-credentials: false`, caching off on the release path |
@@ -1625,3 +1627,19 @@ The full suite passes **565 tests without skips**, with **74.46% coverage**; lin
 checks pass. **No new corpus count is
 claimed:** the temporary workflow cache is absent on this machine (item 56). The previous
 18 findings remain the last measurement, not a result re-verified here.
+
+### 66. Security checks had aged out of green · Resolved 2026-10-18
+
+**What.** The first CI run after resuming development failed `pip-audit` with three
+advisories on the locked CI dependency urllib3 2.7.0: `PYSEC-2026-4177`, `PYSEC-2026-4176`,
+and `PYSEC-2026-4175`, all listing 2.8.0 as the fix. The existing grouped Dependabot PR #34
+also failed on the same dependency. Older green runs did not reflect the current audit.
+
+**Why it matters.** The security gate blocked unrelated cache-detector work even though
+its tests, lint and type checks passed. Ignoring the gate would hide the vulnerable tool
+chain; re-resolving every package would mix unrelated dependency changes into this fix.
+
+**Closed by `3f5f79b`.** Reviewed and merged existing, fully green Dependabot
+[PR #33](https://github.com/adimalkar/cadence-ci/pull/33), which changes only urllib3's locked
+version/artifacts to 2.8.0. Merged `origin/main` into the cache branch (`5254e2b`) so its
+security check uses the same fix. Local `pip-audit` and workflow hardening checks pass.
