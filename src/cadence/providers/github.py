@@ -10,12 +10,14 @@ import asyncio
 import base64
 import re
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 import httpx
 import structlog
 
 from cadence.models import CommitRecord, Job, NormalizedEvent, Repo, Run, RunPage, Step
 from cadence.providers.base import AccessDenied, Expired, NotFound, RateLimited
+from cadence.source import FileInventory, SourceUnavailable
 
 log = structlog.get_logger(__name__)
 
@@ -256,6 +258,31 @@ class GitHubProvider:
             matrix=matrix,
         )
 
+    async def fetch_file_inventory(self, repo: Repo, ref: str | None = None) -> FileInventory:
+        """Resolve a ref once, then list regular files from its immutable git tree.
+
+        Symlinks and submodules are deliberately excluded: their targets are not files
+        whose presence at the workspace root this tree establishes. Truncation is unknown.
+        """
+        base = f"/repos/{repo.owner}/{repo.name}"
+        commit = (await self._get_with_backoff(
+            f"{base}/commits/{quote(ref or repo.default_branch or 'HEAD', safe='')}"
+        )).json()
+        sha = commit.get("sha", "")
+        tree = commit.get("commit", {}).get("tree", {}).get("sha")
+        if not re.fullmatch(r"[0-9a-f]{40}", sha) or not tree:
+            raise SourceUnavailable("commit response does not identify an immutable tree")
+        payload = (await self._get_with_backoff(
+            f"{base}/git/trees/{tree}", params={"recursive": "1"}
+        )).json()
+        if payload.get("truncated") is not False or not isinstance(payload.get("tree"), list):
+            raise SourceUnavailable("repository tree is truncated or unavailable")
+        paths = frozenset(
+            e["path"] for e in payload["tree"]
+            if e.get("type") == "blob" and e.get("mode") in {"100644", "100755"}
+        )
+        return FileInventory(sha, paths, complete=True)
+
     async def fetch_text_file(
         self, repo: Repo, path: str, *, ref: str | None = None
     ) -> str | None:
@@ -278,8 +305,8 @@ class GitHubProvider:
         if not content or payload.get("encoding") != "base64":
             return None
         try:
-            return base64.b64decode(content).decode("utf-8", errors="replace")
-        except (ValueError, TypeError):
+            return base64.b64decode(content).decode("utf-8")
+        except (ValueError, TypeError, UnicodeDecodeError):
             return None
 
     async def fetch_workflow_files(self, repo: Repo, ref: str | None = None) -> dict[str, str]:

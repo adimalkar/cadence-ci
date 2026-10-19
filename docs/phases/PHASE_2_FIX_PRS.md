@@ -302,12 +302,39 @@ Moved from `ROADMAP.md` 2026-08-30.
       reads through them, leaving **18 findings in 4 repos** ([`CAVEATS`](../CAVEATS.md) 64).
       `dependency_cache@6` also models setup-go/ruby/uv cache inputs and defaults, including
       deliberate opt-outs and uv's hosted-runner-only `auto` mode ([`CAVEATS`](../CAVEATS.md) 65).
-      The prior **18 findings are not re-measured**: the temporary corpus cache is absent.
-      **`cache.*` is next**, and must check the lockfile exists: eslint has none, and
-      `cache: npm` fails the build without one. Its savings floor sits above the detector's
-      ([`CAVEATS`](../CAVEATS.md) 63)
+      `cache.setup@1` now provides **npm/pip previews** through `cadence fix preview`.
+      It verifies a complete file inventory, workflow bytes and setup inputs at one commit,
+      checks dependency files exist, preserves formatting, and respects suppressions.
+      **Re-measured 2026-10-19: 17 findings on 49 captured repos, zero accepted**; 15 fall below
+      the provisional 30-second lower-bound minimum, one has no lockfile and one is an
+      unsupported mixed install script. Two of 51 corpus repos have truncated inventories.
+      The ≥20 real before/after workflow gate remains **unmet**; wider ecosystem support
+      and PR publishing remain future work ([`CAVEATS`](../CAVEATS.md) 67–68).
 - [x] `preview()` declines rather than guessing — every decline carries a reason, because
       across strangers' repositories nobody can ask us why a fix did not appear
+
+### `cache.setup` — file-aware previews, measured 2026-10-19
+
+```bash
+cadence fix preview owner/repo --json previews.json
+cadence fix preview owner/repo --snapshot PATH_FROM_SOURCE_SNAPSHOT --json offline.json
+```
+
+The existing setup action must expose `cache` and `cache-dependency-path` at the exact
+referenced version. The fixer adds only these inputs, using an existing npm lockfile or
+the pip command's requirements, constraints, local project manifests or root dependency
+groups. Checkout must precede setup at the repository root. Ambiguous actions/scripts,
+conditions, cache overrides and publishing contexts decline with reasons.
+
+All original lines survive; reparsing verifies that only those two inputs changed and that
+the detector now sees a cache. Snapshots live in `data/corpus/owner__repo/COMMIT_SHA.json`,
+including workflow bytes, regular-file inventory, action manifests and suppression policy.
+JSON exports carry the pinned revision, evidence, savings range, diff and revert instruction.
+The database transaction is read-only. No workflow file or remote repository is modified.
+
+**49 of 51 repos captured, 931 workflows, 17 findings, 0 accepted.** This is a tested first
+preview implementation with restricted field reach, not completion of the automated fixer
+ship criterion. The other two repos explicitly fail capture rather than count as empty.
 
 ### `concurrency.add` — the first fixer, measured on the corpus
 

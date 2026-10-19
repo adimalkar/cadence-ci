@@ -3,11 +3,10 @@
 **Evidence-grounded CI intelligence.** Cadence reads your build history, tells you what it
 costs you in minutes and dollars, and opens the pull request that fixes it.
 
-> **Status:** Phase 0 (ingest) shipped and running continuously. Phase 1 (waste audit) is
-> ~84% — eight detectors, the simulator and the report work end to end against a 51-repo
-> public corpus; one ship criterion is still failing and is being worked. Everything after
-> that is design documents. [`docs/phases/PROGRESS.md`](docs/phases/PROGRESS.md) is measured
-> against the code rather than remembered.
+> **Status:** Phase 0 (ingest) is running; Phase 1 closed with nine rules and two
+> product criteria still open. Phase 2 now includes concurrency and npm/pip cache previews.
+> Opening fix PRs and attributing realized savings are still unbuilt.
+> [`docs/phases/PROGRESS.md`](docs/phases/PROGRESS.md) records the implementation and measurements.
 >
 > **Apache-2.0, and contributions are welcome** — start with
 > [`CONTRIBUTING.md`](CONTRIBUTING.md), or say hello in
@@ -35,8 +34,8 @@ Apply 1-3: p50 feedback 22 min → 9 min. ~$490/mo recovered.
 [Open fix PR for #1]  [Show the analysis]
 ```
 
-Every number comes from replaying real historical runs, not from asking a model. Every
-claim links to the runs it came from.
+Replay savings use real historical timings. Cache savings are labeled projections with a
+range and their evidence. Detectors calculate both deterministically.
 
 ## Why it's different
 
@@ -79,6 +78,22 @@ uv run cadence db init        # apply schema
 uv run cadence ingest astral-sh/ruff --limit 100
 uv run cadence stats astral-sh/ruff
 ```
+
+Preview cache changes for an ingested repo:
+
+```bash
+uv run cadence fix preview astral-sh/ruff --json cache-previews.json
+```
+
+The command resolves a commit, checks dependency files and setup-action inputs at that
+revision, and prints minimal diffs or reasons for declining. It honours repository and
+stored suppressions. Source snapshots are saved under `data/corpus/`; pass the JSON
+report's `source_snapshot` path to `--snapshot` to repeat the preview offline.
+
+The first version supports existing setup-node/npm and setup-python/pip steps. It requires
+a projected lower-bound saving of 30 seconds per run and declines publishing workflows,
+custom checkout layouts and ambiguous install commands. Its current corpus evaluation
+produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
 Tests:
 

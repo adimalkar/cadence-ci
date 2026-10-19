@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -24,6 +26,7 @@ from cadence.cost import render_saving
 from cadence.db import apply_migrations, connect
 from cadence.ingest import ingest_repo
 from cadence.logstore import LocalLogStore
+from cadence.preview import preview_cache_fixes
 from cadence.providers import GitHubProvider
 from cadence.queue import enqueue
 from cadence.report import (
@@ -33,6 +36,7 @@ from cadence.report import (
 from cadence.report import (
     write_report as write_html_report,
 )
+from cadence.source import CACHE_DIR, PreviewSource, capture_source
 from cadence.suppress import (
     IGNORE_FILE,
     SuppressionError,
@@ -43,6 +47,7 @@ from cadence.suppress import (
 )
 from cadence.suppress import apply as suppress_apply
 from cadence.worker import run_worker
+from cadence.workflow import parse_workflow
 
 app = typer.Typer(no_args_is_help=True, help="Evidence-grounded CI intelligence.")
 db_app = typer.Typer(no_args_is_help=True, help="Database management.")
@@ -59,8 +64,96 @@ app.add_typer(queue_app, name="queue")
 app.add_typer(corpus_app, name="corpus")
 app.add_typer(webhook_app, name="webhook")
 app.add_typer(commits_app, name="commits")
+fix_app = typer.Typer(no_args_is_help=True, help="Preview deterministic workflow fixes.")
+app.add_typer(fix_app, name="fix")
 
 console = Console()
+
+
+@fix_app.command("preview")
+def fix_preview(
+    repo: str = typer.Argument(..., help="owner/name, already ingested"),
+    ref: str | None = typer.Option(None, help="Branch, tag or commit; default: default branch."),
+    workflow: str | None = typer.Option(None, help="Restrict to this workflow path."),
+    job: str | None = typer.Option(None, help="Restrict to this YAML job key."),
+    snapshot: Annotated[Path | None, typer.Option(
+        help="Read a saved snapshot offline.", exists=True, dir_okay=False,
+    )] = None,
+    cache_dir: Annotated[Path, typer.Option(help="Where to save pinned snapshots.")] = CACHE_DIR,
+    json_out: Annotated[Path | None, typer.Option("--json", help="Write preview JSON.")] = None,
+    window: int = typer.Option(90, min=1, help="Days of stored history to analyse."),
+    limit: int = typer.Option(500, min=1, help="Maximum stored runs to analyse."),
+) -> None:
+    """Preview npm/pip cache inputs using repository files and observed install timings."""
+    parts = repo.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise typer.BadParameter("repo must be owner/name")
+    if snapshot and ref:
+        raise typer.BadParameter("choose a saved snapshot or a live ref")
+    owner, name = parts
+
+    async def _run() -> None:
+        if snapshot:
+            source = PreviewSource.load(snapshot)
+            source_path = snapshot
+        else:
+            provider = GitHubProvider(_require_token())
+            try:
+                remote_repo = await provider.get_repo(owner, name)
+                source = await capture_source(
+                    provider, remote_repo, ref=ref, workflow_path=workflow,
+                )
+                source_path = source.save(cache_dir)
+            finally:
+                await provider.aclose()
+        if workflow:
+            if workflow not in source.workflows:
+                raise ValueError("workflow is not in the saved source snapshot")
+            source.workflows = {workflow: source.workflows[workflow]}
+        if job and not any(job in parse_workflow(p, text).jobs
+                           for p, text in source.workflows.items()):
+            raise ValueError("job key is not in the selected workflows")
+        with connect() as conn:
+            conn.execute("SET TRANSACTION READ ONLY")
+            row = conn.execute("SELECT id FROM repo WHERE owner = %s AND name = %s",
+                               (owner, name)).fetchone()
+            if not row:
+                raise ValueError(f"{repo} is not ingested; run cadence ingest first")
+            ctx = build_context(
+                conn, row["id"], source.workflows, window_days=window, limit_runs=limit,
+                root_package_json=source.package_json, actions=source.actions,
+            )
+            if not ctx.runs:
+                raise ValueError(f"no ingested runs in the last {window} days")
+            suppressed = conn.execute(
+                "SELECT kind, dedupe_key, suppress_scope, suppressed_reason FROM finding"
+                " WHERE repo_id = %s AND status = 'suppressed'", (row["id"],),
+            ).fetchall()
+            previews = preview_cache_fixes(ctx, source, job_key=job, suppressed=list(suppressed))
+        output = {
+            "repo": source.repo, "ref": source.inventory.ref,
+            "source_snapshot": str(source_path),
+            "fixer": "cache.setup@1", "previews": [p.as_dict() for p in previews],
+        }
+        if json_out:
+            json_out.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+        accepted = sum(p.result.ok for p in previews)
+        typer.echo(f"{source.repo} @ {source.inventory.ref}: "
+                   f"{accepted} cache preview(s), {len(previews) - accepted} declined")
+        for preview in previews:
+            if preview.result.diff:
+                typer.echo(preview.result.diff.unified, nl=False)
+                typer.echo(preview.result.diff.summary)
+                if preview.finding.savings:
+                    typer.echo(f"Saving: {preview.finding.savings.render()}")
+            else:
+                typer.echo(f"{preview.finding.dedupe_key}: {preview.result.declined}")
+
+    try:
+        asyncio.run(_run())
+    except ValueError as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(1) from None
 
 
 def _require_token() -> str:
