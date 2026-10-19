@@ -2,10 +2,9 @@
 
 Two findings share this module because they are the same measurement read differently:
 
-  * **No cache at all** — no `actions/cache` step, no `cache:` input on a setup action,
-    and an install step whose duration is *flat*. Flatness is the tell: a working cache
-    is bimodal (fast on hit, slow on miss), so consistently-slow-with-low-variance means
-    nothing is being restored.
+  * **No cache configured** — action-specific inputs and defaults, including caches in
+    composites, leave the job uncached, and its install duration is *flat*. A warm cache
+    can be flat too: timing alone cannot establish that nothing is being restored.
   * **A key that cannot hit** — a key interpolating `github.run_id` (or `github.sha`)
     is unique per run, so a fresh run never restores it. That is *only* a bug when nothing
     else restores the entry, and on the corpus nothing-else was the exception: all 9
@@ -30,10 +29,11 @@ from cadence.simulate import duration_is_flat, project_cache_savings
 from cadence.workflow import Job, Step, Workflow
 
 DETECTOR_ID = "waste.dependency_cache"
-DETECTOR_VERSION = "dependency_cache@5"
+DETECTOR_VERSION = "dependency_cache@6"
 
 _CACHE_ACTION = "actions/cache"
-# Setup actions with built-in caching; `cache:` set on any of them counts as cached.
+# Setup actions with built-in caching. Go, Ruby and uv have their own input/default
+# models below; the remaining actions retain the explicit `cache:` check.
 _SETUP_ACTIONS = {
     "actions/setup-node", "actions/setup-python", "actions/setup-java",
     "actions/setup-go", "actions/setup-dotnet", "ruby/setup-ruby",
@@ -62,6 +62,13 @@ KNOWN_ACTIONS = frozenset(
 # setup-node gained automatic caching in v5.0.0 (2025-09-04).
 _SETUP_NODE_AUTO_CACHE_MAJOR = 5
 _MAJOR = re.compile(r"^v?(\d+)(\.|$)")
+_VERSION = re.compile(r"^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?$")
+# Only standard hosted labels establish setup-uv's `auto` behaviour. Expressions,
+# runner groups and custom labels remain unknown; explicit `self-hosted` is definitive.
+_HOSTED_RUNNER = re.compile(
+    r"^(ubuntu-(latest|\d+\.\d+)(-arm)?|"
+    r"windows-(latest|\d+)(-arm)?|macos-(latest|\d+)(-(large|xlarge|intel))?)$"
+)
 
 # Language dependency installs -- what a lockfile-keyed cache speeds up. Not
 # `apt-get install`: system packages have no lockfile, and the suggested fix cannot apply
@@ -204,8 +211,8 @@ class DependencyCacheDetector:
         if series is None or len(series.durations) < 5:
             return None
 
-        # Flat duration is the positive signal. Without it we cannot distinguish "no
-        # cache" from "cache configured elsewhere in a way we did not parse".
+        # Bimodal durations suggest a cache we did not model. Flat durations alone do
+        # not prove a cold install: an always-warm cache is flat too (CAVEATS 64).
         if not duration_is_flat(series.durations):
             return None
 
@@ -269,13 +276,15 @@ def cache_state(
     """
     before = [s for s in job.steps if s.index < install.index]
     after = [s for s in job.steps if s.index > install.index]
-    state = _steps_state(before, package_json, actions, checkout=None, depth=0)
+    state = _steps_state(before, package_json, actions, checkout=None, depth=0,
+                         runs_on=job.runs_on)
     if state == "cached":
         return state
     # A cache step after the install still counts, as it always has. An unreadable action
     # there does not: it runs too late to have set the install up.
     checkout = next((s for s in reversed(before) if s.action == _CHECKOUT), None)
-    if _steps_state(after, package_json, actions, checkout=checkout, depth=0) == "cached":
+    if _steps_state(after, package_json, actions, checkout=checkout, depth=0,
+                    runs_on=job.runs_on) == "cached":
         return "cached"
     return state
 
@@ -287,6 +296,7 @@ def _steps_state(
     *,
     checkout: Step | None,
     depth: int,
+    runs_on: list[str],
 ) -> str:
     unknown = disabled = False
     for step in steps:
@@ -298,6 +308,13 @@ def _steps_state(
             continue
         if action == _CACHE_ACTION or action in _CACHE_EQUIVALENT:
             return "cached"
+        state = _setup_cache_state(step, runs_on)
+        if state is not None:
+            if state == "cached":
+                return state
+            unknown = unknown or state == "unknown"
+            disabled = disabled or state == "disabled"
+            continue
         if action in _SETUP_ACTIONS and step.with_.get("cache"):
             return "cached"
         if action == _SETUP_NODE:
@@ -312,7 +329,8 @@ def _steps_state(
         if inner is None or depth >= 2:
             unknown = True
             continue
-        state = _steps_state(inner, package_json, actions, checkout=checkout, depth=depth + 1)
+        state = _steps_state(inner, package_json, actions, checkout=checkout, depth=depth + 1,
+                             runs_on=runs_on)
         if state == "cached":
             return "cached"
         unknown = unknown or state == "unknown"
@@ -320,6 +338,66 @@ def _steps_state(
     if disabled:
         return "disabled"
     return "unknown" if unknown else "uncached"
+
+
+def _setup_cache_state(step: Step, runs_on: list[str]) -> str | None:
+    """Per-action cache semantics verified from upstream source (CAVEATS 65).
+
+    setup-go v3/action.yml defaults off, v4 defaults on; src/main.ts reads a boolean.
+    ruby/setup-ruby v1/index.js reads `bundler-cache`, default false, never `cache`.
+    setup-uv v1–v4/action.yml default off, v5+ default `auto`; src/utils/inputs.ts
+    enables auto only on GitHub-hosted runners. v6.7 adds `restore-cache`.
+    Unresolved versions/inputs remain unknown rather than becoming new findings.
+    """
+    if step.action == "ruby/setup-ruby":
+        return _boolean_cache_state(step, "bundler-cache", default="uncached")
+    if step.action == "actions/setup-go":
+        major = setup_node_major(step)  # parses the ref, independent of action identity
+        if major is not None and major < 3:
+            return "uncached"  # these versions do not implement the cache input
+        default = "unknown" if major is None else "cached" if major >= 4 else "uncached"
+        return _boolean_cache_state(step, "cache", default=default)
+    if step.action != "astral-sh/setup-uv":
+        return None
+
+    major = setup_node_major(step)
+    # A deliberate restore opt-out is not a missing-cache finding. The knob appeared
+    # in v6.7, not v6.0; floating @v6 now supports it, older exact pins do not.
+    version_match = _VERSION.fullmatch((step.uses or "").partition("@")[2].strip())
+    version = tuple(int(v) for v in version_match.groups() if v is not None) \
+        if version_match else ()
+    supports_restore = version == (6,) or version >= (6, 7)
+    if (not version or supports_restore) and "restore-cache" in step.with_:
+        restore = _boolean_cache_state(step, "restore-cache", default="unknown")
+        if restore != "cached":
+            return restore if supports_restore else "unknown"
+    if "enable-cache" in step.with_:
+        if step.with_["enable-cache"] != "auto":
+            return _boolean_cache_state(step, "enable-cache", default="unknown")
+        if major is None or major < 5:
+            return "unknown"  # `auto` was introduced in v5
+    elif major is None:
+        return "unknown"
+    elif major < 5:
+        return "uncached"
+    if "self-hosted" in runs_on:
+        return "uncached"
+    if len(runs_on) == 1 and _HOSTED_RUNNER.fullmatch(runs_on[0]):
+        return "cached"
+    return "unknown"
+
+
+def _boolean_cache_state(step: Step, key: str, *, default: str) -> str:
+    if key not in step.with_:
+        return default
+    value = step.with_[key]
+    # YAML booleans and string action inputs both occur in the corpus. Never use Python
+    # truthiness: the string "false" is truthy, and an expression is not a known boolean.
+    if value is True or isinstance(value, str) and value.strip() == "true":
+        return "cached"
+    if value is False or isinstance(value, str) and value.strip() == "false":
+        return "disabled"
+    return "unknown"
 
 
 def _explicitly_disabled(step: Step) -> bool:
