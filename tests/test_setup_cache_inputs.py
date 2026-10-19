@@ -149,5 +149,5 @@ def test_warm_caches_and_opt_outs_never_become_findings_from_flat_timings(
     )
     findings = DependencyCacheDetector().run(ctx)
     assert len(findings) == expected_findings
-    assert all(f.kind == "no_dependency_cache" and f.detector_version == "dependency_cache@6"
+    assert all(f.kind == "no_dependency_cache" and f.detector_version == "dependency_cache@7"
                for f in findings)

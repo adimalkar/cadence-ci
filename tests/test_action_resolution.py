@@ -11,10 +11,16 @@ import asyncio
 
 import pytest
 
-from cadence.actions import ActionManifest, parse_ref, resolve_actions
+from cadence.actions import ActionManifest, manifest_steps, parse_ref, resolve_actions
 from cadence.audit import fetch_action_index
-from cadence.detectors.cache import KNOWN_ACTIONS, cache_state, install_step
-from cadence.detectors.context import RootPackageJson
+from cadence.cost import CostContext, RateCard
+from cadence.detectors.cache import (
+    KNOWN_ACTIONS,
+    DependencyCacheDetector,
+    cache_state,
+    install_step,
+)
+from cadence.detectors.context import AuditContext, RootPackageJson, StepSeries
 from cadence.evalsweep import _DiskCachedFiles
 from cadence.models import Repo
 from cadence.workflow import parse_workflow
@@ -99,6 +105,31 @@ class TestManifest:
     def test_garbage_is_unusable_not_an_error(self):
         assert ActionManifest.from_text(": : :\n\t-").using is None
 
+    @pytest.mark.parametrize("text", [
+        "", "[]", "runs: []", "runs: {}", "runs:\n  using: null\n",
+        "runs:\n  using: ''\n", "runs:\n  using: ' '\n", "runs:\n  using: true\n",
+        "runs:\n  using: 42\n", "runs:\n  using: []\n", "runs:\n  using: {}\n",
+        "runs:\n  using: nonsense\n", "runs:\n  using: node999\n",
+    ])
+    def test_missing_or_unrecognized_runtime_is_unreadable(self, text):
+        manifest = ActionManifest.from_text(text)
+        assert manifest.using is None
+        assert manifest_steps({"acme/broken@v1": manifest}, "acme/broken@v1") is None
+
+    @pytest.mark.parametrize("runtime", ["node12", "node16", "node20", "node24", "docker"])
+    def test_recognized_code_actions_keep_the_existing_noncomposite_policy(self, runtime):
+        entry = "image: Dockerfile" if runtime == "docker" else "main: dist/index.js"
+        manifest = ActionManifest.from_text(f"runs:\n  using: {runtime}\n  {entry}\n")
+        assert manifest.using == runtime
+        assert manifest_steps({"acme/action@v1": manifest}, "acme/action@v1") == []
+
+    def test_runtime_names_follow_the_runners_case_insensitive_comparison(self):
+        manifest = ActionManifest.from_text(
+            "runs:\n  using: COMPOSITE\n  steps:\n    - uses: actions/cache@v4\n"
+        )
+        assert manifest.is_composite
+        assert manifest_steps({LOCAL: manifest}, LOCAL)[0].action == "actions/cache"
+
 
 LOCAL = "./.github/actions/setup-node-pnpm-cache"
 REMOTE = "angular/dev-infra/github-actions/npm/checkout-and-setup-node@1ffbb25"
@@ -107,6 +138,29 @@ INSTALL = "      - run: pnpm install --frozen-lockfile\n"
 
 
 class TestCacheState:
+    @pytest.mark.parametrize("runtime", [None, "", " ", "True", "nonsense", "node999"])
+    def test_unreadable_runtime_in_saved_or_constructed_metadata_stays_unknown(self, runtime):
+        _, job, inst = _job(BEFORE + f"      - uses: {LOCAL}\n" + INSTALL)
+        assert cache_state(job, inst, UNFETCHED, {LOCAL: ActionManifest(runtime)}) == "unknown"
+
+    def test_an_unreadable_runtime_in_a_nested_composite_stays_unknown(self):
+        outer = f"runs:\n  using: composite\n  steps:\n    - uses: {LOCAL}\n"
+        _, job, inst = _job(BEFORE + "      - uses: ./.github/actions/outer\n" + INSTALL)
+        idx = _index(**{"./.github/actions/outer": outer, LOCAL: "runs: {}"})
+        assert cache_state(job, inst, UNFETCHED, idx) == "unknown"
+
+    def test_malformed_metadata_after_the_install_does_not_make_its_setup_unknown(self):
+        _, job, inst = _job(BEFORE + INSTALL + f"      - uses: {LOCAL}\n")
+        assert cache_state(job, inst, UNFETCHED, {LOCAL: ActionManifest(None)}) == "uncached"
+
+    @pytest.mark.parametrize("cache_first", [True, False])
+    def test_an_independent_cache_still_wins_over_unreadable_runtime(self, cache_first):
+        steps = [f"      - uses: {LOCAL}\n", "      - uses: actions/cache@v4\n"]
+        if cache_first:
+            steps.reverse()
+        _, job, inst = _job(BEFORE + "".join(steps) + INSTALL)
+        assert cache_state(job, inst, UNFETCHED, {LOCAL: ActionManifest(None)}) == "cached"
+
     def test_remix_local_composite_with_actions_cache_is_cached(self):
         _, job, inst = _job(BEFORE + f"      - uses: {LOCAL}\n" + INSTALL)
         assert cache_state(job, inst, UNFETCHED, _index(**{LOCAL: REMIX_COMPOSITE})) == "cached"
@@ -169,6 +223,29 @@ class _Files:
 
 
 class TestResolve:
+    def test_fetched_malformed_metadata_suppresses_an_unsupported_cold_install_finding(self):
+        wf, job, inst = _job(BEFORE + f"      - uses: {LOCAL}\n" + INSTALL)
+        p = _Files({("acme/widget", f"{LOCAL[2:]}/action.yml", None): "runs: {}"})
+        idx = asyncio.run(resolve_actions(p, REPO, [LOCAL], known=KNOWN_ACTIONS))
+        assert cache_state(job, inst, UNFETCHED, idx) == "unknown"
+        ctx = AuditContext(
+            repo_id=1, owner="acme", name="widget", is_private=False,
+            workflows=[wf], runs=[], step_series={}, actions=idx,
+            step_series_resolved={("ci.yml", "build", f"Run {inst.run}"): StepSeries(
+                "build", f"Run {inst.run}", [90.0] * 20, list(range(20)))},
+            cost=CostContext(is_private=False, runs_per_month=200.0,
+                             rate_card=RateCard(version=2026, rates={}, free_on_public={})),
+            window_days=90,
+        )
+        assert DependencyCacheDetector().run(ctx) == []
+        # This is a real regression guard: the same timing evidence does produce a
+        # finding under the existing recognized-code-action policy.
+        ctx.actions = _index(**{LOCAL: JS_ACTION})
+        findings = DependencyCacheDetector().run(ctx)
+        assert len(findings) == 1
+        assert findings[0].dedupe_key == "no_dependency_cache:ci.yml:build"
+        assert findings[0].detector_version == "dependency_cache@7"
+
     def test_local_reads_the_audited_repo_and_falls_back_to_action_yaml(self):
         p = _Files({("acme/widget", ".github/actions/setup-node-pnpm-cache/action.yaml", None):
                     REMIX_COMPOSITE})
