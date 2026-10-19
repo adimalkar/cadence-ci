@@ -9,8 +9,9 @@ apart from "never cached". Config is the only thing that can, so config has to b
 the action.
 
 Only **composite** actions have readable steps. A JavaScript or Docker action is code; what it
-does is known only for the handful the detectors name (the setup actions), and every other one
-is treated as doing nothing we measure.
+does is known only for the handful the detectors name (the setup actions). Other recognized
+code runtimes retain the policy of doing nothing we measure. Missing or unrecognized
+runtime declarations are unknown, even when the metadata file itself was fetched.
 
 `ActionIndex` is keyed by the `uses:` string. A key that is absent means *not looked up*, and
 detectors must treat that as unknown -- never as "does nothing".
@@ -34,6 +35,11 @@ _REMOTE = re.compile(r"^(?P<owner>[\w.-]+)/(?P<repo>[\w.-]+)(?P<path>(/[^@]+)?)@
 # can nest others. The corpus needed at most 9 for one repo.
 MAX_LOOKUPS = 30
 MAX_DEPTH = 3
+
+# Runtime declarations understood by the runner, including legacy Node actions in
+# historical workflows. Unrecognized runtimes remain unknown until explicitly modelled.
+# https://github.com/actions/runner/blob/main/src/Runner.Worker/ActionManifestManager.cs
+_RUNTIMES = frozenset({"composite", "docker", "node12", "node16", "node20", "node24"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +74,7 @@ def parse_ref(uses: str | None) -> ActionRef | None:
 class ActionManifest:
     """The parts of an `action.yml` a detector can reason about.
 
-    `using` is `composite`, `node20`, `docker`, ... or None when the file would not parse.
+    `using` is a recognized runtime, or None when its declaration could not be read.
     `steps` is populated for composites only.
     """
 
@@ -89,7 +95,10 @@ class ActionManifest:
         runs = doc.get("runs") if isinstance(doc, dict) else None
         if not isinstance(runs, dict):
             return cls(using=None)
-        using = str(runs.get("using") or "") or None
+        using = runs.get("using")
+        if not isinstance(using, str) or using.lower() not in _RUNTIMES:
+            return cls(using=None)
+        using = using.lower()
         steps = parse_steps(runs.get("steps")) if using == "composite" else []
         inputs = doc.get("inputs", {})
         return cls(using=using, steps=steps,
@@ -161,13 +170,18 @@ async def _fetch_manifest(
 
 
 def manifest_steps(index: ActionIndex, uses: str | None) -> list[Step] | None:
-    """A composite's steps; [] for a non-composite that was read; None when unknown."""
+    """A composite's steps; [] for a recognized code action; None when unreadable.
+
+    Check the runtime here too: persisted snapshots and direct construction can bypass
+    from_text. Missing metadata must never become evidence that an action does nothing.
+    """
     if not uses or uses not in index:
         return None
     manifest = index[uses]
-    if manifest is None:
+    if (manifest is None or not isinstance(manifest.using, str)
+            or manifest.using.lower() not in _RUNTIMES):
         return None
-    return manifest.steps if manifest.is_composite else []
+    return manifest.steps if manifest.using.lower() == "composite" else []
 
 
 def iter_uses(workflows: list[Workflow]) -> list[str]:

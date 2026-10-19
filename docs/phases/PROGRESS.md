@@ -197,6 +197,10 @@ worth reading before starting; what follows records the main remaining prerequis
 **Preview generation is implemented for concurrency and npm/pip cache inputs.** Cache
 previews verify dependency files, workflow bytes and setup capabilities at one immutable
 revision. `dependency_cache@6` models Go/Ruby/uv inputs and defaults (CAVEATS 65).
+`dependency_cache@7` keeps unreadable action runtime declarations unknown, including saved
+metadata and nested actions (CAVEATS 69). An offline comparison across 51 saved sources
+found identical finding keys (17 → 17); none of their 70 manifests had an invalid runtime.
+Full action-schema validation remains separate (CAVEATS 70).
 
 **Latest cache evaluation, 2026-10-19:** durable snapshots captured 49/51 repos and 931
 workflows. There are 17 missing-cache findings and **zero accepted previews** under the

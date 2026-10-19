@@ -29,7 +29,7 @@ from cadence.simulate import duration_is_flat, project_cache_savings
 from cadence.workflow import Job, Step, Workflow
 
 DETECTOR_ID = "waste.dependency_cache"
-DETECTOR_VERSION = "dependency_cache@6"
+DETECTOR_VERSION = "dependency_cache@7"
 
 _CACHE_ACTION = "actions/cache"
 # Setup actions with built-in caching. Go, Ruby and uv have their own input/default
@@ -199,8 +199,9 @@ class DependencyCacheDetector:
         if install is None:
             return None
         # Only a job we can see to be uncached is a finding. `unknown` means an action ran
-        # before the install that we could not read; `disabled` means someone turned the
-        # cache off on purpose -- ruff and vite do, in publish workflows, which zizmor
+        # before the install that we could not read or whose runtime metadata is invalid;
+        # `disabled` means someone turned the cache off on purpose -- ruff and vite do,
+        # in publish workflows, which zizmor
         # recommends against caching in. Neither is ours to call waste.
         if cache_state(job, install, ctx.root_package_json, ctx.actions) != "uncached":
             return None
