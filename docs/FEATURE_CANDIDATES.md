@@ -40,6 +40,7 @@ runs, 55 repos.
 | **F14** | Suggested CI configuration | Unmeasured — needs ecosystem cohorts | Repos with thin CI | Medium |
 | **F15** | Vendor-neutral bottleneck verdict — *"faster runners will not help you"* | **Partly measured — 1/50 repos queue-bound** | Every repo | Small |
 | **F16** | Self-hosted fleet cost attribution | Unmeasured — corpus is 100% hosted | Self-hosted operators | ✅ **Groundwork built** |
+| **F17** | Calibrated step classifier — Jev, or an open-source equivalent | Unmeasured — gated on F7 | Every repo, if F7 ships | Medium · direction-dependent |
 
 Candidates already carried in [`phases/PHASE_2_3_CANDIDATES.md`](phases/PHASE_2_3_CANDIDATES.md)
 — `no_job_timeout`, `pipeline_fix_churn`, `cache_evicted_before_reuse`, the exit-137 split,
@@ -727,6 +728,109 @@ Remaining work: surface it — a config field and a CLI flag — and decide whet
 idle time is Cadence's business at all. A runner costs money while idle, which is a real
 form of waste and one we can see (queue and exec per runner label), but it is also the point
 where a read-only analyser starts wanting an agent. Measure before building.
+
+---
+
+## F17 · A calibrated step classifier — Jev, or an open-source equivalent
+
+**Recorded 2026-09-24, kept deliberately open because the answer depends on the product's
+direction.** Assessed against TypeSafe AI's Jev (launched ~2026-09-19) and the open-source
+field that formed around it within days.
+
+### The problem it would solve, which is real and measured
+
+Cadence refuses to classify in three places because a regex allowlist cannot:
+
+- `classify_step` (`detectors/failure.py`) names **2.2%** of first-failing steps and returns
+  `None` for the rest (CAVEATS 40).
+- **F7 — setup tax** is blocked outright on a step classifier.
+- Phase 3's flake taxonomy has the same shape.
+
+### What these models are
+
+Jev is a **"System One" model**: non-autoregressive, it returns a *typed* answer with a
+*calibrated* probability instead of generating text. Vendor claims ~100× faster and cheaper
+than an LLM for classification. Calibration is the part that fits this project — Cadence
+already publishes coverage and withholds below thresholds everywhere (`classification_coverage`,
+`queue_coverage`, the 80% mapping gate), and a classifier that says `dependency-install,
+p=0.93` and **abstains** below a floor is the same discipline with wider reach.
+
+### The field, sorted by what can actually be relied on
+
+| Option | Kind | Maturity | Runs on CPU | Calibration |
+|---|---|---|---|---|
+| **SetFit** | few-shot, sentence-transformer | years; ~2.8k★ | ✅ | ours to fit — we own the labels |
+| **GLiClass** | zero-shot, ModernBERT-based | years (GLiNER lineage) | ✅ | needs our own calibration step |
+| **ModernBERT** fine-tune | encoder classifier | years | ✅ | temperature scaling |
+| Jev | hosted System One | **days** | n/a — hosted | vendor-reported |
+| Von, Laya, Kev, NanoJev | open Jev reproductions | **< 10 days** | Laya yes; most need a GPU | mostly temperature scaling |
+| OpenJev, mini-jev, SemIf | logprob readers over autoregressive LLMs | days | GPU | **several disclaim calibration** |
+
+Two warnings from the field itself are worth keeping. One reproduction's own README states
+its logprobs *"are not calibrated estimates of correctness"* — so "Jev alternative" does not
+imply calibrated. And a survey of them concludes that *"schema-valid is not the same as
+correct"*: a typed output constrains the **form** of an error, not whether the answer is
+wrong. A confidently mislabelled step is still a wrong finding.
+
+### The recommendation depends on where Cadence goes
+
+**If Cadence stays a read-only, self-hostable tool** (the current direction): **SetFit**,
+trained on a few hundred hand-labelled step names from our own corpus. Step names are a small
+closed vocabulary, which is SetFit's best case; it runs on CPU; and because we own the labels
+we own the calibration, rather than trusting a vendor's. **GLiClass** as the zero-shot
+fallback before labels exist.
+
+This route removes two of the three objections to adopting Jev:
+
+1. **Reproducibility** — weights are pinned by hash and stamped on the finding, exactly as
+   `detector_version` and `rate_card_version` are. A hosted model can change under us
+   silently; a file cannot.
+2. **No second vendor** — an audit still needs only a GitHub read token.
+   `EXPANSION.md`'s shape test (*"nothing that requires the user to adopt infrastructure"*)
+   survives, at the cost of a model file and an inference dependency.
+
+**If Cadence becomes a hosted service**, Jev becomes the stronger option: the vendor
+dependency is ours rather than the user's, and latency and per-call cost start to matter at
+scale in a way they do not for a CLI.
+
+**The Jev-like reproductions are a watch, not a dependency.** Nearly all launched within ten
+days of Jev. Re-check before building rather than on a calendar.
+
+### The objection neither route removes
+
+**`PRODUCT.md` §2 rule 2: the LLM is never the detector.** A narrator is optional — a finding
+ships without its prose. A classifier is not: if it labels `make test` as infrastructure and
+a finding reports *"9% of your failures are infrastructure,"* the model's judgement is inside
+the claim. Local weights do not change that.
+
+The only way through it that keeps the rule intact:
+
+- the classifier **labels an observation; it never decides whether something is waste** — the
+  detector's arithmetic stays deterministic;
+- it **abstains** below a confidence floor, so an uncertain label is a withheld label;
+- **coverage is published** on every finding that uses it;
+- the model version is **pinned and stamped**;
+- a **deterministic fallback** exists, so a failed or absent model withholds instead of
+  guessing.
+
+### Gate
+
+Do not build this before **F7 is measured and fires broadly** — F7 is the one feature
+blocked on classification specifically. And note what F8 already showed: its value turned out
+to be *concentration*, which needs no classifier at all. Better classification would not have
+rescued it. That is the pattern to be wary of here — an attractive fix for a problem not yet
+confirmed to exist.
+
+**Cheapest honest test when the time comes:** hand-label ~300 step names from the corpus,
+score SetFit, GLiClass and Jev against them, and report accuracy *and* calibration error
+(ECE) for each. A day's work, and it decides the question with our own data rather than
+vendor benchmarks.
+
+Sources: [TypeSafe — Jev](https://typesafe.ai/blog/introducing-system-one-models-and-jev),
+[System One Models — alternatives compared](https://systemonemodels.org/examples/alternatives/),
+[open-source Jev alternatives](https://dev.to/rupesh_poojary_ce8e5e7994/open-source-jev-alternatives-run-typed-calibrated-llm-decisions-locally-4dfb),
+[SetFit + ModernBERT](https://moshewasserblat.medium.com/new-results-on-setfit-modernbert-for-text-classification-with-few-shot-training-53c154df7c0e),
+[GLiClass on ModernBERT](https://huggingface.co/blog/Ihor/refreshing-zero-shot-classification).
 
 ---
 
