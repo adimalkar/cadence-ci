@@ -16,6 +16,7 @@ from psycopg.rows import dict_row
 
 from cadence.models import Job, Repo, Run
 from cadence.providers.base import CIProvider, RateLimited
+from cadence.run_prs import references_for_run, store_references
 
 log = structlog.get_logger(__name__)
 
@@ -52,17 +53,18 @@ def upsert_repo(conn: psycopg.Connection, repo: Repo) -> None:
 
 
 def upsert_run(conn: psycopg.Connection, run: Run) -> None:
-    conn.execute(
+    references, legacy_number = references_for_run(run)
+    result = conn.execute(
         """
         INSERT INTO run (
             id, repo_id, workflow_id, workflow_path, workflow_name, run_number,
             run_attempt, event, status, conclusion, head_sha, head_branch, tree_sha,
-            pull_request_number, created_at, started_at, updated_at
+            pull_request_number, created_at, started_at, updated_at, pr_payload_state
         ) VALUES (
             %(id)s, %(repo_id)s, %(workflow_id)s, %(workflow_path)s, %(workflow_name)s,
             %(run_number)s, %(run_attempt)s, %(event)s, %(status)s, %(conclusion)s,
             %(head_sha)s, %(head_branch)s, %(tree_sha)s, %(pull_request_number)s,
-            %(created_at)s, %(started_at)s, %(updated_at)s
+            %(created_at)s, %(started_at)s, %(updated_at)s, %(pr_payload_state)s
         )
         ON CONFLICT (id) DO UPDATE SET
             status = EXCLUDED.status,
@@ -76,7 +78,10 @@ def upsert_run(conn: psycopg.Connection, run: Run) -> None:
             started_at = coalesce(EXCLUDED.started_at, run.started_at),
             tree_sha = coalesce(EXCLUDED.tree_sha, run.tree_sha),
             pull_request_number =
-                coalesce(EXCLUDED.pull_request_number, run.pull_request_number)
+                coalesce(EXCLUDED.pull_request_number, run.pull_request_number),
+            pr_payload_state = EXCLUDED.pr_payload_state
+        WHERE run.repo_id = EXCLUDED.repo_id
+        RETURNING id
         """,
         {
             "id": run.id,
@@ -92,12 +97,17 @@ def upsert_run(conn: psycopg.Connection, run: Run) -> None:
             "head_sha": run.head_sha,
             "head_branch": run.head_branch,
             "tree_sha": run.tree_sha,
-            "pull_request_number": run.pull_request_number,
+            "pull_request_number": legacy_number,
+            "pr_payload_state": run.pr_payload_state,
             "created_at": run.created_at,
             "started_at": run.started_at,
             "updated_at": run.updated_at,
         },
     )
+
+    if result.fetchone() is None:
+        raise ValueError("run already belongs to a different repository")
+    store_references(conn, run.repo_id, run.id, references)
 
 
 def _store_etag(conn: psycopg.Connection, repo_id: int, etag: str | None) -> None:

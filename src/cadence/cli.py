@@ -36,6 +36,7 @@ from cadence.report import (
 from cadence.report import (
     write_report as write_html_report,
 )
+from cadence.run_prs import MAX_PR_NUMBER, runs_for_pr
 from cadence.source import CACHE_DIR, PreviewSource, capture_source
 from cadence.suppress import (
     IGNORE_FILE,
@@ -68,6 +69,40 @@ fix_app = typer.Typer(no_args_is_help=True, help="Preview deterministic workflow
 app.add_typer(fix_app, name="fix")
 
 console = Console()
+
+
+@app.command("pr-runs")
+def pr_runs(
+    repo: str = typer.Argument(..., help="owner/name, already ingested"),
+    number: int = typer.Argument(..., min=1, max=MAX_PR_NUMBER, help="PR number"),
+    limit: int = typer.Option(500, min=1, max=5000, help="Maximum stored associations"),
+    json_out: Annotated[Path | None, typer.Option(
+        "--json", help="Write association evidence JSON.",
+    )] = None,
+) -> None:
+    """Read all recorded provider/legacy PR associations offline."""
+    parts = repo.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise typer.BadParameter("repo must be owner/name")
+    try:
+        with connect() as conn:
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            row = conn.execute("SELECT id FROM repo WHERE owner = %s AND name = %s",
+                               (parts[0], parts[1])).fetchone()
+            if row is None:
+                raise ValueError("repository is not ingested")
+            output = runs_for_pr(conn, row["id"], number, limit=limit)
+        if json_out:
+            json_out.write_text(json.dumps(output, indent=2, default=str) + "\n", encoding="utf-8")
+        typer.echo(f"{repo}#{number}: {len(output['runs'])} recorded run association(s)"
+                   + ("; more available (limit reached)" if output["truncated"] else ""))
+        typer.echo("Unreported associations remain unknown.")
+        for run in output["runs"]:
+            typer.echo(f"{run['run_id']}  {run['source']}  {run['workflow_path']}  "
+                       f"{run['conclusion'] or run['status']}")
+    except ValueError as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(1) from None
 
 
 @fix_app.command("preview")
