@@ -164,3 +164,20 @@ def test_migration_backfills_positive_scalar_only_with_legacy_provenance(seeded)
         assert {r["pr_payload_state"] for r in conn.execute(
             "SELECT pr_payload_state FROM run").fetchall()} == {"unknown"}
         # Outer test transaction rolls the temporary schema back.
+
+
+def test_legacy_sql_writers_continue_to_capture_during_mixed_version_rollout(seeded):
+    conn, rid, run = seeded
+    # This path intentionally bypasses new model/helper code, as an old worker does.
+    conn.execute(
+        """INSERT INTO run (id, repo_id, head_sha, created_at, pull_request_number)
+           VALUES (%s, %s, 'legacy', %s, 42)""", (run.id, rid, NOW),
+    )
+    assert runs_for_pr(conn, rid, 42)["runs"][0]["source"] == "legacy"
+    conn.execute("UPDATE run SET pull_request_number = 43 WHERE id = %s", (run.id,))
+    conn.execute("UPDATE run SET pull_request_number = NULL WHERE id = %s", (run.id,))
+    for number in (42, 43):
+        assert runs_for_pr(conn, rid, number)["runs"][0]["source"] == "legacy"
+    upsert_run(conn, run)
+    conn.execute("UPDATE run SET pull_request_number = 42 WHERE id = %s", (run.id,))
+    assert runs_for_pr(conn, rid, 42)["runs"][0]["source"] == "provider"

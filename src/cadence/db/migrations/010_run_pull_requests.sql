@@ -19,3 +19,18 @@ CREATE INDEX run_pull_request_lookup_idx ON run_pull_request (repo_id, number, r
 -- Existing scalar values are positive evidence, with explicitly weaker provenance.
 INSERT INTO run_pull_request (repo_id, run_id, number, source)
 SELECT repo_id, id, pull_request_number, 'legacy' FROM run WHERE pull_request_number > 0;
+
+-- Old workers may still write the scalar during deployment. Capture those positives too.
+CREATE FUNCTION capture_run_legacy_pr() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.pull_request_number > 0 THEN
+        INSERT INTO run_pull_request (repo_id, run_id, number, source)
+        VALUES (NEW.repo_id, NEW.id, NEW.pull_request_number, 'legacy')
+        ON CONFLICT (run_id, number) DO NOTHING;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER run_legacy_pr_capture
+AFTER INSERT OR UPDATE OF pull_request_number ON run
+FOR EACH ROW EXECUTE FUNCTION capture_run_legacy_pr();
