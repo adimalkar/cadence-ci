@@ -192,10 +192,12 @@ class TestIrrelevantPathTrigger:
 class TestLongTailStep:
     def test_flags_a_dominant_step(self):
         series = {
-            ("test", "pytest"): StepSeries("test", "pytest", [600.0] * 30, list(range(30))),
-            ("test", "checkout"): StepSeries("test", "checkout", [5.0] * 30, list(range(30))),
+            ("ci.yml", "test", "pytest"): StepSeries("test", "pytest", [600.0] * 30,
+                                                     list(range(30))),
+            ("ci.yml", "test", "checkout"): StepSeries("test", "checkout", [5.0] * 30,
+                                                       list(range(30))),
         }
-        ctx = _ctx(MATRIX_WF, step_series=series)
+        ctx = _ctx(MATRIX_WF, step_series_resolved=series)
         drafts = LongTailStepDetector().run(ctx)
         assert len(drafts) == 1
         assert "pytest" in drafts[0].title
@@ -203,26 +205,26 @@ class TestLongTailStep:
     def test_carries_no_savings_figure(self):
         """The fix is unspecified (shard? cache? nightly?), so any number would be a
         guess presented as a measurement."""
-        series = {("test", "pytest"): StepSeries("test", "pytest", [600.0] * 30,
+        series = {("ci.yml", "test", "pytest"): StepSeries("test", "pytest", [600.0] * 30,
                                                  list(range(30)))}
-        d = LongTailStepDetector().run(_ctx(MATRIX_WF, step_series=series))[0]
+        d = LongTailStepDetector().run(_ctx(MATRIX_WF, step_series_resolved=series))[0]
         assert d.savings is None
 
     def test_evenly_spread_steps_produce_nothing(self):
         series = {
-            ("test", f"s{i}"): StepSeries("test", f"s{i}", [100.0] * 30, list(range(30)))
+            ("ci.yml", "test", f"s{i}"): StepSeries("test", f"s{i}", [100.0] * 30, list(range(30)))
             for i in range(10)
         }
-        assert LongTailStepDetector().run(_ctx(MATRIX_WF, step_series=series)) == []
+        assert LongTailStepDetector().run(_ctx(MATRIX_WF, step_series_resolved=series)) == []
 
     def test_fast_steps_ignored_even_if_dominant(self):
-        series = {("test", "quick"): StepSeries("test", "quick", [3.0] * 30,
+        series = {("ci.yml", "test", "quick"): StepSeries("test", "quick", [3.0] * 30,
                                                 list(range(30)))}
-        assert LongTailStepDetector().run(_ctx(MATRIX_WF, step_series=series)) == []
+        assert LongTailStepDetector().run(_ctx(MATRIX_WF, step_series_resolved=series)) == []
 
     def test_flags_inconsistency_when_p95_far_exceeds_median(self):
         durations = [100.0] * 28 + [900.0, 950.0]
-        series = {("test", "flaky-ish"): StepSeries("test", "flaky-ish", durations,
+        series = {("ci.yml", "test", "flaky-ish"): StepSeries("test", "flaky-ish", durations,
                                                     list(range(30)))}
-        d = LongTailStepDetector().run(_ctx(MATRIX_WF, step_series=series))[0]
+        d = LongTailStepDetector().run(_ctx(MATRIX_WF, step_series_resolved=series))[0]
         assert "inconsistent" in d.suggested_action
