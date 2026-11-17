@@ -17,6 +17,7 @@ import structlog
 
 from cadence.models import CommitRecord, Job, NormalizedEvent, Repo, Run, RunPage, Step
 from cadence.providers.base import AccessDenied, Expired, NotFound, RateLimited
+from cadence.run_prs import parse_pr_references
 from cadence.source import FileInventory, SourceUnavailable
 
 log = structlog.get_logger(__name__)
@@ -183,7 +184,7 @@ class GitHubProvider:
 
     @staticmethod
     def _to_run(raw: dict, repo_id: int) -> Run:
-        prs = raw.get("pull_requests") or []
+        prs, pr_state = parse_pr_references(raw.get("pull_requests"))
         return Run(
             id=raw["id"],
             repo_id=repo_id,
@@ -201,7 +202,9 @@ class GitHubProvider:
             # strongest flaky label (same tree, different outcome) -- costs an extra commit
             # lookup and is backfilled separately rather than paid for on every run.
             tree_sha=None,
-            pull_request_number=prs[0]["number"] if prs else None,
+            pull_request_number=prs[0] if prs else None,
+            pull_request_numbers=prs,
+            pr_payload_state=pr_state,
             created_at=_dt(raw["created_at"]),
             started_at=_dt(raw.get("run_started_at")),
             updated_at=_dt(raw.get("updated_at")),

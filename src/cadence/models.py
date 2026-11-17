@@ -88,6 +88,10 @@ class Run:
     pull_request_number: int | None = None
     tree_sha: str | None = None
     jobs: list[Job] = field(default_factory=list)
+    # Every valid provider-reported number; the scalar above remains a legacy projection.
+    pull_request_numbers: list[int] = field(default_factory=list)
+    # The most recently ingested full-run payload, not completeness of PR association.
+    pr_payload_state: str = "unknown"
 
     @property
     def wall_clock(self) -> timedelta | None:
