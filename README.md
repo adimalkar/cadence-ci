@@ -79,6 +79,20 @@ uv run cadence ingest astral-sh/ruff --limit 100
 uv run cadence stats astral-sh/ruff
 ```
 
+Inspect recorded runs associated with any PR, without network access or a tracked fix:
+
+```bash
+uv run cadence pr-runs owner/repo 42 --json pr-runs.json
+```
+
+Migration `010` preserves every valid PR number reported by REST or `workflow_run`
+payloads. It backfills existing scalar values as `legacy`; new reports have `provider`
+provenance. A database trigger also captures scalar writes from older workers during
+rollout. Later empty/missing lists never delete recorded links. JSON includes source,
+recording timestamps, payload state and truncation (500 default, maximum 5,000). Empty
+results leave unreported associations unknown. This is recorded association, not savings
+or a claim that GitHub supplied every relationship; see CAVEATS 73.
+
 Preview cache changes for an ingested repo:
 
 ```bash

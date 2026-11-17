@@ -428,10 +428,45 @@ re-litigated.
 - [ ] Realized-vs-predicted recorded for every merged PR
 - [ ] Zero uninvited PRs
 
-## The prerequisite this phase does not have
+### Implemented: all reported run/PR associations
 
-**PR → run linkage does not exist.** Nothing joins a pull request to the runs it caused.
-That blocks realized-savings writeback from attributing correctly, and it is the same
-missing piece that blocks PR impact analysis (`FEATURE_CANDIDATES.md` F3) and stacked-PR
-detection (5B). One unglamorous piece of work unblocks three features — do it early in this
-phase rather than working around it three times.
+`run_prs.py`, migration `010` and the shared REST/`workflow_run` ingest path preserve
+every valid reported PR number, rather than just the first. The legacy scalar remains
+for compatibility. Existing positive scalars are backfilled as `legacy` evidence;
+direct provider observations use `provider` provenance and can upgrade that label.
+Re-ingest is idempotent. A database trigger bridges scalar writes from older workers
+during deployment. Empty, missing and malformed lists do not delete known links.
+
+```bash
+cadence db init
+cadence pr-runs owner/repo 42 --json pr-runs.json
+```
+
+The new command is offline and read-only, independent of fix registration. Results carry
+source, recording times and the last ingested payload state: `reported`, `empty`,
+`unknown` or `malformed`. Those states describe the received field, not completeness of
+association. Valid entries in a malformed list are retained. A run cannot be reassigned
+to another repository on update; database foreign keys also scope associations to its repo.
+The limit is 500 by default / 5,000 maximum, with explicit truncation and unknown absence.
+
+**Validated 2026-11-17:** 40 new parser/provider, real-database and CLI cases; full suite
+685 passed, no skips, 78.85% coverage. Existing provider/ingest/worker/webhook checks pass.
+A GET-only 100-run sample from our repo contained 18 reported associations across nine
+PRs and 82 empty lists; all 18 pairs survived test-database ingest and lookup. The sample
+had zero multi-PR runs, so multi-PR preservation is proven by regression fixtures, not a
+claimed field acceptance. Every smoke-test database write was rolled back.
+
+Migration `010` reserves `009` for the independent fix-PR registration work in PR #49;
+the capture/query implementation works without that registry. Its legacy-scalar readers
+still need normalized-table integration after the separate changes land. Missing provider
+associations, authoritative historical backfill and causal savings attribution remain
+open (CAVEATS 73).
+
+## Remaining linkage prerequisites
+
+**Positive run/PR association capture exists; attribution remains incomplete.**
+The normalized relation and offline query preserve directly reported numbers with
+provenance. Fix registration is separate work in PR #49. Integrating consumers, recovering
+unreported associations and defining post-merge comparison cohorts are still required
+before realized-savings writeback, general PR impact analysis (`FEATURE_CANDIDATES.md` F3)
+or stacked-PR detection (5B) can claim correct attribution.

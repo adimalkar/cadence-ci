@@ -90,7 +90,7 @@ class Run:
     jobs: list[Job] = field(default_factory=list)
     # Every valid provider-reported number; the scalar above remains a legacy projection.
     pull_request_numbers: list[int] = field(default_factory=list)
-    # The most recently ingested full-run payload, not completeness of PR association.
+    # State of this payload's PR field; this does not prove association completeness.
     pr_payload_state: str = "unknown"
 
     @property

@@ -56,6 +56,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 73 | All reported PR/run positives are retained; upstream coverage and legacy-reader integration remain | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1534,6 +1535,46 @@ babel ×1, and they do not share one shape:
 
 The fixer has to know which files exist, which it currently cannot.
 
+### 73. Reported PR/run capture is complete for received positives; coverage is not · Medium
+
+**Implemented by `86288de` and `0e68e7c`, 2026-11-17.** REST and `workflow_run` decoding retain every
+valid PR number and distinguish reported, empty, missing/null and malformed payloads.
+Migration `010` normalizes associations under a repository/run foreign key; old scalars
+backfill with `legacy` provenance. A trigger also captures subsequent scalar writes from
+older workers during rollout. Positive provider observations upgrade provenance,
+never downgrade it. Partial updates and job stubs never erase known associations.
+`cadence pr-runs` exposes stored positive links offline with truncation and unknown absence.
+
+**Why it matters.** An empty API list does not establish that a run has no related PR.
+Malformed lists can still contain valid positive entries; these are retained while the
+payload is marked malformed. The legacy scalar remains a compatibility projection and
+still cannot expose more than one PR. Its consumers, including the separate fix registry
+in PR #49, need explicit integration with the normalized relation. Capture alone does not
+implement lifecycle automation, publishing, ancestry or realized-savings attribution.
+
+**Data semantics.** `pr_payload_state` is the last field state recorded by the new ingest
+path, not the newest upstream revision or a completeness guarantee. Legacy SQL writers
+do not update that field. Association rows
+are append-only observations; `source` preserves the strongest provenance ever seen, and
+recording timestamps are local ingestion/migration times, not PR impact dates. The migration
+does not fetch additional historical associations: they require authoritative re-ingest.
+Existing conditional polling can return 304, so a migration is not a forced backfill.
+
+**Evidence.** 40 new cases cover multiple/deduplicated numbers, malformed/empty fields,
+REST/webhook consistency, legacy upgrade, repository isolation, partial/stub updates,
+migration backfill, mixed-version writers and offline CLI. Full suite 685 passed, no
+skips, 78.85% coverage.
+GET-only smoke on our own repo: 100 runs, 18 reported pairs across nine PRs, 82 empty
+lists, all 18 pairs verified after test-DB ingest/query and all writes rolled back.
+Zero sampled runs reported multiple PRs; that shape is fixture-tested only. Report
+`data/corpus/run-pr-associations-smoke.json` and script `.agent/run_prs_smoke.py` are
+gitignored. No production schema or data was changed during implementation.
+
+**What would close it.** Move legacy readers onto the normalized relation, add bounded
+authoritative backfill and evidence for missing/multiple upstream associations, and
+validate complete lifecycle/post-merge comparison cohorts on invited workflow fixes.
+Keep association distinct from causal impact or saved time.
+
 ### 67. A working cache preview currently produces no eligible corpus changes · Medium
 
 **What.** `cache.setup@1` implements existing setup-node/npm and setup-python/pip inputs,
@@ -1624,7 +1665,8 @@ Verified working (8 stacks in 100 open `vercel/next.js` PRs, including a 3-deep 
 go/k8s/pytorch/polars). **Without both guards — same-repo parents only, and the default
 branch never a parent — the detector labels 96–99 of 100 PRs as stacked**, because a fork PR
 whose head branch is named `master` matches everything targeting the default branch. Needs
-PR→run linkage that does not exist until Phase 5.
+general PR ancestry/impact attribution. Reported run/PR association capture now exists
+(item 73), but does not supply those broader semantics.
 
 ---
 

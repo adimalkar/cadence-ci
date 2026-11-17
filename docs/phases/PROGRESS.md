@@ -204,8 +204,11 @@ current floor and shape guards (CAVEATS 67). The ≥20 real before/after criteri
 unmet. Next, measure additional eligible shapes before expanding coverage; keep opt-in
 publishing and its anti-spam controls separate.
 
-**Realized savings is blocked on PR → run linkage.** Nothing joins a pull request to the
-runs it caused, so writeback cannot attribute correctly. This does not block local previews.
+**Reported run/PR associations are now preserved; realized savings remains unbuilt.**
+Migration `010` captures all valid reported PR numbers with provider/legacy provenance.
+`cadence pr-runs` queries them offline, retaining unknown absence and explicit truncation.
+Legacy scalar consumers (including the separate fix registry in PR #49), unreported
+associations and causal post-merge cohorts remain follow-ups (CAVEATS 73).
 
 One prerequisite satisfied: config persistence landed (migration `005`, `configstore.py`),
 so the round-trip ship criterion — *"200 corpus workflows, byte-identical when no fix
