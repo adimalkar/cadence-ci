@@ -95,6 +95,26 @@ a projected lower-bound saving of 30 seconds per run and declines publishing wor
 custom checkout layouts and ambiguous install commands. Its current corpus evaluation
 produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
+Track an existing fix PR against a stored finding, then inspect associated ingested runs:
+
+```bash
+uv run cadence db init  # includes migration 009
+uv run cadence fix track owner/repo 42 --finding 'no_dependency_cache:.github/workflows/ci.yml:test'
+uv run cadence fix runs owner/repo 42 --json linked-runs.json
+```
+
+`track` reads GitHub PR metadata with read permission and writes the registration to the
+local database. Repeat it with the same finding to refresh PR state. Each PR is bound to
+one finding in that repository; conflicting bindings and stale snapshots are rejected.
+`runs` works offline in a read-only transaction and shows the metadata's last sync time.
+
+Links come from an explicit stored API PR number, or from a push of the exact recorded
+merge commit on the PR's base branch at/after merge. Missing associations, shared branch
+names and later descendant commits are not guessed. The default limit is 500 links
+(maximum 5,000); JSON marks truncated results. This establishes association, not savings
+or causal impact. Publishing, automatic lifecycle/suppression handling and the 30-day
+post-merge savings comparison remain future work; see CAVEATS 72.
+
 Tests:
 
 ```bash

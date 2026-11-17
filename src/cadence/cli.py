@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 import typer
 from rich.console import Console
 from rich.table import Table
@@ -26,8 +27,11 @@ from cadence.cost import render_saving
 from cadence.db import apply_migrations, connect
 from cadence.ingest import ingest_repo
 from cadence.logstore import LocalLogStore
+from cadence.models import Repo
+from cadence.pr_tracking import PullRequestSnapshot, linked_runs, track_pull_request
 from cadence.preview import preview_cache_fixes
 from cadence.providers import GitHubProvider
+from cadence.providers.base import AccessDenied, Expired, NotFound, RateLimited
 from cadence.queue import enqueue
 from cadence.report import (
     build_model,
@@ -64,10 +68,85 @@ app.add_typer(queue_app, name="queue")
 app.add_typer(corpus_app, name="corpus")
 app.add_typer(webhook_app, name="webhook")
 app.add_typer(commits_app, name="commits")
-fix_app = typer.Typer(no_args_is_help=True, help="Preview deterministic workflow fixes.")
+fix_app = typer.Typer(no_args_is_help=True, help="Preview fixes and track their pull requests.")
 app.add_typer(fix_app, name="fix")
 
 console = Console()
+
+
+def _fix_repo_parts(repo: str) -> tuple[str, str]:
+    parts = repo.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise typer.BadParameter("repo must be owner/name")
+    return parts[0], parts[1]
+
+
+@fix_app.command("track")
+def fix_track(
+    repo: str = typer.Argument(..., help="owner/name, already ingested"),
+    number: int = typer.Argument(..., min=1, help="Existing fix PR number"),
+    finding: str = typer.Option(..., help="Stored finding dedupe key"),
+) -> None:
+    """Register/refresh an existing fix PR locally using read-only GitHub access."""
+    owner, name = _fix_repo_parts(repo)
+    try:
+        with connect() as conn:
+            conn.execute("SET TRANSACTION READ ONLY")
+            row = conn.execute("SELECT * FROM repo WHERE owner = %s AND name = %s",
+                               (owner, name)).fetchone()
+            if row is None:
+                raise ValueError("repository is not ingested")
+            remote = Repo(id=row["id"], owner=row["owner"], name=row["name"],
+                          is_private=row["is_private"], default_branch=row["default_branch"])
+
+        async def fetch() -> PullRequestSnapshot:
+            provider = GitHubProvider(_require_token())
+            try:
+                return await provider.fetch_pull_request(remote, number)
+            except (AccessDenied, Expired, NotFound, RateLimited, httpx.HTTPError) as exc:
+                raise ValueError(f"Could not read PR metadata: {exc}") from exc
+            finally:
+                await provider.aclose()
+
+        snapshot = asyncio.run(fetch())
+        with connect() as conn:
+            track_pull_request(conn, snapshot, finding)
+        typer.echo(f"Tracked {repo}#{number}: {snapshot.state}; finding {finding}")
+    except ValueError as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(1) from None
+
+
+@fix_app.command("runs")
+def fix_runs(
+    repo: str = typer.Argument(..., help="owner/name, already ingested"),
+    number: int = typer.Argument(..., min=1, help="Tracked fix PR number"),
+    limit: int = typer.Option(500, min=1, max=5000, help="Maximum stored links to list"),
+    json_out: Annotated[Path | None, typer.Option(
+        "--json", help="Write link evidence JSON.",
+    )] = None,
+) -> None:
+    """List associated ingested runs offline; association is not a savings estimate."""
+    owner, name = _fix_repo_parts(repo)
+    try:
+        with connect() as conn:
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            row = conn.execute("SELECT id FROM repo WHERE owner = %s AND name = %s",
+                               (owner, name)).fetchone()
+            if row is None:
+                raise ValueError("repository is not ingested")
+            output = linked_runs(conn, row["id"], number, limit=limit)
+        if json_out:
+            json_out.write_text(json.dumps(output, indent=2, default=str) + "\n", encoding="utf-8")
+        typer.echo(f"{repo}#{number}: {len(output['runs'])} stored run link(s)"
+                   + ("; more available (limit reached)" if output["truncated"] else ""))
+        typer.echo(f"PR metadata last synced: {output['pull_request']['last_synced_at']}")
+        for run in output["runs"]:
+            typer.echo(f"{run['run_id']}  {run['provenance']}  "
+                       f"{run['workflow_path']}  {run['conclusion'] or run['status']}")
+    except ValueError as exc:
+        console.print(str(exc), style="red", markup=False)
+        raise typer.Exit(1) from None
 
 
 @fix_app.command("preview")

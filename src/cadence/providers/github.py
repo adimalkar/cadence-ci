@@ -16,6 +16,7 @@ import httpx
 import structlog
 
 from cadence.models import CommitRecord, Job, NormalizedEvent, Repo, Run, RunPage, Step
+from cadence.pr_tracking import PullRequestSnapshot
 from cadence.providers.base import AccessDenied, Expired, NotFound, RateLimited
 from cadence.source import FileInventory, SourceUnavailable
 
@@ -160,6 +161,18 @@ class GitHubProvider:
             is_private=data["private"],
             default_branch=data.get("default_branch"),
         )
+
+    async def fetch_pull_request(self, repo: Repo, number: int) -> PullRequestSnapshot:
+        """Read PR identity/lifecycle metadata without requesting write permissions."""
+        if type(number) is not int or number <= 0:
+            raise ValueError("pull request number must be positive")
+        payload = (await self._get_with_backoff(
+            f"/repos/{repo.owner}/{repo.name}/pulls/{number}"
+        )).json()
+        snapshot = PullRequestSnapshot.from_github(payload)
+        if snapshot.repo_id != repo.id or snapshot.number != number:
+            raise ValueError("pull request does not belong to the requested repository/number")
+        return snapshot
 
     async def fetch_runs(
         self,
