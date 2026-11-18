@@ -23,11 +23,11 @@ from cadence.worker import JOB_TIMEOUT, MAX_ATTEMPTS
 
 class TestTheLeaseInvariant:
     def test_a_job_times_out_before_its_lease_expires(self):
-        """The ordering that stops a job being processed twice.
+        """The ordering that reduces duplicate processing during normal scheduling.
 
         If a job could outlive its lease, another worker would reclaim the row while this
-        one is still working it. Timing out first means this worker always releases the
-        row before anyone else may take it.
+        one is still working it. A live event loop normally cancels first; claim tokens
+        separately fence late acknowledgements after a process pause or delayed cancellation.
         """
         assert JOB_TIMEOUT < queue.LEASE
 

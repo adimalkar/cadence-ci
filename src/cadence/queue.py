@@ -9,6 +9,7 @@ called from the app's `connect()` (which defaults to dict rows) or a bare
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from uuid import UUID
 
 import psycopg
 from psycopg.rows import dict_row
@@ -43,7 +44,8 @@ def claim_next(conn: psycopg.Connection, *, lease: timedelta = LEASE) -> dict | 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
             """
-            UPDATE ingest_job SET status = 'processing', updated_at = now()
+            UPDATE ingest_job SET status = 'processing', updated_at = now(),
+                                  claim_token = gen_random_uuid()
             WHERE id = (
               SELECT id FROM ingest_job
               WHERE (status = 'pending' AND run_at <= now())
@@ -59,28 +61,42 @@ def claim_next(conn: psycopg.Connection, *, lease: timedelta = LEASE) -> dict | 
         return cur.fetchone()
 
 
-def complete(conn: psycopg.Connection, job_id: int) -> None:
-    conn.execute(
-        "UPDATE ingest_job SET status = 'done', updated_at = now() WHERE id = %s", (job_id,)
+def complete(conn: psycopg.Connection, job_id: int, *, claim_token: UUID) -> bool:
+    """Acknowledge only the current processing claim; False means ownership was lost."""
+    if not isinstance(claim_token, UUID):
+        raise ValueError("claim_token must be the UUID returned by claim_next")
+    result = conn.execute(
+        "UPDATE ingest_job SET status = 'done', updated_at = now(), claim_token = NULL"
+        " WHERE id = %s AND status = 'processing' AND claim_token = %s RETURNING id",
+        (job_id, claim_token),
     )
+    return result.fetchone() is not None
 
 
-def fail(conn: psycopg.Connection, job_id: int, error: str, *, retry_in: timedelta | None) -> None:
+def fail(
+    conn: psycopg.Connection, job_id: int, error: str, *,
+    retry_in: timedelta | None, claim_token: UUID,
+) -> bool:
     """`retry_in=None` is terminal. A rate limit or a transient network error should
     retry; a job whose payload is simply wrong (a deleted repo, a malformed webhook
     body) should not retry forever."""
+    if not isinstance(claim_token, UUID):
+        raise ValueError("claim_token must be the UUID returned by claim_next")
     if retry_in is not None:
-        conn.execute(
+        result = conn.execute(
             "UPDATE ingest_job SET status = 'pending', attempts = attempts + 1,"
-            " last_error = %s, run_at = now() + %s, updated_at = now() WHERE id = %s",
-            (error[:2000], retry_in, job_id),
+            " last_error = %s, run_at = now() + %s, updated_at = now(), claim_token = NULL"
+            " WHERE id = %s AND status = 'processing' AND claim_token = %s RETURNING id",
+            (error[:2000], retry_in, job_id, claim_token),
         )
     else:
-        conn.execute(
+        result = conn.execute(
             "UPDATE ingest_job SET status = 'failed', attempts = attempts + 1,"
-            " last_error = %s, updated_at = now() WHERE id = %s",
-            (error[:2000], job_id),
+            " last_error = %s, updated_at = now(), claim_token = NULL"
+            " WHERE id = %s AND status = 'processing' AND claim_token = %s RETURNING id",
+            (error[:2000], job_id, claim_token),
         )
+    return result.fetchone() is not None
 
 
 def pending_or_processing_count(conn: psycopg.Connection, *, lease: timedelta = LEASE) -> int:
