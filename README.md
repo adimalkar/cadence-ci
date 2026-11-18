@@ -95,6 +95,27 @@ a projected lower-bound saving of 30 seconds per run and declines publishing wor
 custom checkout layouts and ambiguous install commands. Its current corpus evaluation
 produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
+Compare explicit stored before/after runs offline:
+
+```bash
+uv run cadence compare-runs owner/repo --workflow .github/workflows/ci.yml \
+  --before-run 101 --before-run 102 --after-run 201 --after-run 202 \
+  --min-samples 2 --json comparison.json
+```
+
+Replace the example IDs with ingested runs. Repeat each option for more observations;
+the default floor is five samples per side for each matching profile. The command accepts
+at most 500 distinct IDs total, in disjoint cohorts with nonoverlapping eligible timing
+windows. It reads one consistent database snapshot and makes no API calls.
+
+Comparisons match workflow ID/path, event, branch, job names/matrices and runner labels/
+groups. They use successful first attempts with complete stored job timings; exclusions
+and unmatched profiles are reported. Each profile reports separate median wall, execution
+and queue seconds, with after-minus-before changes. These are observed changes, not
+attributed savings. A sample floor is not a confidence interval, and stored jobs may be
+incomplete without a completeness marker. When no profile qualifies, the command exits
+nonzero while still writing the JSON evidence. See CAVEATS 75 for the remaining limits.
+
 Tests:
 
 ```bash
