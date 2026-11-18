@@ -1,0 +1,14 @@
+{
+  "measured_at": "2026-11-18T07:26:27.403107+00:00",
+  "repo": "adimalkar/cadence-ci",
+  "run_id": 44247165206,
+  "attempt": 1,
+  "status": "refreshed",
+  "jobs_written": 9,
+  "steps_written": 86,
+  "job_starts_restored": 9,
+  "run_and_polling_state_unchanged": true,
+  "database": "test only; seeded partial timings then repaired; all writes rolled back",
+  "network": "GET repo, GET latest3 runs, GET exact attempt jobs; provider closed before DB",
+  "coverage": "unverified; no receipt created and no production changes"
+}

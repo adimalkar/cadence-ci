@@ -1,6 +1,6 @@
 # Phase progress — what is built, what is left
 
-Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-10-19. Checkbox
+Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-11-18. Checkbox
 counts come from the phase files themselves; the "actually exists" column is the source tree and a live corpus
 sweep.
 
@@ -203,6 +203,15 @@ workflows. There are 17 missing-cache findings and **zero accepted previews** un
 current floor and shape guards (CAVEATS 67). The ≥20 real before/after criterion is still
 unmet. Next, measure additional eligible shapes before expanding coverage; keep opt-in
 publishing and its anti-spam controls separate.
+
+**Explicit job repair implemented, 2026-11-18 (`4c4fedb`).** `refresh-jobs` reads
+bounded explicit stored attempts without polling ETags, validates terminal observations,
+repairs missing timings and reports resumable partial outcomes. It preserves run/polling
+state and creates no coverage receipt. Shared job upserts now reject conflicting immutable
+identities before changing steps. 49 new cases; full suite 694 pass, 79.32% coverage.
+A GET-only 9-job/86-step smoke repaired seeded test-DB timings with rollback; no production
+writes. PR #53 coverage evidence and PR #52 cohorts remain open separately; integration and
+attribution limits are recorded in CAVEATS 77.
 
 **Realized savings is blocked on PR → run linkage.** Nothing joins a pull request to the
 runs it caused, so writeback cannot attribute correctly. This does not block local previews.

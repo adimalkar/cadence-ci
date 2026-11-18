@@ -143,7 +143,7 @@ def ensure_run_stub(conn: psycopg.Connection, run: Run) -> None:
 
 
 def upsert_job(conn: psycopg.Connection, job: Job, repo_id: int) -> int:
-    conn.execute(
+    result = conn.execute(
         """
         INSERT INTO job (
             id, run_id, repo_id, name, name_base, status, conclusion, runner_labels,
@@ -168,6 +168,9 @@ def upsert_job(conn: psycopg.Connection, job: Job, repo_id: int) -> int:
                 WHEN EXCLUDED.runner_labels = '{}' THEN job.runner_labels
                 ELSE EXCLUDED.runner_labels END,
             matrix = coalesce(EXCLUDED.matrix, job.matrix)
+        WHERE job.run_id = EXCLUDED.run_id AND job.repo_id = EXCLUDED.repo_id
+          AND job.attempt = EXCLUDED.attempt
+        RETURNING id
         """,
         {
             "id": job.id,
@@ -186,6 +189,8 @@ def upsert_job(conn: psycopg.Connection, job: Job, repo_id: int) -> int:
             "matrix": psycopg.types.json.Json(job.matrix) if job.matrix else None,
         },
     )
+    if result.fetchone() is None:
+        raise ValueError("job identity conflicts with its stored run/repository/attempt")
 
     written = 0
     for step in job.steps:

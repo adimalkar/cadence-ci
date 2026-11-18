@@ -183,6 +183,30 @@ This is the first phase requiring `pull_requests:write` and `contents:write`. Bo
 **opt-in at install time, separately from the read scopes.** A user can run the audit
 forever without granting write. Preserve that — it is the whole no-commitment thesis.
 
+### Explicit job/step repair (implemented 2026-11-18, source `4c4fedb`)
+
+`refresh-jobs OWNER/REPO --run ID ...` repairs observations for selected stored completed
+runs. Optional `--attempt N` selects a prior attempt; default is the stored current attempt.
+Up to 100 distinct runs and 1–100 pages per attempt (default 10) bound the operation.
+A read-only selection snapshot closes before HTTP. Short per-attempt transactions check
+the stored run revision, reject conflicting immutable job identities and repair job queue/
+execution and step start/end observations. Missing fields preserve known timings;
+unreturned rows are retained. No polling state, run metadata, finding or log writes occur.
+
+Outcomes and pending pairs are resumable through `--json`; rate/access/transport/persistence
+stops retain earlier committed work. Invalid/unavailable/empty/changed/missing attempts
+are explicit nonzero outcomes rather than evidence of no jobs. No new migration is needed.
+
+This independent main-based branch does not include PR #53 receipts or PR #52 cohorts.
+It repairs observed rows without a coverage certificate or causal claim. Integration
+should reuse the inventory capability and shared verification reader after merges are
+chosen, rather than treating repaired row counts as completeness (CAVEATS 77).
+
+Validation: 49 new pure/provider/SQL/CLI cases; full suite 694 passed, 79.32% coverage.
+Static/security checks pass. GET-only own-repo attempt supplied 9 jobs/86 steps; a test-DB
+rollback transaction repaired seeded missing timings and preserved run/polling state.
+Committed report: `data/corpus/job-refresh-smoke.json`. No production writes or migrations.
+
 ### Verification loop
 
 After a Cadence PR merges, watch the next 30 days of runs on that ref and write
