@@ -25,6 +25,7 @@ from cadence.corpus import CORPUS
 from cadence.cost import render_saving
 from cadence.db import apply_migrations, connect
 from cadence.ingest import ingest_repo
+from cadence.job_inventory import MAX_ID, job_coverage
 from cadence.logstore import LocalLogStore
 from cadence.preview import preview_cache_fixes
 from cadence.providers import GitHubProvider
@@ -68,6 +69,45 @@ fix_app = typer.Typer(no_args_is_help=True, help="Preview deterministic workflow
 app.add_typer(fix_app, name="fix")
 
 console = Console()
+
+
+@app.command("job-coverage")
+def job_coverage_report(
+    repo: str = typer.Argument(..., help="owner/name, already ingested"),
+    run_ids: Annotated[list[int] | None, typer.Option(
+        "--run", min=1, max=MAX_ID, help="Stored run ID; repeat to select several.",
+    )] = None,
+    limit: int = typer.Option(50, min=1, max=500, help="Maximum stored runs to inspect"),
+    json_out: Annotated[Path | None, typer.Option(
+        "--json", help="Write receipt and current-membership evidence.",
+    )] = None,
+) -> None:
+    """Check job inventory coverage for current attempts offline, without API access."""
+    parts = repo.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise typer.BadParameter("repo must be owner/name")
+    if run_ids and len(set(run_ids)) > limit:
+        raise typer.BadParameter("explicit run IDs must fit within --limit")
+    try:
+        with connect() as conn:
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            row = conn.execute("SELECT id FROM repo WHERE owner=%s AND name=%s",
+                               tuple(parts)).fetchone()
+            if row is None:
+                raise ValueError("repository is not ingested")
+            output = {"repo": repo, **job_coverage(conn, row["id"], run_ids=run_ids, limit=limit)}
+        if json_out:
+            json_out.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+        typer.echo(f"{repo}: {output['counts']}")
+        for run in output["runs"]:
+            typer.echo(f"Run {run['run_id']} attempt {run['attempt']}: {run['coverage']}; "
+                       f"{run['stored_count']} stored / {run['expected_count']} expected")
+        if output["truncated"]:
+            typer.echo("More stored runs exist; select explicit IDs with --run.")
+        typer.echo(output["meaning"])
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
 
 
 @fix_app.command("preview")

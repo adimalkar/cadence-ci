@@ -15,6 +15,7 @@ from urllib.parse import quote
 import httpx
 import structlog
 
+from cadence.job_inventory import MAX_ID, MAX_JOBS, JobInventory
 from cadence.models import CommitRecord, Job, NormalizedEvent, Repo, Run, RunPage, Step
 from cadence.providers.base import AccessDenied, Expired, NotFound, RateLimited
 from cadence.source import FileInventory, SourceUnavailable
@@ -226,6 +227,52 @@ class GitHubProvider:
                 break
             page += 1
         return jobs
+
+    async def fetch_job_inventory(self, repo: Repo, run_id: int, *, attempt: int) -> JobInventory:
+        """Exhaust one explicit attempt; unstable/malformed pagination is not a receipt."""
+        if type(run_id) is not int or not 1 <= run_id <= MAX_ID:
+            raise ValueError("invalid inventory run ID")
+        if type(attempt) is not int or not 1 <= attempt <= 2**31 - 1:
+            raise ValueError("invalid inventory attempt")
+        path = f"/repos/{repo.owner}/{repo.name}/actions/runs/{run_id}/attempts/{attempt}/jobs"
+        jobs: list[Job] = []
+        seen: set[int] = set()
+        total = None
+        for page in range(1, MAX_JOBS + 1):
+            response = await self._get_with_backoff(
+                path, params={"page": page, "per_page": 100},
+            )
+            data = response.json()
+            if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
+                raise ValueError("inventory jobs list is missing")
+            count = data.get("total_count")
+            if type(count) is not int or not 0 <= count <= MAX_JOBS:
+                raise ValueError("inventory total_count is missing or outside the bound")
+            if total is not None and count != total:
+                raise ValueError("inventory total_count changed during pagination")
+            total = count
+            batch = data["jobs"]
+            for raw in batch:
+                if (not isinstance(raw, dict) or type(raw.get("id")) is not int
+                        or not 1 <= raw["id"] <= MAX_ID or raw["id"] in seen
+                        or type(raw.get("run_id")) is not int or raw["run_id"] != run_id
+                        or type(raw.get("run_attempt")) is not int
+                        or raw["run_attempt"] != attempt):
+                    raise ValueError("inventory job identity is duplicated or mismatched")
+                seen.add(raw["id"])
+                jobs.append(self._to_job(raw, run_id))
+            if len(jobs) > total:
+                raise ValueError("inventory contains more jobs than advertised")
+            if len(jobs) == total:
+                if "next" in response.links:
+                    raise ValueError("inventory next-page link contradicts its total_count")
+                result = JobInventory(repo.id, run_id, attempt, total, page,
+                                      datetime.now(UTC), tuple(jobs))
+                result.validate()
+                return result
+            if not batch:
+                raise ValueError("inventory ended before its advertised count")
+        raise ValueError("inventory exceeded its page bound")
 
     @staticmethod
     def _to_job(raw: dict, run_id: int) -> Job:
