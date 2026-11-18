@@ -204,11 +204,11 @@ current floor and shape guards (CAVEATS 67). The ≥20 real before/after criteri
 unmet. Next, measure additional eligible shapes before expanding coverage; keep opt-in
 publishing and its anti-spam controls separate.
 
-**Ingest ordering protected, 2026-11-18 (`10339e5`).** Shared run/job/step persistence
-preserves terminal lifecycle state and known observations under delayed events. New run
+**Ingest ordering protected, 2026-11-18 (`97404ea`).** Shared run/job/step persistence
+preserves terminal lifecycle state and known observations under delayed events. Newer nonterminal revisions can report waiting states. New run
 attempts clear earlier attempt state; stale/ambiguous run revisions are counted as ignored.
 Job identity and conflicting terminal conclusions fail visibly. Missing fields can still
-enrich stored evidence. 35 new cases; full suite 680 pass, 78.67% coverage. GET-only completed
+enrich stored evidence. 41 new cases; full suite 686 pass, 78.67% coverage. GET-only completed
 payloads with 1 job/8 steps were replayed with synthetic late events in TEST DB and rolled
 back. No historical repair or production migration/write occurred. Receipt/repair/cohort
 integration and correction-policy limits remain open (CAVEATS 78).

@@ -1714,9 +1714,11 @@ security check uses the same fix. Local `pip-audit` and workflow hardening check
 
 ### 78. Lifecycle guards need rollout and an explicit correction policy · Medium
 
-**What.** `10339e5` (2026-11-18) protects shared ingest run/job/step persistence against
+**What.** `97404ea` (2026-11-18) protects shared ingest run/job/step persistence against
 delayed and partial payloads. Run revisions must not decrease attempt or known update
-timestamp, or regress lifecycle within an attempt. Missing incoming update timestamps
+timestamp, or reopen completed state within an attempt. Strictly newer known nonterminal
+revisions may change between active/waiting states; rank breaks ambiguous revision ties.
+Missing incoming update timestamps
 cannot replace known revisions. Equal-revision terminal-conclusion conflicts are ignored;
 a later timestamp can correct a conclusion. New attempts clear old start/conclusion
 rather than inheriting them. Full run metadata can replace the start from a job-only stub.
@@ -1732,10 +1734,13 @@ roll back on a conflict; helpers do not commit or provide automatic per-call sav
 
 **Why it matters.** These guards protect writes by updated code, not old running workers
 or direct SQL clients. Existing damaged rows are not repaired, and there is no deployed
-schema/data change. The first known job/step timestamp or runner value can itself be
+schema/data change. GitHub exposes waiting/pending/requested run states in its
+[workflow-run API](https://docs.github.com/en/rest/actions/workflow-runs). We use known
+update revisions to order nonterminal run changes, rather than assuming a total stage order.
+The first known job/step timestamp or runner value can itself be
 wrong; ordinary ingest now preserves it until an explicit, provenance-aware correction
 path exists. This policy cannot infer freshness from receipt time or prove upstream
-atomicity. Equivalent pre-start labels retain the first recorded label until a higher
+atomicity. For jobs/steps, equivalent pre-start labels retain the first recorded label until a higher
 stage arrives; arbitrary unknown states do not outrank known stages.
 
 A job/step terminal-conclusion conflict can fail an ingest transaction or exhaust a
@@ -1750,10 +1755,11 @@ regressing lifecycle or last-payload state. Open PRs #50–#54 are not copied he
 particular shared first-known timing policy and return-value/ownership guards need to
 be reconciled with explicit repair/receipt writers after merges are chosen.
 
-**Verification.** 35 new real-Postgres/permutation/worker cases cover all six valid
-queued/in-progress/completed delivery orders, run revisions and reruns, stub promotion,
+**Verification.** 41 new real-Postgres/permutation/worker cases cover all six valid
+queued/in-progress/completed delivery orders, newer nonterminal waiting revisions,
+equal-revision ties, run revisions and reruns, stub promotion,
 null statuses, field enrichment, ownership/conclusion conflicts, rollback and stats.
-Full suite 680 passed without skips, 78.67% coverage; lint/types/dependency/workflow security
+Full suite 686 passed without skips, 78.67% coverage; lint/types/dependency/workflow security
 checks pass. `data/corpus/ingest-order-smoke.json` records real completed own-repo
 run 44259357035 attempt 1 (1 job/8 steps) replayed with synthetic late payloads in TEST DB.
 All run/job/step rows stayed unchanged; all writes rolled back. This is not a capture

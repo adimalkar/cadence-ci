@@ -96,8 +96,9 @@ custom checkout layouts and ambiguous install commands. Its current corpus evalu
 produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
 Ingest preserves stronger lifecycle evidence when events arrive out of order. Older run
-attempts/revisions and same-attempt status regressions are ignored and counted in
-`runs_ignored`. A new attempt clears the prior attempt's conclusion/start; a full run
+attempts/revisions and same-attempt terminal regressions are ignored and counted in
+`runs_ignored`. Strictly newer nonterminal run revisions can report waiting states;
+lifecycle rank resolves ambiguous ties. A new attempt clears the prior attempt's conclusion/start; a full run
 payload can replace a job-only stub's start.
 
 Jobs and steps advance from pre-start to in-progress to completed. Missing timings and
