@@ -1,0 +1,24 @@
+{
+  "measured_at": "2026-11-18T05:48:22.066747+00:00",
+  "repo": "adimalkar/cadence-ci",
+  "requests": "GET repo, GET latest3 runs, GET exact attempt jobs; no API writes",
+  "database": "test only; jobs and receipt rolled back; no production migration",
+  "runs": [
+    {
+      "run_id": 44242871978,
+      "attempt": 1,
+      "coverage": "verified",
+      "expected_count": 1,
+      "stored_count": 1,
+      "pages": 1,
+      "observed_at": "2026-11-18T00:48:22.049200-05:00",
+      "missing_job_ids": [],
+      "extra_job_ids": []
+    }
+  ],
+  "counts": {
+    "verified": 1
+  },
+  "truncated": false,
+  "meaning": "verified means terminal stored membership matches a REST attempt receipt; not proof of timing accuracy, snapshot isolation or causal savings"
+}

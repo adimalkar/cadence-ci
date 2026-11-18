@@ -1,0 +1,10 @@
+{
+  "measured_at": "2026-11-18T05:48:56.945532+00:00",
+  "source": "stored public corpus",
+  "transaction_read_only": "on",
+  "runs": 93042,
+  "runs_with_current_attempt_jobs": 58491,
+  "runs_without_current_attempt_jobs": 34551,
+  "receipt_table_present": false,
+  "interpretation": "Stored job counts alone do not prove complete coverage; no receipt migration/backfill or production write performed"
+}

@@ -1,6 +1,6 @@
 # Phase progress — what is built, what is left
 
-Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-10-19. Checkbox
+Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-11-18. Checkbox
 counts come from the phase files themselves; the "actually exists" column is the source tree and a live corpus
 sweep.
 
@@ -203,6 +203,15 @@ workflows. There are 17 missing-cache findings and **zero accepted previews** un
 current floor and shape guards (CAVEATS 67). The ≥20 real before/after criterion is still
 unmet. Next, measure additional eligible shapes before expanding coverage; keep opt-in
 publishing and its anti-spam controls separate.
+
+**Job inventory evidence implemented, 2026-11-18 (`181ad70`).** Attempt-specific GitHub
+ingest now records validated terminal job inventories with their rows. Offline
+`job-coverage` checks current membership/status in a read-only consistent snapshot;
+old/webhook-only rows remain unknown. Ordinary fetch failures preserve the polling cursor.
+53 new cases; full suite 698 pass, 79.31% coverage. Live one-job receipt verified with test-DB
+rollback; read-only corpus baseline 93,042 runs includes 34,551 without current-attempt jobs.
+Migration 011 is not deployed to production. Cohort PR #52 still needs shared-reader
+integration after the user chooses merges; no attribution is claimed (CAVEATS 76).
 
 **Realized savings is blocked on PR → run linkage.** Nothing joins a pull request to the
 runs it caused, so writeback cannot attribute correctly. This does not block local previews.
