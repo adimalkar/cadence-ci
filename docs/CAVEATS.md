@@ -56,6 +56,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 74 | Stored-run refresh is bounded positive evidence, not complete PR coverage or realized savings | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1709,3 +1710,48 @@ chain; re-resolving every package would mix unrelated dependency changes into th
 [PR #33](https://github.com/adimalkar/cadence-ci/pull/33), which changes only urllib3's locked
 version/artifacts to 2.8.0. Merged `origin/main` into the cache branch (`5254e2b`) so its
 security check uses the same fix. Local `pip-audit` and workflow hardening checks pass.
+
+
+### 74. Stored-run refresh does not establish complete PR coverage · Medium
+
+**What.** `861ebe4` (2026-11-18) adds `refresh-runs`: exact GETs for up to 500 locally stored
+run IDs (default 50), with stable descending-ID selection and an optional exclusive cursor.
+It bypasses the polling ETag without changing polling state, fetching jobs/logs or inserting
+missing run rows. Older attempts/timestamps and same-attempt completed-state regressions
+are skipped. A conflicting valid head SHA stops persistence rather than changing identity.
+The current main-based decoder stores only the first scalar PR number. Normalized capture
+is separate open PR #50, not silently included here. Refresh reuses shared ingest storage
+so that integration can supply all positive associations later.
+
+**Why it matters.** Exact reads can recover metadata omitted by earlier ingest, but only
+for IDs the user selects and GitHub still exposes. A 404/410 may mean deletion, retention
+or hidden permissions; it is reported as unavailable without deleting local data. An empty
+or missing PR list is not proof of no PR, and stale responses do not contribute even new
+association evidence. This command does not mark a historical coverage watermark, persist
+a batch journal, integrate the separate fix registry, infer branch/ancestry relationships,
+handle PR closures or attribute realized savings.
+
+Rate/access/transport/persistence failures preserve earlier committed outcomes and leave
+current/later IDs in `remaining_run_ids`; retry those with `--run` before using
+`next_before`. Unavailable/malformed/missing outcomes also exit nonzero but are terminal
+for this batch and appear in `outcomes`, not pending IDs. Retrying them is an explicit user
+choice. A hard process interruption can lose the final report; bounded refresh is repeatable
+and users should keep their selection/cursor. Stored scalar PR and tree evidence survive
+omitted fields. Run attempt/status may advance while stored jobs remain on an older attempt;
+fetching fresh job timings is separate ingest work. Polling writers are not changed by
+this PR, so monotonic guards protect this refresh transaction rather than all writers.
+
+**Verification.** 39 new provider/orchestration/CLI/PostgreSQL cases; full suite 684 passed
+without skips, 79.08% coverage. Lint, mypy, dependency and workflow security checks pass.
+GET-only smoke read three own-repo exact runs, with scalar links 50, 50, 49, then validated
+updates and unchanged polling fields in the test DB; all writes rolled back. Report:
+`data/corpus/run-refresh-smoke.json`. No production migration/data writes or PR merges.
+Live rate failures, deleted runs and multiple-PR payloads were not observed in this smoke;
+error paths are fixture-tested and normalized multi-PR capture belongs to #50.
+
+**What would close it.** Integrate normalized associations and fix registry consumers;
+measure explicit historical selection coverage, then build lifecycle and comparable-cohort
+verification without treating missing evidence as absence or measured causality.
+
+Numbers 70–73 are reserved by the independent open implementation PRs; their code and
+caveat definitions have not been copied onto this main-based branch.

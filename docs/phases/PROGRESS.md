@@ -1,6 +1,6 @@
 # Phase progress — what is built, what is left
 
-Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-10-19. Checkbox
+Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-11-18. Checkbox
 counts come from the phase files themselves; the "actually exists" column is the source tree and a live corpus
 sweep.
 
@@ -204,6 +204,14 @@ current floor and shape guards (CAVEATS 67). The ≥20 real before/after criteri
 unmet. Next, measure additional eligible shapes before expanding coverage; keep opt-in
 publishing and its anti-spam controls separate.
 
+**Stored-run metadata refresh implemented, 2026-11-18 (`861ebe4`).** Exact-run GETs
+bypass polling ETags for bounded stored IDs; the command reports resumable partial
+outcomes and protects newer snapshots, polling state and job timings. Full suite 684 pass,
+79.08% coverage; three live exact reads verified with rollback-only test-DB persistence.
+This independent change retains the existing scalar PR decoder. Normalized links are in
+separate open PR #50; registry integration/lifecycle/cohort attribution are still pending
+(CAVEATS 74). No prior implementation PR was merged.
+
 **Realized savings is blocked on PR → run linkage.** Nothing joins a pull request to the
 runs it caused, so writeback cannot attribute correctly. This does not block local previews.
 
@@ -233,7 +241,7 @@ not by size. Each links to the entry holding the detail.
 | | What is left | Why it matters |
 |---|---|---|
 | **Recoverable criterion** | 3.46% against a ≥10% target, and it plateaus with more history ([`CAVEATS`](../CAVEATS.md) 36) | The **last thing between Phase 1 and done**. Needs rules recovering large wall-clock on the *dominant* workflow; no measured candidate does |
-| **PR → run linkage** | Not started | One piece of work behind Phase 2 realized savings, Phase 5 stacked-PR findings, and F3 PR-impact |
+| **PR → run linkage** | Bounded metadata refresh implemented; normalized capture and registry integration pending separately | One piece of work behind Phase 2 realized savings, Phase 5 stacked-PR findings, and F3 PR-impact |
 | **Worker credential** | Shared personal token ([`CAVEATS`](../CAVEATS.md) 27) | Caps any feature needing more ingest; needs a fine-grained PAT or App token |
 
 ### Loose ends from shipped work
