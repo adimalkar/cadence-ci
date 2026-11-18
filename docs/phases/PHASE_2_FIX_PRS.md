@@ -183,6 +183,26 @@ This is the first phase requiring `pull_requests:write` and `contents:write`. Bo
 **opt-in at install time, separately from the read scopes.** A user can run the audit
 forever without granting write. Preserve that — it is the whole no-commitment thesis.
 
+### Stored-run metadata refresh (implemented 2026-11-18)
+
+`cadence refresh-runs OWNER/REPO` provides a bounded, explicit way to revisit ingested
+runs even when normal list polling returns 304. Source `861ebe4` adds exact-run GETs,
+read-only ID selection, short per-run persistence transactions, monotonic attempt/time
+checks and resumable outcomes. No jobs, steps, logs, findings or polling cursors are
+changed; no missing run rows are created. This is a prerequisite for refreshing PR links,
+not realized-savings attribution.
+
+On this independent branch, the existing decoder/persistence retains the first scalar
+PR number. All-positive normalized capture is in separate, open PR #50 and is not included
+here. Once separately integrated, the refresh reuses that ingest path. A missing/empty PR
+list remains inconclusive; stale snapshots are skipped as a whole. Historical coverage,
+PR lifecycle handling, comparable cohorts and realized-savings writeback remain open
+(CAVEATS 74).
+
+Validation: 39 new cases, full suite **684 passed**, **79.08% coverage**, lint/types/security
+checks pass. Three exact own-repo reads refreshed test-DB rows and preserved polling state;
+all writes rolled back. Live report: `data/corpus/run-refresh-smoke.json`.
+
 ### Verification loop
 
 After a Cadence PR merges, watch the next 30 days of runs on that ref and write
