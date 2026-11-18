@@ -1,0 +1,12 @@
+{
+  "measured_at": "2026-11-18T07:47:41.851639+00:00",
+  "repo": "adimalkar/cadence-ci",
+  "run_id": 44259357035,
+  "attempt": 1,
+  "jobs": 1,
+  "steps": 8,
+  "result": "completed rows unchanged after synthetic late queued/in_progress payloads",
+  "network": "GET repo/list3/exact-attempt jobs; provider closed before DB",
+  "database": "test only; all writes rolled back; no production changes",
+  "scope": "real completed payloads; late delivery order is synthetic, not live webhook capture"
+}
