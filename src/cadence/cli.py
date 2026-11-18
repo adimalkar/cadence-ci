@@ -25,7 +25,15 @@ from cadence.corpus import CORPUS
 from cadence.cost import render_saving
 from cadence.db import apply_migrations, connect
 from cadence.ingest import ingest_repo
+from cadence.job_refresh import (
+    MAX_ID,
+    persist_jobs,
+    repair_jobs,
+    select_targets,
+    validate_selection,
+)
 from cadence.logstore import LocalLogStore
+from cadence.models import Repo
 from cadence.preview import preview_cache_fixes
 from cadence.providers import GitHubProvider
 from cadence.queue import enqueue
@@ -68,6 +76,67 @@ fix_app = typer.Typer(no_args_is_help=True, help="Preview deterministic workflow
 app.add_typer(fix_app, name="fix")
 
 console = Console()
+
+
+@app.command("refresh-jobs")
+def refresh_jobs(
+    repo: str = typer.Argument(..., help="owner/name, already ingested"),
+    run_ids: Annotated[list[int] | None, typer.Option(
+        "--run", min=1, max=MAX_ID, help="Stored completed run; required, repeat for up to 100.",
+    )] = None,
+    attempt: Annotated[int | None, typer.Option(
+        min=1, max=2**31 - 1, help="Specific attempt; default: each stored run's current attempt.",
+    )] = None,
+    max_pages: int = typer.Option(10, min=1, max=100, help="Maximum job pages per attempt"),
+    json_out: Annotated[Path | None, typer.Option(
+        "--json", help="Write outcomes and pending attempts.",
+    )] = None,
+) -> None:
+    """Repair explicit stored job attempts without polling ETags or fetching logs."""
+    ids = run_ids or []
+    parts = repo.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise typer.BadParameter("repo must be owner/name")
+    try:
+        validate_selection(ids, attempt, max_pages)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    try:
+        with connect() as conn:
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            row = conn.execute("SELECT id,owner,name,is_private,default_branch FROM repo"
+                               " WHERE owner=%s AND name=%s", tuple(parts)).fetchone()
+            if row is None:
+                raise ValueError("repository is not ingested")
+            stored_repo = Repo(**row)
+            targets = select_targets(conn, stored_repo.id, ids, attempt=attempt)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+    def persist(target, jobs):
+        with connect() as conn:
+            return persist_jobs(conn, target, jobs)
+
+    async def fetch() -> dict:
+        provider = GitHubProvider(_require_token())
+        try:
+            return await repair_jobs(provider, stored_repo, targets, persist, max_pages=max_pages)
+        finally:
+            await provider.aclose()
+
+    output = {"repo": repo, **asyncio.run(fetch())}
+    if json_out:
+        json_out.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+    typer.echo(f"{repo}: {output['counts']}; {len(output['remaining_attempts'])} pending")
+    for row in output["outcomes"]:
+        typer.echo(f"Run {row['run_id']} attempt {row['attempt']}: {row['status']}")
+    if output["stopped"]:
+        typer.echo(f"Stopped: {output['stopped']}")
+        typer.echo(f"Resume pending --run IDs/--attempt: {output['remaining_attempts']}")
+    typer.echo(output["coverage"])
+    if output["stopped"] or any(row["status"] != "refreshed" for row in output["outcomes"]):
+        raise typer.Exit(1)
 
 
 @fix_app.command("preview")
