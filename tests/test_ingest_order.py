@@ -327,3 +327,21 @@ def test_job_repository_collision_does_not_change_existing_evidence(conn):
     with pytest.raises(ValueError, match="conflicts"):
         upsert_job(conn, job(), REPO.id + 1)
     assert conn.execute("SELECT * FROM job WHERE id=%s", (JOB_ID,)).fetchone() == before
+
+
+@pytest.mark.parametrize("phase", ["waiting", "pending", "queued"])
+@pytest.mark.parametrize("newer", [False, True])
+def test_nonterminal_run_revision_orders_waiting_states_without_reopening_terminal(
+    conn, phase, newer
+):
+    initial = run("in_progress")
+    upsert_run(conn, initial)
+    revision = initial.updated_at + timedelta(seconds=1) if newer else initial.updated_at
+    incoming = replace(initial, status=phase, updated_at=revision)
+    assert upsert_run(conn, incoming) == newer
+    saved = conn.execute("SELECT status FROM run WHERE id=%s", (RUN_ID,)).fetchone()
+    assert saved["status"] == (phase if newer else "in_progress")
+    upsert_run(conn, run())
+    assert not upsert_run(
+        conn, replace(incoming, updated_at=run().updated_at + timedelta(seconds=1))
+    )

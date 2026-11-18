@@ -88,6 +88,9 @@ def upsert_run(conn: psycopg.Connection, run: Run) -> bool:
         WHERE run.repo_id = EXCLUDED.repo_id AND EXCLUDED.run_attempt >= run.run_attempt
           AND (run.updated_at IS NULL OR EXCLUDED.updated_at >= run.updated_at)
           AND (EXCLUDED.run_attempt > run.run_attempt
+               OR (run.status IS DISTINCT FROM 'completed'
+                   AND EXCLUDED.updated_at > run.updated_at
+                   AND ({status_rank_sql('EXCLUDED.status')}) >= 0)
                OR ({status_rank_sql('EXCLUDED.status')}) >= ({status_rank_sql('run.status')}))
           AND NOT coalesce((EXCLUDED.run_attempt = run.run_attempt AND run.status = 'completed'
                    AND EXCLUDED.status = 'completed'
