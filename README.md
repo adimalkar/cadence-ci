@@ -95,6 +95,30 @@ a projected lower-bound saving of 30 seconds per run and declines publishing wor
 custom checkout layouts and ambiguous install commands. Its current corpus evaluation
 produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
+Inspect stored job inventory coverage offline:
+
+```bash
+uv run cadence job-coverage astral-sh/ruff --limit 50 --json job-coverage.json
+uv run cadence job-coverage astral-sh/ruff --run 123456 --run 123457
+```
+
+Apply migration 011 with `cadence db init` before deploying the updated ingest worker.
+New GitHub ingest validates every page of an explicit run attempt, then records a terminal
+job-inventory receipt with the jobs in the same transaction. The report rechecks current
+attempt membership and terminal statuses against that receipt in a read-only snapshot.
+It accepts up to 500 selected runs (default 50); missing requested IDs are errors.
+
+Existing rows, webhook-only ingest and legacy providers have no receipt and remain
+`unknown`. The migration does not infer completeness from job counts. `verified` means
+stored membership matches the observed REST inventory; it does not certify step/log or
+timing accuracy, upstream freshness, or causal savings. A later insertion, deletion or
+incomplete status is reported as a mismatch. Reports succeed even when coverage is unknown;
+inspect the JSON states/counts. No API request or repair occurs in this command.
+
+Ordinary job-fetch failures now leave the polling ETag unchanged for retry, and ingest
+statistics expose failed fetches and receipt counts. This does not force historical
+re-ingest past a previously stored ETag. See CAVEATS 76 for rollout and integration limits.
+
 Tests:
 
 ```bash
