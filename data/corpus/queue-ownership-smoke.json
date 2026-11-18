@@ -1,0 +1,15 @@
+{
+  "measured_at": "2026-11-18T09:38:06.001769+00:00",
+  "database": "test only; transaction rolled back",
+  "queue_job_id": 83880,
+  "claim_token_rotated": true,
+  "claim_timestamps_equal": true,
+  "stale_complete_retry_terminal_accepted": [
+    false,
+    false,
+    false
+  ],
+  "new_owner_complete_accepted": true,
+  "queue_row_retained": false,
+  "scope": "single-transaction SQL proof; separate-connection races covered by tests; queue ownership only, dispatch side effects not fenced"
+}

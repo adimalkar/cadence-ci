@@ -36,9 +36,25 @@ MAX_ATTEMPTS = 5
 # hangs, the slot comes back.
 #
 # Must stay below queue.LEASE. A job still running when its lease expires can be
-# reclaimed by another worker and processed twice; timing out first means this worker
-# releases the row before anyone else may take it. Asserted in tests.
+# reclaimed by another worker and processed twice. This margin reduces that risk during
+# normal scheduling; claim tokens also fence acknowledgements after a process pause.
 JOB_TIMEOUT = timedelta(minutes=10)
+
+
+def _acknowledge_claim(
+    job: dict, *, error: str | None = None, retry_in: timedelta | None = None,
+) -> None:
+    """Commit a fenced queue transition separately from dispatch writes."""
+    with connect() as conn:
+        if error is None:
+            accepted = queue.complete(conn, job["id"], claim_token=job["claim_token"])
+        else:
+            accepted = queue.fail(conn, job["id"], error, retry_in=retry_in,
+                                  claim_token=job["claim_token"])
+        conn.commit()
+    if not accepted:
+        log.warning("worker.claim_lost", kind=job["kind"], id=job["id"],
+                    action="complete" if error is None else "fail")
 
 
 async def _handle_poll_repo(provider: CIProvider, job: dict) -> None:
@@ -170,9 +186,7 @@ async def run_worker(
                 # GitHub's 90-day retention will be exactly as missing in an hour.
                 # Retrying only burns budget and buries the real cause under attempts.
                 log.warning("worker.job_terminal", kind=job["kind"], id=job["id"], error=str(exc))
-                with connect() as conn:
-                    queue.fail(conn, job["id"], str(exc), retry_in=None)
-                    conn.commit()
+                _acknowledge_claim(job, error=str(exc))
             except RateLimited as exc:
                 # Rate limits are retryable, but not unboundedly: a job that has been
                 # rate-limited MAX_ATTEMPTS times is hitting something structural (a
@@ -183,9 +197,7 @@ async def run_worker(
                     if job["attempts"] < MAX_ATTEMPTS
                     else None
                 )
-                with connect() as conn:
-                    queue.fail(conn, job["id"], str(exc), retry_in=retry)
-                    conn.commit()
+                _acknowledge_claim(job, error=str(exc), retry_in=retry)
             except TimeoutError as exc:
                 # Retryable: the next attempt may well succeed, and MAX_ATTEMPTS stops a
                 # reliably-hanging job from cycling forever. Logged at error, not warning
@@ -199,20 +211,14 @@ async def run_worker(
                     attempts=job["attempts"],
                 )
                 retry = timedelta(minutes=1) if job["attempts"] < MAX_ATTEMPTS else None
-                with connect() as conn:
-                    queue.fail(
-                        conn, job["id"], f"job exceeded {JOB_TIMEOUT}: {exc!r}", retry_in=retry
-                    )
-                    conn.commit()
+                _acknowledge_claim(
+                    job, error=f"job exceeded {JOB_TIMEOUT}: {exc!r}", retry_in=retry,
+                )
             except Exception as exc:  # one bad job must not kill the worker
                 log.warning("worker.job_failed", kind=job["kind"], id=job["id"], error=str(exc))
                 retry = timedelta(minutes=1) if job["attempts"] < MAX_ATTEMPTS else None
-                with connect() as conn:
-                    queue.fail(conn, job["id"], str(exc), retry_in=retry)
-                    conn.commit()
+                _acknowledge_claim(job, error=str(exc), retry_in=retry)
             else:
-                with connect() as conn:
-                    queue.complete(conn, job["id"])
-                    conn.commit()
+                _acknowledge_claim(job)
 
     await asyncio.gather(*[_loop() for _ in range(concurrency)])
