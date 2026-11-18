@@ -32,6 +32,16 @@ their original dates.
 
 ## Phase 0 — complete
 
+**Queue reliability update, 2026-11-18 (proposed).** Claims now receive fresh UUIDs;
+completion and retry/terminal failure require the current token. A delayed worker cannot
+overwrite a reclaimed row or spend its new owner's retry budget. Migration 012 and a
+coordinated worker restart are required before deployment. Dispatch side effects remain
+at least once; see [CAVEATS 80](../CAVEATS.md#80-queue-ownership-fences-acknowledgements-not-dispatch-side-effects).
+Verification: **671 tests pass without skips**, including 26 new ownership cases, with
+**79.54% coverage**. Ruff, mypy, pip-audit and zizmor pass. The test-only SQL smoke
+transaction was rolled back. This branch starts from `main`; the other open feature PRs
+remain independent and unmerged.
+
 All 16 items and all 4 ship criteria are ticked. The substrate every later phase reads:
 `ingest.py`, `providers/github.py`, `queue.py`, `worker.py`, `webhook.py`, `logstore.py`,
 `db/`, and the six-table schema plus `workflow_blob`/`workflow_snapshot`.
