@@ -56,6 +56,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 75 | Matching stored run cohorts does not establish ingest completeness or causal savings | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1709,3 +1710,55 @@ chain; re-resolving every package would mix unrelated dependency changes into th
 [PR #33](https://github.com/adimalkar/cadence-ci/pull/33), which changes only urllib3's locked
 version/artifacts to 2.8.0. Merged `origin/main` into the cache branch (`5254e2b`) so its
 security check uses the same fix. Local `pip-audit` and workflow hardening checks pass.
+
+
+### 75. Matched run cohorts are observations, not a causal savings estimate · Medium
+
+**What.** Source `09f96fc` (2026-11-18) adds offline `compare-runs` for explicit,
+disjoint before/after ID sets. It bounds selection to 500 distinct stored runs and 50,000
+jobs, and compares each identical workflow/event/branch/job/runner profile separately.
+Only successful completed first attempts with valid job queue/start/finish timestamps
+qualify; unmatched/underfilled profiles and ineligible runs are reported with IDs/reasons.
+The default floor is five per side/profile; an explicit minimum 2–500 is supported. Eligible
+before jobs must finish before all eligible after jobs start. No API, migrations, PR
+publishing, finding-state changes or savings writeback occur.
+
+**Why it matters.** Matching profile metadata is necessary but insufficient for attribution.
+A missing job can be undetectable when both sides have the same incomplete stored shape:
+ingest records no authoritative job-completeness marker. A second attempt on only some
+jobs, skipped/failed jobs, self-hosted runners or an altered matrix changes eligibility.
+The report therefore describes selected successful first attempts, not all pipeline work.
+
+Runner labels/groups do not pin hardware, OS image, dependency versions, cache warmth or
+workload. Equal head SHAs can still produce different timings. Branch/job names do not
+prove identical YAML or comparable changed paths. The user chooses IDs; the command does
+not select PR-related cohorts, prove merge ancestry, control selection bias or establish
+a counterfactual. Five samples is a transparent floor, not statistical confidence.
+There are no confidence intervals, significance claims, cost conversions or month-level
+extrapolations. Different profiles are never pooled into a repository-wide saving.
+
+Wall seconds span earliest stored job queue to latest finish; execution and queue seconds
+are separately summed per run before taking cohort medians. Delta is after minus before;
+percentage reduction is positive for a decrease and null when baseline median is zero.
+A zero-result report exits 1 but still writes JSON; this is a declined comparison, not a
+zero change. Invalid/missing IDs or overlapping eligible windows are errors. Other
+write paths and existing audit behavior are unchanged.
+
+**Verification.** 59 new pure/SQL/CLI cases cover scope/bounds, profile drift, retries,
+missing/invalid timings, chronology, sample floors, duplicate IDs, zero baselines,
+parallel execution versus elapsed time, and actual read-only CLI output. Full suite 704
+passed without skips, 79.25% coverage; ruff/mypy/pip-audit/zizmor pass.
+Two read-only public-corpus checks retain their selection policies:
+`data/corpus/cohort-comparison-smoke.json` selects 10 curl/curl runs; all 10 lack jobs and
+are excluded, giving no comparison. The separate job-present selection in
+`data/corpus/cohort-comparison-with-jobs-smoke.json` selects 5 before / 5 after jestjs/jest
+scheduled close-stale runs, producing one profile with no exclusions. Medians: wall 13→14s,
+summed execution 21→23s, summed queue 4→2s. Both sides share a head SHA; no fix effect is
+claimed. This does not meet the ≥20 real cache-fix before/after gate (67). No production
+data writes or PR merges were performed.
+
+**What would close it.** Record authoritative job completeness; integrate explicit PR
+registry/normalized associations with verifiable configuration and workload cohorts;
+measure selection coverage and uncertainty before any realized-savings writeback.
+The independent registry/link/refresh PRs #49/#50/#51 remain open. Numbers 70–74 are reserved
+by other open implementation PRs and their code/caveat entries are not copied here.

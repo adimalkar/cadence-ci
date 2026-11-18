@@ -1,6 +1,6 @@
 # Phase progress — what is built, what is left
 
-Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-10-19. Checkbox
+Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-11-18. Checkbox
 counts come from the phase files themselves; the "actually exists" column is the source tree and a live corpus
 sweep.
 
@@ -203,6 +203,14 @@ workflows. There are 17 missing-cache findings and **zero accepted previews** un
 current floor and shape guards (CAVEATS 67). The ≥20 real before/after criterion is still
 unmet. Next, measure additional eligible shapes before expanding coverage; keep opt-in
 publishing and its anti-spam controls separate.
+
+**Explicit before/after observations implemented, 2026-11-18 (`09f96fc`).** `compare-runs` reads
+bounded stored IDs offline, separates identical execution profiles, and reports median
+wall/execution/queue changes plus exclusions. 59 new cases; full suite 704 pass, 79.25%
+coverage. Read-only corpus checks declined 10 curl runs lacking jobs and compared 5 before /
+5 after jest scheduled runs with stored jobs (wall 13→14s). This is not evidence of a fix:
+the latter share a head SHA. CAVEATS 75 records completeness and attribution limits.
+PRs #49/#50/#51 registry/link/refresh work remains open separately; no PR was merged.
 
 **Realized savings is blocked on PR → run linkage.** Nothing joins a pull request to the
 runs it caused, so writeback cannot attribute correctly. This does not block local previews.
