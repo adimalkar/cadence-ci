@@ -183,6 +183,29 @@ This is the first phase requiring `pull_requests:write` and `contents:write`. Bo
 **opt-in at install time, separately from the read scopes.** A user can run the audit
 forever without granting write. Preserve that — it is the whole no-commitment thesis.
 
+### Stored timing health (implemented 2026-11-18, source `493a314`)
+
+`timing-health OWNER/REPO` provides an offline diagnostic prerequisite for repair/cohort
+selection. It inspects bounded stored current attempts in one read-only repeatable-read
+snapshot. Auto selection uses newest completed IDs with `--before`; explicit `--run`
+may inspect active runs. It surfaces missing jobs/times/steps, unknown conclusions/status,
+invalid timestamp encoding, reversed intervals, step bounds and positive executed-step
+overlaps. Each finding carries exact IDs, fields and stored job/step outcomes.
+
+Missing data is unknown, executed contradictions invalid, and skipped unmeasured ordering
+informational. Informational rows remain visible; they do not become executed durations.
+Run states distinguish incomplete/inconsistent/pending/no-observations/informational-only
+from consistent observed rows. Counts remain complete under a global detail budget.
+The optional `--fail-on-issues` checks unknown/invalid counts even with details capped.
+No API, mutation, new schema, automatic repair, completeness certificate or savings claim.
+
+Validation: 49 new pure/SQL/CLI cases and full suite 694 passed (79.26% coverage). Static/security checks pass.
+Read-only corpus policies selected 20 curl runs without current-attempt jobs and a separate
+20 OpenSSL runs with stored jobs: 15 consistent observations, 5 informational-only. Ten
+reversed skipped-job execution intervals (-1 to -9 seconds) remain in evidence. This does
+not diagnose their cause or prove complete coverage (CAVEATS 79).
+Report: `data/corpus/timing-health-smoke.json`. Other feature PRs remain open separately.
+
 ### Verification loop
 
 After a Cadence PR merges, watch the next 30 days of runs on that ref and write

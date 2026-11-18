@@ -46,6 +46,9 @@ from cadence.suppress import (
     unsuppress_one,
 )
 from cadence.suppress import apply as suppress_apply
+from cadence.timing_health import MAX_ID as MAX_TIMING_RUN_ID
+from cadence.timing_health import timing_health
+from cadence.timing_health import validate_selection as validate_timing_selection
 from cadence.worker import run_worker
 from cadence.workflow import parse_workflow
 
@@ -68,6 +71,65 @@ fix_app = typer.Typer(no_args_is_help=True, help="Preview deterministic workflow
 app.add_typer(fix_app, name="fix")
 
 console = Console()
+
+
+@app.command("timing-health")
+def timing_health_report(
+    repo: str = typer.Argument(..., help="owner/name, already ingested"),
+    run_ids: Annotated[list[int] | None, typer.Option(
+        "--run", min=1, max=MAX_TIMING_RUN_ID,
+        help="Explicit stored run ID; repeat to select several.",
+    )] = None,
+    before: Annotated[int | None, typer.Option(
+        min=1, max=MAX_TIMING_RUN_ID, help="Inspect completed runs below this exclusive ID cursor.",
+    )] = None,
+    limit: int = typer.Option(50, min=1, max=500, help="Maximum stored runs"),
+    max_issues: int = typer.Option(
+        200, min=0, max=2000, help="Detail rows; totals remain complete",
+    ),
+    fail_on_issues: bool = typer.Option(False, help="Exit nonzero on unknown/invalid observations"),
+    json_out: Annotated[Path | None, typer.Option(
+        "--json", help="Write observation issues and exact affected IDs.",
+    )] = None,
+) -> None:
+    """Inspect stored job/step timestamp quality offline; no repairs or API requests."""
+    parts = repo.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise typer.BadParameter("repo must be owner/name")
+    try:
+        validate_timing_selection(run_ids, before, limit, max_issues)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    try:
+        with connect() as conn:
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            row = conn.execute("SELECT id FROM repo WHERE owner=%s AND name=%s",
+                               tuple(parts)).fetchone()
+            if row is None:
+                raise ValueError("repository is not ingested")
+            output = {"repo": repo, **timing_health(
+                conn, row["id"], run_ids=run_ids, before=before, limit=limit, max_issues=max_issues,
+            )}
+        if json_out:
+            json_out.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+        typer.echo(f"{repo}: {len(output['selected_run_ids'])} run(s); {output['counts']}")
+        for run in output["runs"]:
+            typer.echo(f"Run {run['run_id']} attempt {run['attempt']}: {run['state']}; "
+                       f"{run['issue_counts']}")
+            for issue in run["issues"]:
+                typer.echo(f"  {issue}")
+        if output["details_truncated"]:
+            typer.echo("Issue detail limit reached; totals and run states include omitted details.")
+        if output["next_before"] is not None:
+            typer.echo(f"Next page: --before {output['next_before']}")
+        typer.echo(output["meaning"])
+        if fail_on_issues and any(
+            output["severity_counts"].get(k, 0) for k in ("unknown", "invalid")
+        ):
+            raise typer.Exit(1)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
 
 
 @fix_app.command("preview")
