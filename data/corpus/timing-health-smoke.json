@@ -1,0 +1,1011 @@
+{
+  "measured_at": "2026-11-18T08:20:43.665997+00:00",
+  "transaction_read_only": "on",
+  "source": "stored public corpus; no API or writes",
+  "reports": [
+    {
+      "repo": "curl/curl",
+      "selection_policy": "Most populated public completed-run repository; newest20 completed IDs, no issue-based selection.",
+      "schema_version": 1,
+      "generated_at": "2026-11-18T08:20:43.263378+00:00",
+      "selected_run_ids": [
+        42851229440,
+        42850059732,
+        42850043791,
+        42850042404,
+        42850042284,
+        42850042232,
+        42850041939,
+        42850041878,
+        42850041685,
+        42850041545,
+        42850041542,
+        42850041539,
+        42850041530,
+        42850041371,
+        42847915116,
+        42847915081,
+        42847915071,
+        42847915036,
+        42847915005,
+        42847914989
+      ],
+      "next_before": 42847914989,
+      "detail_limit": 200,
+      "counts": {
+        "incomplete": 20
+      },
+      "runs": [
+        {
+          "run_id": 42851229440,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850059732,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850043791,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850042404,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850042284,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850042232,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850041939,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "failure",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850041878,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850041685,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "failure",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850041545,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850041542,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850041539,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850041530,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42850041371,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42847915116,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42847915081,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42847915071,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42847915036,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42847915005,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42847914989,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "failure",
+          "state": "incomplete",
+          "observed_jobs": 0,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "no_current_attempt_jobs": 1
+          },
+          "severity_counts": {
+            "unknown": 1
+          },
+          "issues": [
+            {
+              "code": "no_current_attempt_jobs",
+              "severity": "unknown",
+              "field": "jobs"
+            }
+          ],
+          "details_truncated": false
+        }
+      ],
+      "severity_counts": {
+        "unknown": 20
+      },
+      "issue_counts": {
+        "no_current_attempt_jobs": 20
+      },
+      "details_truncated": false,
+      "scope": "stored current attempts; automatic selection includes completed runs only",
+      "meaning": "Consistency of observed rows is not proof of job/step completeness, upstream freshness, timing accuracy or causal savings."
+    },
+    {
+      "repo": "openssl/openssl",
+      "selection_policy": "Most populated public completed-run repository with stored current-attempt jobs; newest20 such IDs, no issue-based reselection.",
+      "schema_version": 1,
+      "generated_at": "2026-11-18T08:20:43.665728+00:00",
+      "selected_run_ids": [
+        42888272828,
+        42888206280,
+        42887303154,
+        42887303092,
+        42887302873,
+        42887302702,
+        42887302682,
+        42887302649,
+        42887302601,
+        42887302519,
+        42887302456,
+        42887302268,
+        42886586758,
+        42886586462,
+        42886586411,
+        42886586244,
+        42886586175,
+        42886586072,
+        42886586065,
+        42886586041
+      ],
+      "next_before": null,
+      "detail_limit": 200,
+      "counts": {
+        "consistent_observations": 15,
+        "informational_only": 5
+      },
+      "runs": [
+        {
+          "run_id": 42888272828,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 1,
+          "observed_steps": 9,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42888206280,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 1,
+          "observed_steps": 9,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42887303154,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "skipped",
+          "state": "informational_only",
+          "observed_jobs": 3,
+          "observed_steps": 0,
+          "issue_count": 2,
+          "issue_counts": {
+            "reversed_timestamps": 2
+          },
+          "severity_counts": {
+            "info": 2
+          },
+          "issues": [
+            {
+              "code": "reversed_timestamps",
+              "severity": "info",
+              "field": "completed_at",
+              "related_field": "started_at",
+              "observed": {
+                "started_at": "2026-11-10T14:38:37-05:00",
+                "completed_at": "2026-11-10T14:38:36-05:00"
+              },
+              "job_id": 130078913627,
+              "job_status": "completed",
+              "job_conclusion": "skipped"
+            },
+            {
+              "code": "reversed_timestamps",
+              "severity": "info",
+              "field": "completed_at",
+              "related_field": "started_at",
+              "observed": {
+                "started_at": "2026-11-10T14:38:42-05:00",
+                "completed_at": "2026-11-10T14:38:36-05:00"
+              },
+              "job_id": 130078960366,
+              "job_status": "completed",
+              "job_conclusion": "skipped"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42887303092,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 3,
+          "observed_steps": 35,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42887302873,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 1,
+          "observed_steps": 11,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42887302702,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "skipped",
+          "state": "informational_only",
+          "observed_jobs": 3,
+          "observed_steps": 0,
+          "issue_count": 2,
+          "issue_counts": {
+            "reversed_timestamps": 2
+          },
+          "severity_counts": {
+            "info": 2
+          },
+          "issues": [
+            {
+              "code": "reversed_timestamps",
+              "severity": "info",
+              "field": "completed_at",
+              "related_field": "started_at",
+              "observed": {
+                "started_at": "2026-11-10T14:38:37-05:00",
+                "completed_at": "2026-11-10T14:38:36-05:00"
+              },
+              "job_id": 130078914469,
+              "job_status": "completed",
+              "job_conclusion": "skipped"
+            },
+            {
+              "code": "reversed_timestamps",
+              "severity": "info",
+              "field": "completed_at",
+              "related_field": "started_at",
+              "observed": {
+                "started_at": "2026-11-10T14:38:37-05:00",
+                "completed_at": "2026-11-10T14:38:36-05:00"
+              },
+              "job_id": 130078914970,
+              "job_status": "completed",
+              "job_conclusion": "skipped"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42887302682,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "skipped",
+          "state": "informational_only",
+          "observed_jobs": 2,
+          "observed_steps": 0,
+          "issue_count": 2,
+          "issue_counts": {
+            "reversed_timestamps": 2
+          },
+          "severity_counts": {
+            "info": 2
+          },
+          "issues": [
+            {
+              "code": "reversed_timestamps",
+              "severity": "info",
+              "field": "completed_at",
+              "related_field": "started_at",
+              "observed": {
+                "started_at": "2026-11-10T14:38:37-05:00",
+                "completed_at": "2026-11-10T14:38:36-05:00"
+              },
+              "job_id": 130078913563,
+              "job_status": "completed",
+              "job_conclusion": "skipped"
+            },
+            {
+              "code": "reversed_timestamps",
+              "severity": "info",
+              "field": "completed_at",
+              "related_field": "started_at",
+              "observed": {
+                "started_at": "2026-11-10T14:38:37-05:00",
+                "completed_at": "2026-11-10T14:38:36-05:00"
+              },
+              "job_id": 130078914542,
+              "job_status": "completed",
+              "job_conclusion": "skipped"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42887302649,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 1,
+          "observed_steps": 9,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42887302601,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 2,
+          "observed_steps": 35,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42887302519,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 4,
+          "observed_steps": 29,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42887302456,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 1,
+          "observed_steps": 9,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42887302268,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 23,
+          "observed_steps": 253,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42886586758,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "skipped",
+          "state": "consistent_observations",
+          "observed_jobs": 2,
+          "observed_steps": 0,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42886586462,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "skipped",
+          "state": "informational_only",
+          "observed_jobs": 3,
+          "observed_steps": 0,
+          "issue_count": 3,
+          "issue_counts": {
+            "reversed_timestamps": 3
+          },
+          "severity_counts": {
+            "info": 3
+          },
+          "issues": [
+            {
+              "code": "reversed_timestamps",
+              "severity": "info",
+              "field": "completed_at",
+              "related_field": "started_at",
+              "observed": {
+                "started_at": "2026-11-10T14:34:14-05:00",
+                "completed_at": "2026-11-10T14:34:13-05:00"
+              },
+              "job_id": 130076391032,
+              "job_status": "completed",
+              "job_conclusion": "skipped"
+            },
+            {
+              "code": "reversed_timestamps",
+              "severity": "info",
+              "field": "completed_at",
+              "related_field": "started_at",
+              "observed": {
+                "started_at": "2026-11-10T14:34:14-05:00",
+                "completed_at": "2026-11-10T14:34:13-05:00"
+              },
+              "job_id": 130076392424,
+              "job_status": "completed",
+              "job_conclusion": "skipped"
+            },
+            {
+              "code": "reversed_timestamps",
+              "severity": "info",
+              "field": "completed_at",
+              "related_field": "started_at",
+              "observed": {
+                "started_at": "2026-11-10T14:34:22-05:00",
+                "completed_at": "2026-11-10T14:34:13-05:00"
+              },
+              "job_id": 130076475038,
+              "job_status": "completed",
+              "job_conclusion": "skipped"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42886586411,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 1,
+          "observed_steps": 9,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42886586244,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 4,
+          "observed_steps": 29,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42886586175,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 2,
+          "observed_steps": 35,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42886586072,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 1,
+          "observed_steps": 11,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42886586065,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "skipped",
+          "state": "informational_only",
+          "observed_jobs": 3,
+          "observed_steps": 0,
+          "issue_count": 1,
+          "issue_counts": {
+            "reversed_timestamps": 1
+          },
+          "severity_counts": {
+            "info": 1
+          },
+          "issues": [
+            {
+              "code": "reversed_timestamps",
+              "severity": "info",
+              "field": "completed_at",
+              "related_field": "started_at",
+              "observed": {
+                "started_at": "2026-11-10T14:34:20-05:00",
+                "completed_at": "2026-11-10T14:34:13-05:00"
+              },
+              "job_id": 130076456724,
+              "job_status": "completed",
+              "job_conclusion": "skipped"
+            }
+          ],
+          "details_truncated": false
+        },
+        {
+          "run_id": 42886586041,
+          "attempt": 1,
+          "status": "completed",
+          "conclusion": "success",
+          "state": "consistent_observations",
+          "observed_jobs": 3,
+          "observed_steps": 35,
+          "issue_count": 0,
+          "issue_counts": {},
+          "severity_counts": {},
+          "issues": [],
+          "details_truncated": false
+        }
+      ],
+      "severity_counts": {
+        "info": 10
+      },
+      "issue_counts": {
+        "reversed_timestamps": 10
+      },
+      "details_truncated": false,
+      "scope": "stored current attempts; automatic selection includes completed runs only",
+      "meaning": "Consistency of observed rows is not proof of job/step completeness, upstream freshness, timing accuracy or causal savings."
+    }
+  ]
+}
