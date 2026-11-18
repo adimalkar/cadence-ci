@@ -161,6 +161,21 @@ class GitHubProvider:
             default_branch=data.get("default_branch"),
         )
 
+    async def fetch_run(self, repo: Repo, run_id: int) -> Run:
+        """Read one exact run, without conditional polling or job/log requests."""
+        if type(run_id) is not int or not 1 <= run_id <= 2**63 - 1:
+            raise ValueError("run ID must be a positive SQL bigint")
+        payload = (await self._get_with_backoff(
+            f"/repos/{repo.owner}/{repo.name}/actions/runs/{run_id}"
+        )).json()
+        if (not isinstance(payload, dict) or type(payload.get("id")) is not int
+                or payload.get("id") != run_id
+                or not isinstance(payload.get("repository"), dict)
+                or type(payload["repository"].get("id")) is not int
+                or payload["repository"].get("id") != repo.id):
+            raise ValueError("run metadata does not identify the requested run/repository")
+        return self._to_run(payload, repo.id)
+
     async def fetch_runs(
         self,
         repo: Repo,

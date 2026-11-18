@@ -26,6 +26,7 @@ from cadence.cost import render_saving
 from cadence.db import apply_migrations, connect
 from cadence.ingest import ingest_repo
 from cadence.logstore import LocalLogStore
+from cadence.models import Repo, Run
 from cadence.preview import preview_cache_fixes
 from cadence.providers import GitHubProvider
 from cadence.queue import enqueue
@@ -35,6 +36,13 @@ from cadence.report import (
 )
 from cadence.report import (
     write_report as write_html_report,
+)
+from cadence.run_refresh import (
+    MAX_RUN_ID,
+    RefreshReport,
+    refresh_metadata,
+    refresh_stored_run,
+    select_run_ids,
 )
 from cadence.source import CACHE_DIR, PreviewSource, capture_source
 from cadence.suppress import (
@@ -68,6 +76,67 @@ fix_app = typer.Typer(no_args_is_help=True, help="Preview deterministic workflow
 app.add_typer(fix_app, name="fix")
 
 console = Console()
+
+
+@app.command("refresh-runs")
+def refresh_runs(
+    repo: str = typer.Argument(..., help="owner/name, already ingested"),
+    run_ids: Annotated[list[int] | None, typer.Option(
+        "--run", min=1, max=MAX_RUN_ID, help="Stored run ID; repeat to select several.",
+    )] = None,
+    before: Annotated[int | None, typer.Option(
+        min=1, max=MAX_RUN_ID, help="Select stored runs with IDs below this cursor.",
+    )] = None,
+    limit: int = typer.Option(50, min=1, max=500, help="Maximum exact-run requests."),
+    json_out: Annotated[Path | None, typer.Option("--json", help="Write refresh outcomes.")] = None,
+) -> None:
+    """Refresh stored run metadata without advancing polling or fetching jobs/logs."""
+    parts = repo.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise typer.BadParameter("repo must be owner/name")
+    if run_ids and (before is not None or len(set(run_ids)) > limit):
+        raise typer.BadParameter("explicit run IDs must fit --limit and cannot use --before")
+    owner, name = parts
+    try:
+        # Close this snapshot before network I/O. Each accepted response is persisted
+        # in its own short transaction so interruption never discards earlier work.
+        with connect() as conn:
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            row = conn.execute("SELECT id, owner, name, is_private, default_branch FROM repo"
+                               " WHERE owner = %s AND name = %s", (owner, name)).fetchone()
+            if not row:
+                raise ValueError(f"{repo} is not ingested; run cadence ingest first")
+            stored_repo = Repo(**row)
+            selection = select_run_ids(conn, stored_repo.id, limit=limit,
+                                       run_ids=run_ids, before=before)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+
+    def persist(run: Run) -> str:
+        with connect() as conn:
+            return refresh_stored_run(conn, run)
+
+    async def fetch() -> RefreshReport:
+        provider = GitHubProvider(_require_token())
+        try:
+            return await refresh_metadata(provider, stored_repo, selection["run_ids"], persist)
+        finally:
+            await provider.aclose()
+
+    report = asyncio.run(fetch()) if selection["run_ids"] else RefreshReport([])
+    output = {"repo": repo, "next_before": selection["next_before"], **report.as_dict()}
+    if json_out:
+        json_out.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+    typer.echo(f"{repo}: {output['counts']}; {len(output['remaining_run_ids'])} pending")
+    if report.stopped:
+        typer.echo(f"Stopped: {report.stopped}")
+        typer.echo(f"Resume these IDs with --run: {output['remaining_run_ids']}")
+    if output["next_before"] is not None:
+        typer.echo(f"Next page: --before {output['next_before']}; retry pending IDs first")
+    if report.stopped or any(r["status"] in {"unavailable", "invalid_metadata", "missing"}
+                             for r in report.outcomes):
+        raise typer.Exit(1)
 
 
 @fix_app.command("preview")
