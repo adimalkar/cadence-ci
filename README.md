@@ -95,6 +95,18 @@ a projected lower-bound saving of 30 seconds per run and declines publishing wor
 custom checkout layouts and ambiguous install commands. Its current corpus evaluation
 produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
+Ingest preserves stronger lifecycle evidence when events arrive out of order. Older run
+attempts/revisions and same-attempt status regressions are ignored and counted in
+`runs_ignored`. A new attempt clears the prior attempt's conclusion/start; a full run
+payload can replace a job-only stub's start.
+
+Jobs and steps advance from pre-start to in-progress to completed. Missing timings and
+runner metadata can be filled, while known observations survive delayed/partial payloads.
+Conflicting job ownership or terminal conclusions raise an error; the caller must roll
+back its transaction. Newer run timestamps can correct run conclusions, while jobs and
+steps lack that revision evidence. No historical rows are repaired automatically and no
+new schema is required. See CAVEATS 78 for rollout and correction limits.
+
 Tests:
 
 ```bash

@@ -1,6 +1,6 @@
 # Phase progress — what is built, what is left
 
-Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-10-19. Checkbox
+Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-11-18. Checkbox
 counts come from the phase files themselves; the "actually exists" column is the source tree and a live corpus
 sweep.
 
@@ -203,6 +203,15 @@ workflows. There are 17 missing-cache findings and **zero accepted previews** un
 current floor and shape guards (CAVEATS 67). The ≥20 real before/after criterion is still
 unmet. Next, measure additional eligible shapes before expanding coverage; keep opt-in
 publishing and its anti-spam controls separate.
+
+**Ingest ordering protected, 2026-11-18 (`10339e5`).** Shared run/job/step persistence
+preserves terminal lifecycle state and known observations under delayed events. New run
+attempts clear earlier attempt state; stale/ambiguous run revisions are counted as ignored.
+Job identity and conflicting terminal conclusions fail visibly. Missing fields can still
+enrich stored evidence. 35 new cases; full suite 680 pass, 78.67% coverage. GET-only completed
+payloads with 1 job/8 steps were replayed with synthetic late events in TEST DB and rolled
+back. No historical repair or production migration/write occurred. Receipt/repair/cohort
+integration and correction-policy limits remain open (CAVEATS 78).
 
 **Realized savings is blocked on PR → run linkage.** Nothing joins a pull request to the
 runs it caused, so writeback cannot attribute correctly. This does not block local previews.

@@ -56,6 +56,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 78 | Lifecycle guards protect new writes; historical correction and mixed-version ordering remain | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1709,3 +1710,56 @@ chain; re-resolving every package would mix unrelated dependency changes into th
 [PR #33](https://github.com/adimalkar/cadence-ci/pull/33), which changes only urllib3's locked
 version/artifacts to 2.8.0. Merged `origin/main` into the cache branch (`5254e2b`) so its
 security check uses the same fix. Local `pip-audit` and workflow hardening checks pass.
+
+
+### 78. Lifecycle guards need rollout and an explicit correction policy · Medium
+
+**What.** `10339e5` (2026-11-18) protects shared ingest run/job/step persistence against
+delayed and partial payloads. Run revisions must not decrease attempt or known update
+timestamp, or regress lifecycle within an attempt. Missing incoming update timestamps
+cannot replace known revisions. Equal-revision terminal-conclusion conflicts are ignored;
+a later timestamp can correct a conclusion. New attempts clear old start/conclusion
+rather than inheriting them. Full run metadata can replace the start from a job-only stub.
+Run starts are otherwise first-known within a known attempt. Ingest reports accepted
+writes and ignored run snapshots separately.
+
+Jobs/steps lack a reliable update revision in the current domain model. Their lifecycle
+advances unknown→pre-start→in-progress→completed; requested/pending/waiting/queued share
+the pre-start rank. Known timestamps/runner metadata survive and missing fields can
+enrich. Different known completed conclusions raise rather than guessing their order.
+Job ownership is checked atomically in SQL before step updates. Caller transactions must
+roll back on a conflict; helpers do not commit or provide automatic per-call savepoints.
+
+**Why it matters.** These guards protect writes by updated code, not old running workers
+or direct SQL clients. Existing damaged rows are not repaired, and there is no deployed
+schema/data change. The first known job/step timestamp or runner value can itself be
+wrong; ordinary ingest now preserves it until an explicit, provenance-aware correction
+path exists. This policy cannot infer freshness from receipt time or prove upstream
+atomicity. Equivalent pre-start labels retain the first recorded label until a higher
+stage arrives; arbitrary unknown states do not outrank known stages.
+
+A job/step terminal-conclusion conflict can fail an ingest transaction or exhaust a
+webhook queue item's retry policy. The conflict is visible and previous evidence survives,
+but resolving it requires evidence and operator action. Unknown/ambiguous run revisions
+are counted as ignored, without per-run reason storage. Payload shape/timing validation,
+job completeness, workload comparability and causal savings are separate requirements.
+
+Ignoring a stale run snapshot also skips its optional scalar PR/tree fields. Future
+normalized-association integration must preserve independent positive evidence without
+regressing lifecycle or last-payload state. Open PRs #50–#54 are not copied here. In
+particular shared first-known timing policy and return-value/ownership guards need to
+be reconciled with explicit repair/receipt writers after merges are chosen.
+
+**Verification.** 35 new real-Postgres/permutation/worker cases cover all six valid
+queued/in-progress/completed delivery orders, run revisions and reruns, stub promotion,
+null statuses, field enrichment, ownership/conclusion conflicts, rollback and stats.
+Full suite 680 passed without skips, 78.67% coverage; lint/types/dependency/workflow security
+checks pass. `data/corpus/ingest-order-smoke.json` records real completed own-repo
+run 44259357035 attempt 1 (1 job/8 steps) replayed with synthetic late payloads in TEST DB.
+All run/job/step rows stayed unchanged; all writes rolled back. This is not a capture
+of naturally out-of-order live webhooks. No production writes/migrations or PR merges.
+
+**What would close it.** Roll out the shared guards deliberately, measure conflicting/
+historical evidence, and add provenance-aware corrections and reader integration with
+explicit outcomes. Known-field preservation must not be mistaken for a coverage or causal
+certificate. Numbers 70–77 are reserved by independent open implementation PRs.

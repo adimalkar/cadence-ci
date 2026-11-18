@@ -183,6 +183,31 @@ This is the first phase requiring `pull_requests:write` and `contents:write`. Bo
 **opt-in at install time, separately from the read scopes.** A user can run the audit
 forever without granting write. Preserve that — it is the whole no-commitment thesis.
 
+### Ingest lifecycle ordering (implemented 2026-11-18, source `10339e5`)
+
+Shared persistence now protects observed timings and terminal state against delayed
+polling/webhook payloads. Run writes reject older attempts, earlier/missing update
+timestamps against a known revision, same-attempt status regressions, and conflicting
+terminal conclusions at the same revision. Accepted newer attempts clear old start/
+conclusion fields. `upsert_run` returns acceptance; ingest stats count ignored revisions.
+
+Job/step status advances through ordered lifecycle stages. Without an update revision,
+known timings/runner metadata are retained and missing fields can enrich. Conflicting
+terminal conclusions fail visibly, as do job IDs bound to a different repo/run/attempt.
+The caller owns the transaction and must roll back on conflict, including any earlier
+job/step changes. Pre-start states share a rank; arbitrary unknown states do not outrank
+known lifecycle stages.
+
+No migration, network request, historical repair, coverage certificate or savings
+writeback is added. Independent open repair/receipt/cohort PRs require integration after
+merges are chosen. Their explicit correction behavior and independent PR association
+capture must be reconciled with the shared guards (CAVEATS 78).
+
+Validation: 35 new PostgreSQL/permutation/worker replay cases; full suite 680 passed, 78.67%
+coverage. Static/security checks pass. A real completed own-repo run with 1 job/8 steps
+survived synthetic late queued/in-progress replay in a test-DB rollback transaction.
+Committed report: `data/corpus/ingest-order-smoke.json`. No production changes.
+
 ### Verification loop
 
 After a Cadence PR merges, watch the next 30 days of runs on that ref and write
