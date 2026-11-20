@@ -53,6 +53,14 @@ class RunObservation:
     # would multiply the same seconds by the number of workflows.
     workflow_path: str | None = None
     head_sha: str | None = None
+    # The triggering event (`push`, `pull_request`, `schedule`...). Load-bearing wherever a
+    # workflow behaves differently per event: a conditional `cancel-in-progress` is
+    # evaluated against the superseding run's event, and a PR run and a push to main of
+    # the same workflow can do entirely different work.
+    event: str | None = None
+    # `self-hosted`, `hosted` or `mixed` across the run's jobs; None when no job recorded
+    # labels. Waiting for a runner means different things for each.
+    runner_kind: str | None = None
     # Observed jobs vs jobs we could map to a config node. Reusable workflows
     # (`jobs.x.uses: ./.github/workflows/_build.yml`) rename their jobs to
     # `x / <inner>`, which matches nothing in the calling file — so coverage can be low
