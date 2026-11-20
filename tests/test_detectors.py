@@ -31,7 +31,8 @@ def make_ctx(workflow_yaml: str, *, runs=None, step_series=None, is_private=Fals
 
 
 def run_obs(run_id: int, branch: str, start: float, end: float, timings=None,
-            workflow_path: str = "ci.yml", queue_seconds: float = 0.0) -> RunObservation:
+            workflow_path: str = "ci.yml", queue_seconds: float = 0.0,
+            event: str | None = None) -> RunObservation:
     """`start` is queue entry; execution begins `queue_seconds` later.
 
     Defaulting the two to the same instant keeps every existing case unchanged while
@@ -41,7 +42,7 @@ def run_obs(run_id: int, branch: str, start: float, end: float, timings=None,
     return RunObservation(
         run_id=run_id, head_branch=branch, started_epoch=start,
         exec_started_epoch=start + queue_seconds, completed_epoch=end,
-        conclusion="success", workflow_path=workflow_path,
+        conclusion="success", workflow_path=workflow_path, event=event,
         timings=timings or {"build": NodeTiming("build", 0, end - start)},
     )
 
@@ -690,4 +691,85 @@ class TestCancellationWordingMatchesTheFile:
     def test_the_detector_version_moved(self):
         """Persisted findings carry the old wording and must stay attributable to it."""
         (d,) = NoRunCancellationDetector().run(make_ctx(NO_CONCURRENCY, runs=self.RUNS))
-        assert d.detector_version == "no_run_cancellation@2"
+        assert d.detector_version == "no_run_cancellation@3"
+
+
+class TestCancellationEvaluatesEventConditions:
+    """A conditional `cancel-in-progress` is a statement of intent, not an omission.
+
+    Field case (CAVEATS 81): a private repo keyed its group on the PR number, falling back
+    to the sha, with `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`,
+    after an incident in which cancelled main runs hid a regression. Every "superseded"
+    run was a push to main. The top-ranked finding told them to undo that fix.
+    """
+
+    PR_ONLY = (
+        "concurrency:\n  group: ci-${{ github.event.pull_request.number || github.sha }}\n"
+        "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}\n"
+    )
+
+    def _run(self, concurrency_block: str, runs):
+        wf = NO_CONCURRENCY.replace("jobs:", concurrency_block + "jobs:")
+        return NoRunCancellationDetector().run(make_ctx(wf, runs=runs))
+
+    def test_main_pushes_the_condition_exempts_are_not_waste(self):
+        runs = [
+            run_obs(1, "main", 0, 100, event="push"),
+            run_obs(2, "main", 40, 140, event="push"),
+            run_obs(3, "main", 90, 190, event="push"),
+        ]
+        assert self._run(self.PR_ONLY, runs) == []
+
+    def test_overlaps_the_condition_would_cancel_are_not_claimed_either(self):
+        """The condition says cancel, yet the older run finished: they were in different
+        groups, and editing cancel-in-progress cannot recover that."""
+        runs = [
+            run_obs(1, "feat", 0, 100, event="pull_request"),
+            run_obs(2, "feat", 40, 140, event="pull_request"),
+        ]
+        assert self._run(self.PR_ONLY, runs) == []
+
+    def test_unknown_events_stay_claimable_and_decided_ones_are_counted(self):
+        runs = [
+            run_obs(1, "main", 0, 100, event="push"),
+            run_obs(2, "main", 40, 140, event="push"),      # decided: exempt
+            run_obs(3, "dev", 0, 100),
+            run_obs(4, "dev", 50, 150),                      # successor event unknown
+        ]
+        (d,) = self._run(self.PR_ONLY, runs)
+        assert d.title.startswith("1 superseded runs")
+        history = next(e for e in d.evidence if e.kind == "run_history")
+        assert history.payload["superseded_count"] == 1
+        assert history.payload["overlaps_decided_by_condition"] == 1
+        assert history.run_ids == [3]
+
+    def test_the_negated_form_is_evaluated(self):
+        block = ("concurrency:\n  group: x\n"
+                 "  cancel-in-progress: ${{ github.event_name != 'push' }}\n")
+        runs = [run_obs(1, "main", 0, 100, event="push"), run_obs(2, "main", 40, 140, event="push")]
+        assert self._run(block, runs) == []
+
+    def test_comparison_ignores_case_as_github_does(self):
+        block = ("concurrency:\n  group: x\n"
+                 "  cancel-in-progress: ${{ github.event_name == 'Pull_Request' }}\n")
+        runs = [run_obs(1, "main", 0, 100, event="push"), run_obs(2, "main", 40, 140, event="push")]
+        assert self._run(block, runs) == []
+
+    @pytest.mark.parametrize("expression", [
+        "${{ github.ref != 'refs/heads/main' }}",
+        "${{ github.event_name == 'pull_request' && github.ref != 'refs/heads/main' }}",
+        "${{ 'pull_request' == github.event_name }}",
+        "${{ !contains(github.ref, 'release') }}",
+    ])
+    def test_any_other_expression_is_left_unevaluated(self, expression):
+        block = f"concurrency:\n  group: x\n  cancel-in-progress: {expression}\n"
+        runs = [run_obs(1, "main", 0, 100, event="push"), run_obs(2, "main", 40, 140, event="push")]
+        (d,) = self._run(block, runs)
+        assert "conditional" in d.title
+        history = next(e for e in d.evidence if e.kind == "run_history")
+        assert history.payload["overlaps_decided_by_condition"] == 0
+
+    def test_absent_concurrency_ignores_events_entirely(self):
+        runs = [run_obs(1, "main", 0, 100, event="push"), run_obs(2, "main", 40, 140, event="push")]
+        (d,) = NoRunCancellationDetector().run(make_ctx(NO_CONCURRENCY, runs=runs))
+        assert "no cancel-in-progress" in d.title
