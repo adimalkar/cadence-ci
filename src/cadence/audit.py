@@ -33,6 +33,7 @@ from cadence.detectors.context import (
 from cadence.detectors.failure import FirstFailingStepDetector
 from cadence.detectors.longtail import LongTailStepDetector
 from cadence.detectors.matrix import NonDiscriminatingMatrixLegDetector
+from cadence.detectors.queue import RunnerQueueWaitDetector
 from cadence.detectors.serialization import FalseNeedsEdgeDetector
 from cadence.detectors.triggers import IrrelevantPathTriggerDetector
 from cadence.findings import persist_findings, resolve_missing
@@ -49,6 +50,7 @@ DETECTORS = [
     LongTailStepDetector(),
     JobBillingRoundingDetector(),
     FirstFailingStepDetector(),
+    RunnerQueueWaitDetector(),
 ]
 
 
@@ -90,7 +92,7 @@ def build_context(
 
         cur.execute(
             """
-            SELECT id, head_branch, conclusion, workflow_path, head_sha,
+            SELECT id, head_branch, conclusion, workflow_path, head_sha, event,
                    extract(epoch FROM created_at) AS created_epoch
             FROM run
             WHERE repo_id = %s AND created_at > now() - make_interval(days => %s)
@@ -106,7 +108,7 @@ def build_context(
         if run_ids:
             cur.execute(
                 """
-                SELECT j.run_id, j.name, j.name_base,
+                SELECT j.run_id, j.name, j.name_base, j.runner_labels,
                        extract(epoch FROM j.created_at) AS created_epoch,
                        extract(epoch FROM j.started_at) AS started_epoch,
                        extract(epoch FROM j.completed_at) AS completed_epoch
@@ -311,12 +313,30 @@ def _observations(run_rows, jobs_by_run, workflows: list[Workflow]) -> list[RunO
                 conclusion=row["conclusion"],
                 workflow_path=row["workflow_path"],
                 head_sha=row["head_sha"],
+                event=row["event"],
+                runner_kind=_runner_kind(job_rows),
                 jobs_total=len(job_rows),
                 jobs_mapped=len(spans),
                 timings=aggregate_spans(spans),
             )
         )
     return out
+
+
+def _runner_kind(job_rows: list[dict]) -> str | None:
+    """`self-hosted`, `hosted` or `mixed` across one run's jobs; None when unlabelled.
+
+    GitHub adds the `self-hosted` label to every self-hosted runner, so its presence is
+    the one reliable signal. A job with no labels recorded says nothing either way.
+    """
+    kinds = {
+        "self-hosted" if any(str(lb).lower() == "self-hosted" for lb in labels) else "hosted"
+        for labels in (jr.get("runner_labels") for jr in job_rows)
+        if labels
+    }
+    if not kinds:
+        return None
+    return kinds.pop() if len(kinds) == 1 else "mixed"
 
 
 def _config_key_for(
