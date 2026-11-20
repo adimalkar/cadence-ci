@@ -7,6 +7,7 @@ three lines of YAML that change no build semantics.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,7 +19,12 @@ DETECTOR_ID = "waste.no_run_cancellation"
 # @2: titles, suggested actions and evidence now describe the workflow's actual concurrency
 # state instead of asserting "no cancel-in-progress" for all of them (CAVEATS 55). Bumped
 # because persisted findings carry the old wording and must stay attributable to it.
-DETECTOR_VERSION = "no_run_cancellation@2"
+#
+# @3: a conditional `cancel-in-progress` of the exact form
+# `${{ github.event_name == '<event>' }}` (or `!=`) is now evaluated against each
+# superseding run's event. Overlaps the condition already decides -- deliberately exempted
+# or already cancelled -- are not claimed as recoverable (CAVEATS 81).
+DETECTOR_VERSION = "no_run_cancellation@3"
 
 SUGGESTED = """\
 concurrency:
@@ -124,6 +130,42 @@ class CancellationState:
         return {"missing": "concurrency.cancel-in-progress"}
 
 
+# The one expression shape evaluated: `github.event_name` compared with a single literal.
+# GitHub expression literals are single-quoted only. Anything else -- `github.ref`, `&&`,
+# `contains(...)`, a reversed operand order -- stays unevaluated, because a wrong guess
+# at GitHub's semantics is worse than naming what we cannot evaluate.
+_EVENT_CONDITION = re.compile(
+    r"^\$\{\{\s*github\.event_name\s*(==|!=)\s*'([A-Za-z_]+)'\s*\}\}$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class EventCondition:
+    """`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, parsed."""
+
+    op: str      # == or !=
+    event: str
+
+    def cancels(self, event: str | None) -> bool | None:
+        """Whether a run triggered by `event` cancels its group's in-progress run.
+
+        GitHub evaluates `cancel-in-progress` in the context of the run that *joins* the
+        group, so this takes the superseding run's event. None when the event is unknown.
+        GitHub compares strings case-insensitively.
+        """
+        if event is None:
+            return None
+        same = event.lower() == self.event.lower()
+        return same if self.op == "==" else not same
+
+
+def parse_event_condition(expression: str | None) -> EventCondition | None:
+    if not expression:
+        return None
+    m = _EVENT_CONDITION.match(expression.strip())
+    return EventCondition(op=m.group(1), event=m.group(2)) if m else None
+
+
 def cancellation_state(concurrency: dict[str, Any] | None) -> CancellationState:
     """Classify a workflow's concurrency config. Never evaluates an expression."""
     if concurrency is None:
@@ -192,6 +234,28 @@ class NoRunCancellationDetector:
             if not superseded:
                 continue
 
+            state = cancellation_state(wf.concurrency)
+
+            # A recognised condition has already decided every overlap whose superseding
+            # run's event we know. Where it says "do not cancel", the overlap is the
+            # author's stated policy -- typically each push to main must report its own
+            # result. Where it says "cancel" and the older run finished anyway, the two
+            # runs were not in the same group (a group keyed on the sha, say), so editing
+            # `cancel-in-progress` recovers nothing. Neither is claimable; both are counted
+            # in the evidence rather than dropped silently.
+            decided = 0
+            condition = parse_event_condition(state.expression)
+            if state.kind == "conditional" and condition is not None:
+                event_of = {r.run_id: r.event for r in usable}
+                undecided = [
+                    s for s in superseded
+                    if condition.cancels(event_of.get(s.superseded_by)) is None
+                ]
+                decided = len(superseded) - len(undecided)
+                superseded = undecided
+                if not superseded:
+                    continue
+
             savings = replay_cancellation_savings(superseded, total_runs=len(usable))
             if savings is None or savings.seconds_per_run <= 0:
                 continue
@@ -200,7 +264,6 @@ class NoRunCancellationDetector:
             # Superseded runs burn every job that was still executing, not one job's
             # worth of elapsed time, so the billed multiplier is the run's job count.
             avg_jobs = _avg_job_count(wf_runs)
-            state = cancellation_state(wf.concurrency)
 
             drafts.append(
                 FindingDraft(
@@ -233,6 +296,10 @@ class NoRunCancellationDetector:
                                 # older jobs forward. Surfaced rather than silently
                                 # dropped: a reader deserves to know the sample shrank.
                                 "runs_excluded_implausible_span": excluded,
+                                # Overlaps a recognised event condition already decides,
+                                # either as a deliberate exemption or as runs in
+                                # different groups. Not recoverable by this edit.
+                                "overlaps_decided_by_condition": decided,
                                 "workflow": wf.path,
                                 "detail": savings.detail,
                             },
