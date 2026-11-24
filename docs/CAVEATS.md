@@ -59,6 +59,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
 | 90 | `cadence analyze` (cadence.analysis/1) is a parallel path to `audit`, and other commands still log to stdout | Medium | Open |
+| 91 | The MCP server is local-only and has been exercised with the Python SDK client, not with Claude Code, Codex, Cursor or Copilot | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1636,6 +1637,38 @@ tokens for `gh run list` of 100 runs alone, and 52-70k for the jobs of 50 runs.
 explicit second step. Configure logging to stderr once, in the CLI entry point. Accept a
 contract finding id in `suppress add`. Add `--as-of` and refusal enrichment once #63 and
 #66 merge. Then the MCP adapter calls the same two views.
+
+### 91. The MCP server is local-only and has been exercised with the Python SDK client, not with Claude Code, Codex, Cursor or Copilot · Medium
+
+**What.** `cadence mcp` serves the analysis contract over stdio with two tools.
+`cadence_analyze` returns the summary view and `cadence_finding` the finding view; both
+come from the same functions as `cadence analyze`. Both are annotated read-only,
+non-destructive and idempotent. There is no ingest, suppress or edit tool. It is an
+optional extra (`mcp>=2.3,<3`), installed in CI so its tests run rather than skip. A real
+stdio session ran with the SDK's own client against the local database: initialize, list
+tools, analyse pallets/flask (~520 tokens), fetch one finding (~1,200 tokens, same
+`analysis_id`), and get a coded refusal for a missing repo. A test asserts that the tool
+output and a direct `summary_view` are identical.
+
+**Why it matters.**
+1. No real agent host has run it, so client-specific behaviour is unknown. That includes
+   structured versus text output, timeouts on a cold `cadence_analyze` (about 10-20
+   GitHub requests to pin the source), and tool approval prompts.
+2. Each `cadence_analyze` captures the source live. The process-level cache serves
+   follow-up `cadence_finding` calls, and a miss recomputes offline from the saved
+   snapshot, but a restart loses the cache.
+3. There is no authentication beyond local process access, and no hosted mode. The
+   GitHub token is the operator's.
+4. Results carry the same JSON twice, as structured content and as text, as MCP
+   recommends. A client that bills both doubles the token cost.
+5. Workflow YAML and log-derived strings reach the agent inside evidence. The server's
+   instructions call them data, but that is guidance, not enforcement.
+
+**What would close it.** Register it in Claude Code, Codex and Cursor and run the same
+three tasks in each (find the largest waste, inspect a finding, check a refusal). Record
+approval, output and timing differences. Add an optional `snapshot` argument so a client
+can pin a source across restarts. Then decide between hosted HTTP and OAuth, per the
+2026-11-19 integration research.
 
 ## Environmental and tooling notes
 

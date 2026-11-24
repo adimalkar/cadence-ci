@@ -27,13 +27,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
+
+import structlog
 
 from cadence.audit import DETECTORS, build_context, run_audit, summarize_pipeline
 from cadence.detectors.base import Detector, EvidenceDraft, FindingDraft
-from cadence.source import PreviewSource
+from cadence.providers import GitHubProvider
+from cadence.providers.base import AccessDenied, NotFound, RateLimited
+from cadence.source import CACHE_DIR, PreviewSource, SourceUnavailable, capture_source
 from cadence.suppress import SuppressionError, collect, stored_matches
 
 SCHEMA_VERSION = "cadence.analysis/1"
@@ -42,6 +48,17 @@ RUN_URL = "https://github.com/{repo}/actions/runs/{run_id}"
 # durations; a reader needs a sample and the true count, not all of them.
 MAX_LIST_ITEMS = 50
 SUMMARY_RUN_SAMPLE = 3
+
+
+def log_to_stderr() -> None:
+    """Send structlog to stderr, which it does not do by default (it prints to stdout).
+
+    Any adapter whose stdout is a protocol -- JSON for `cadence analyze`, MCP over stdio --
+    must call this first. The stream is looked up when each logger is made, not bound
+    once, so a replaced `sys.stderr` (a test runner's capture) is never written after it
+    is closed.
+    """
+    structlog.configure(logger_factory=lambda *_: structlog.PrintLogger(file=sys.stderr))
 
 
 class AnalysisError(Exception):
@@ -199,6 +216,46 @@ def _coverage(conn, repo_id: int, ctx, window_days: int, limit_runs: int) -> dic
 
 def _iso(value: datetime | None) -> str | None:
     return value.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ") if value else None
+
+
+async def capture(repo: str | None, *, ref: str | None = None,
+                  snapshot: Path | None = None, cache_dir: Path = CACHE_DIR,
+                  token: str | None = None) -> tuple[PreviewSource, str]:
+    """The pinned source an analysis reads: from a saved snapshot (offline), or captured
+    from GitHub at `ref` and saved for offline follow-ups. Shared by every adapter."""
+    if snapshot is not None:
+        src = PreviewSource.load(snapshot)
+        if repo and repo != src.repo:
+            raise AnalysisError("snapshot_mismatch", f"snapshot is for {src.repo}, not {repo}")
+        return src, str(snapshot)
+    parts = (repo or "").split("/")
+    if len(parts) != 2 or not all(parts):
+        raise AnalysisError("bad_repo", "repo must be owner/name")
+    if not token:
+        raise AnalysisError("no_token", "no GitHub token configured",
+                            hint="export CADENCE_GITHUB_TOKEN=$(gh auth token)")
+    provider = GitHubProvider(token)
+    try:
+        remote = await provider.get_repo(parts[0], parts[1])
+        src = await capture_source(provider, remote, ref=ref)
+    finally:
+        await provider.aclose()
+    return src, str(src.save(cache_dir))
+
+
+def as_error(exc: BaseException) -> AnalysisError | None:
+    """Map provider and source failures to coded refusals; None for anything else."""
+    if isinstance(exc, AnalysisError):
+        return exc
+    if isinstance(exc, RateLimited):
+        return AnalysisError("rate_limited", str(exc), retryable=True,
+                             hint=f"retry in {exc.retry_after_seconds:.0f}s")
+    if isinstance(exc, NotFound | AccessDenied):
+        return AnalysisError("github_access", str(exc)[:200],
+                             hint="check the repo name and the token's access")
+    if isinstance(exc, SourceUnavailable):
+        return AnalysisError("source_unavailable", str(exc), retryable=True)
+    return None
 
 
 # ──────────────────────────────────────────────────────────────────── views

@@ -915,17 +915,11 @@ def analyze(
     nothing else; logs go to stderr. Writes nothing to the database. The source it read is
     pinned to a commit and saved, so `--snapshot PATH --finding ID` answers offline.
     """
-    import sys
-
-    import structlog
-
-    from cadence.analysis import AnalysisError, finding_view, summary_view
     from cadence.analysis import analyze as run_analysis
-    from cadence.providers.base import AccessDenied, NotFound, RateLimited
-    from cadence.source import SourceUnavailable
+    from cadence.analysis import as_error, capture, finding_view, log_to_stderr, summary_view
 
     # structlog prints to stdout by default; one retry warning would corrupt the JSON.
-    structlog.configure(logger_factory=structlog.PrintLoggerFactory(file=sys.stderr))
+    log_to_stderr()
 
     def emit(obj: dict, code: int = 0) -> None:
         typer.echo(json.dumps(obj, indent=2 if pretty else None, sort_keys=False))
@@ -937,42 +931,33 @@ def analyze(
     if not snapshot and not repo:
         raise typer.BadParameter("give owner/name, or --snapshot")
 
-    async def _source() -> tuple[PreviewSource, str]:
-        if snapshot:
-            src = PreviewSource.load(snapshot)
-            if repo and repo != src.repo:
-                raise AnalysisError("snapshot_mismatch",
-                                    f"snapshot is for {src.repo}, not {repo}")
-            return src, str(snapshot)
-        assert repo is not None
-        parts = repo.split("/")
-        if len(parts) != 2 or not all(parts):
-            raise AnalysisError("bad_repo", "repo must be owner/name")
-        if not settings.github_token:
-            raise AnalysisError("no_token", "no GitHub token configured",
-                                hint="export CADENCE_GITHUB_TOKEN=$(gh auth token)")
-        provider = GitHubProvider(settings.github_token)
-        try:
-            remote = await provider.get_repo(*parts)
-            src = await capture_source(provider, remote, ref=ref)
-        finally:
-            await provider.aclose()
-        return src, str(src.save(cache_dir))
-
     try:
-        source, path = asyncio.run(_source())
+        source, path = asyncio.run(capture(repo, ref=ref, snapshot=snapshot,
+                                           cache_dir=cache_dir, token=settings.github_token))
         with connect() as conn:
             result = run_analysis(conn, source, window_days=window, limit_runs=limit,
                                   source_path=path)
         emit(finding_view(result, finding) if finding else
              summary_view(result, top=top, include_suppressed=include_suppressed))
-    except AnalysisError as exc:
-        emit(exc.as_dict(), 1)
-    except RateLimited as exc:
-        emit(AnalysisError("rate_limited", str(exc), retryable=True,
-                           hint=f"retry in {exc.retry_after_seconds:.0f}s").as_dict(), 1)
-    except (NotFound, AccessDenied) as exc:
-        emit(AnalysisError("github_access", str(exc)[:200],
-                           hint="check the repo name and the token's access").as_dict(), 1)
-    except SourceUnavailable as exc:
-        emit(AnalysisError("source_unavailable", str(exc), retryable=True).as_dict(), 1)
+    except Exception as exc:
+        err = as_error(exc)
+        if err is None:
+            raise
+        emit(err.as_dict(), 1)
+
+
+@app.command()
+def mcp() -> None:
+    """Serve the analysis contract to an AI agent over MCP (stdio). Read-only tools only.
+
+    Register with your client, e.g. `claude mcp add cadence -- cadence mcp`. Needs the
+    `mcp` extra (`uv sync --extra mcp`), a database with ingested history, and
+    CADENCE_GITHUB_TOKEN for live sources.
+    """
+    try:
+        from cadence.mcp_server import serve
+    except ModuleNotFoundError as exc:
+        typer.echo(f"MCP support is not installed ({exc.name}); "
+                   "install the extra: uv sync --extra mcp", err=True)
+        raise typer.Exit(1) from None
+    serve()

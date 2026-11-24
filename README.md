@@ -106,6 +106,17 @@ uv run cadence analyze --snapshot <source.snapshot> --finding f_1a2b3c4d5e6f   #
 Errors are JSON too (`{"error": {"code": "not_ingested", "hint": ...}}`, exit 1). See
 CAVEATS 90 for what it does not do yet.
 
+The same two views are available to AI agents over MCP (stdio, read-only tools
+`cadence_analyze` and `cadence_finding`):
+
+```bash
+uv sync --extra mcp
+claude mcp add cadence -- uv --directory "$PWD" run cadence mcp    # Claude Code
+```
+
+Other MCP clients take the same command. Only the MCP Python SDK client has been tested
+so far (CAVEATS 91).
+
 Tests:
 
 ```bash

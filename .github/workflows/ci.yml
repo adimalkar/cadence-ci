@@ -63,7 +63,7 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        run: uv sync --extra dev --extra mcp
 
       # Config and the per-module baseline live in pyproject.toml. Eight modules are
       # exempt while their pre-existing errors are burned down; everything else is gated,
@@ -232,7 +232,8 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: uv sync --extra dev --python ${{ matrix.python-version }}
+        # --extra mcp: the MCP adapter's tests must run here, not skip.
+        run: uv sync --extra dev --extra mcp --python ${{ matrix.python-version }}
 
       # The DB-backed tests skip themselves when Postgres is unreachable. That is right
       # locally and a silent green build here, so prove the connection before trusting
