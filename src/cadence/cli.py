@@ -805,7 +805,9 @@ def audit(
 
             if when is not None:
                 with_steps = runs_with_steps(conn, [r.run_id for r in ctx.runs])
-                if with_steps < len(ctx.runs):
+                # Ten percent, not any: a run or two always lacks steps (no job ran past
+                # setup), and a warning on 495 of 496 trains people to ignore it.
+                if with_steps < 0.9 * len(ctx.runs):
                     console.print(
                         f"[yellow]step timings for {with_steps} of {len(ctx.runs)} runs. "
                         f"GitHub drops them after about 120 days, so step-based rules "
