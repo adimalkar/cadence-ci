@@ -90,7 +90,8 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --extra dev --extra ci
+        # --extra mcp: an optional extra still ships; audit its dependency tree too.
+        run: uv sync --extra dev --extra ci --extra mcp
 
       # Not --strict: it fails on any package it cannot audit, and `cadence` itself is not
       # on PyPI. That would be a permanently red check rather than a signal.
