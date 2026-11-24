@@ -116,6 +116,30 @@ class JobFailure:
     job_seconds: float
 
 
+@dataclass(frozen=True, slots=True)
+class CancelledJob:
+    """One cancelled job attempt, with the step that was running when it stopped.
+
+    Every attempt, not just the latest: a hang is usually followed by a re-run, and the
+    re-run's success is what hides the hang from anyone looking at the latest result.
+    GitHub records a job killed by its `timeout-minutes` as `cancelled`, the same as one a
+    person or a concurrency group cancelled; only its duration tells them apart.
+    """
+
+    run_id: int
+    attempt: int
+    workflow_path: str | None
+    job_name: str | None
+    name_base: str | None
+    exec_seconds: float
+    # The cancelled step that had started and ran longest: the one in progress at the end.
+    step_name: str | None
+    step_seconds: float | None
+    # The run's latest attempt and its conclusion, to tell whether a re-run passed.
+    run_attempt: int
+    run_conclusion: str | None
+
+
 # setup-node's own test, copied from its src/main.ts: "npm", "npm@…", "^npm@…".
 _NPM_PACKAGE_MANAGER = re.compile(r"^(\^)?npm(@.*)?$")
 
@@ -197,6 +221,8 @@ class AuditContext:
     # Manifests of the actions jobs run, keyed by `uses:`. Absent means not looked up, which
     # a detector must read as unknown -- see cadence.actions.
     actions: ActionIndex = field(default_factory=dict)
+    # Cancelled job attempts in the window, every attempt; see CancelledJob.
+    cancelled_jobs: list[CancelledJob] = field(default_factory=list)
     # NOTE: class E (runner fit) is deliberately NOT built. Detecting "single-threaded
     # job on an 8-core runner" needs CPU utilisation, which the Actions API does not
     # expose -- only labels. Inferring it from duration alone would be a guess presented

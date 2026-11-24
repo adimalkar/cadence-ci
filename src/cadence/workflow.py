@@ -48,6 +48,10 @@ class Step:
         return self.uses.split("@", 1)[0].strip()
 
 
+# What GitHub applies to a job that declares no `timeout-minutes`.
+DEFAULT_JOB_TIMEOUT_MINUTES = 360.0
+
+
 @dataclass(slots=True)
 class Job:
     key: str
@@ -67,6 +71,22 @@ class Job:
     @property
     def is_reusable_call(self) -> bool:
         return self.uses is not None
+
+    @property
+    def timeout_minutes(self) -> float | None:
+        """The job's `timeout-minutes`: GitHub's default of 360 when absent, None when it
+        is an expression we cannot evaluate."""
+        value = self.raw.get("timeout-minutes")
+        if value is None:
+            return DEFAULT_JOB_TIMEOUT_MINUTES
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int | float):
+            return float(value)
+        try:
+            return float(str(value).strip())
+        except ValueError:
+            return None
 
     @property
     def has_dynamic_name(self) -> bool:

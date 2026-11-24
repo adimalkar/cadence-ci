@@ -25,6 +25,7 @@ from cadence.detectors.cache import (
 from cadence.detectors.cancellation import NoRunCancellationDetector
 from cadence.detectors.context import (
     AuditContext,
+    CancelledJob,
     JobFailure,
     RootPackageJson,
     RunObservation,
@@ -34,6 +35,7 @@ from cadence.detectors.failure import FirstFailingStepDetector
 from cadence.detectors.longtail import LongTailStepDetector
 from cadence.detectors.matrix import NonDiscriminatingMatrixLegDetector
 from cadence.detectors.serialization import FalseNeedsEdgeDetector
+from cadence.detectors.timeouts import TimeoutHangDetector
 from cadence.detectors.triggers import IrrelevantPathTriggerDetector
 from cadence.findings import persist_findings, resolve_missing
 from cadence.workflow import Workflow, parse_workflow
@@ -49,6 +51,7 @@ DETECTORS = [
     LongTailStepDetector(),
     JobBillingRoundingDetector(),
     FirstFailingStepDetector(),
+    TimeoutHangDetector(),
 ]
 
 
@@ -178,6 +181,43 @@ def build_context(
                     )
                 )
 
+        # Cancelled job attempts, every attempt, with the step running when each stopped.
+        # A timeout kill is recorded as `cancelled`, and its re-run usually passes, so the
+        # latest-attempt filter used above would hide exactly these.
+        cancelled_jobs: list[CancelledJob] = []
+        if run_ids:
+            cur.execute(
+                """
+                SELECT r.workflow_path, j.run_id, j.attempt, r.run_attempt,
+                       r.conclusion AS run_conclusion, j.name, j.name_base,
+                       extract(epoch FROM (j.completed_at - j.started_at)) AS exec_s,
+                       st.name AS step_name, st.step_s
+                FROM job j JOIN run r ON r.id = j.run_id
+                LEFT JOIN LATERAL (
+                    SELECT s.name, extract(epoch FROM (s.completed_at - s.started_at)) AS step_s
+                    FROM step s
+                    WHERE s.job_id = j.id AND s.conclusion = 'cancelled'
+                      AND s.started_at IS NOT NULL AND s.completed_at IS NOT NULL
+                    ORDER BY s.completed_at - s.started_at DESC, s.number
+                    LIMIT 1
+                ) st ON true
+                WHERE j.run_id = ANY(%s) AND j.conclusion = 'cancelled'
+                  AND j.started_at IS NOT NULL AND j.completed_at IS NOT NULL
+                """,
+                (run_ids,),
+            )
+            cancelled_jobs = [
+                CancelledJob(
+                    run_id=row["run_id"], attempt=row["attempt"],
+                    workflow_path=row["workflow_path"], job_name=row["name"],
+                    name_base=row["name_base"], exec_seconds=float(row["exec_s"]),
+                    step_name=row["step_name"],
+                    step_seconds=float(row["step_s"]) if row["step_s"] is not None else None,
+                    run_attempt=row["run_attempt"], run_conclusion=row["run_conclusion"],
+                )
+                for row in cur.fetchall()
+            ]
+
         # Per-leg outcomes and durations for the matrix rule. Keyed on the verbatim
         # name, since that is exactly what distinguishes one leg from another.
         leg_outcomes: dict[str, dict[str, list[tuple[int, str | None]]]] = {}
@@ -235,6 +275,7 @@ def build_context(
         changed_paths=load_changed_paths(conn, repo_id, run_ids),
         root_package_json=root_package_json or RootPackageJson(),
         actions=actions or {},
+        cancelled_jobs=cancelled_jobs,
     )
 
 
