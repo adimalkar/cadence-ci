@@ -174,8 +174,8 @@ class AuditContext:
     workflows: list[Workflow]
     runs: list[RunObservation]
     # Keyed by (job name_base, step name), as recorded: the display name, merged across
-    # every workflow that has a job by that name. Right for ranking (long tail); wrong for
-    # asking about one step in one config job -- use `series_for_step` for that.
+    # every workflow that has a job by that name. Retained for legacy comparisons;
+    # detectors must use step_series_resolved or series_for_step for scoped evidence.
     step_series: dict[tuple[str, str], StepSeries]
     cost: CostContext
     window_days: int

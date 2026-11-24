@@ -25,8 +25,9 @@ The dashboard in [`../ROADMAP.md`](../ROADMAP.md) says *where we are*. This file
 provide verified previews. `cadence fix preview` exposes the npm/pip fixer with saved source
 snapshots and JSON output. PR publishing and realized-savings writeback are still unbuilt. The cache-detector precision
 fixes landed in `main` through PRs #28–31, including the Go/Ruby/uv input models in @6.
-Phases 3–6 remain design documents. The remaining historical measurements below retain
-their original dates.
+Phases 3–6 remain design documents. Long-tail timing isolation is now implemented in `long_tail_step@2`; see CAVEATS 62 for
+the 2026-11-17 comparison and its matched-history denominator. The remaining historical
+measurements below retain their original dates.
 
 ---
 
@@ -249,7 +250,7 @@ not by size. Each links to the entry holding the detail.
 | Cache previews | `cadence fix preview` supports npm/pip with pinned source snapshots; 17 corpus findings, zero eligible diffs under current guards. Broader coverage and ≥20 real before/after workflows remain open ([`CAVEATS`](../CAVEATS.md) 67–68) |
 | `no_dependency_cache` precision | Fixed in `dependency_cache@4`: 21 wrong findings removed (apt, build and test steps, other steps' and other workflows' timings), 21 genuine ones found by resolving timings to config ([`CAVEATS`](../CAVEATS.md) 61). Floor of 5 s never argued ([`CAVEATS`](../CAVEATS.md) 63) |
 | `no_dependency_cache` config blindness | Fixed in `dependency_cache@5`: composite actions are read through, so 30 findings on already-cached jobs and 2 deliberate opt-outs are gone (50 → 18, 9 → 4 repos; [`CAVEATS`](../CAVEATS.md) 64). setup-go/ruby/uv inputs/defaults are now modelled in `dependency_cache@6` ([`CAVEATS`](../CAVEATS.md) 65) |
-| `long_tail_step` series | Still ranks timings merged across workflows with a same-named job ([`CAVEATS`](../CAVEATS.md) 62) |
+| `long_tail_step` series | Fixed in `long_tail_step@2`: workflow/job-scoped histories and evidence. Same-context November comparison: 10 → 16 of 51 repos; reach rises partly because unmatched timings no longer enter the denominator. Legacy exact-finding suppressions need explicit re-scoping ([`CAVEATS`](../CAVEATS.md) 62, 71) |
 | `no_dependency_cache` reach | setup-node counting as a cache is fixed in `dependency_cache@3` (7 → 11 of 53 repos; [`CAVEATS`](../CAVEATS.md) 59); `actions/cache/save` not recognised ([`CAVEATS`](../CAVEATS.md) 60) |
 | Suppression surfaces | `.cadenceignore` costs one API call per audit and is fetched best-effort. No `closed_pr` writer yet — that arrives with the first fixer |
 
