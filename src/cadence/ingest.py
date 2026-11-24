@@ -14,6 +14,7 @@ import psycopg
 import structlog
 from psycopg.rows import dict_row
 
+from cadence.ingest_order import advance_sql, status_rank_sql, terminal_conflict_sql
 from cadence.models import Job, Repo, Run
 from cadence.providers.base import CIProvider, RateLimited
 
@@ -24,6 +25,7 @@ log = structlog.get_logger(__name__)
 class IngestStats:
     runs_seen: int = 0
     runs_written: int = 0
+    runs_ignored: int = 0
     jobs_written: int = 0
     steps_written: int = 0
     pages_fetched: int = 0
@@ -31,7 +33,8 @@ class IngestStats:
 
     def __str__(self) -> str:
         return (
-            f"{self.runs_written} runs, {self.jobs_written} jobs, "
+            f"{self.runs_written} runs ({self.runs_ignored} ignored snapshots), "
+            f"{self.jobs_written} jobs, "
             f"{self.steps_written} steps ({self.pages_fetched} pages)"
         )
 
@@ -51,9 +54,12 @@ def upsert_repo(conn: psycopg.Connection, repo: Repo) -> None:
     )
 
 
-def upsert_run(conn: psycopg.Connection, run: Run) -> None:
-    conn.execute(
-        """
+def upsert_run(conn: psycopg.Connection, run: Run) -> bool:
+    """Accept monotonic run revisions; False means ignored, caller owns the transaction."""
+    if type(run.run_attempt) is not int or not 1 <= run.run_attempt <= 2**31 - 1:
+        raise ValueError("run attempt must be a positive SQL integer")
+    result = conn.execute(
+        f"""
         INSERT INTO run (
             id, repo_id, workflow_id, workflow_path, workflow_name, run_number,
             run_attempt, event, status, conclusion, head_sha, head_branch, tree_sha,
@@ -65,18 +71,33 @@ def upsert_run(conn: psycopg.Connection, run: Run) -> None:
             %(created_at)s, %(started_at)s, %(updated_at)s
         )
         ON CONFLICT (id) DO UPDATE SET
-            status = EXCLUDED.status,
-            conclusion = EXCLUDED.conclusion,
-            updated_at = EXCLUDED.updated_at,
+            status = coalesce(EXCLUDED.status, run.status),
+            conclusion = CASE WHEN EXCLUDED.run_attempt > run.run_attempt
+                THEN EXCLUDED.conclusion ELSE coalesce(EXCLUDED.conclusion, run.conclusion) END,
+            updated_at = coalesce(EXCLUDED.updated_at, run.updated_at),
             run_attempt = GREATEST(run.run_attempt, EXCLUDED.run_attempt),
-            -- A run first seen as `queued` has no run_started_at yet. Without this the
-            -- row keeps started_at NULL forever, because every later update omitted it.
-            -- coalesce in this direction so a real timestamp is never overwritten by a
-            -- NULL from a payload that simply didn't carry one.
-            started_at = coalesce(EXCLUDED.started_at, run.started_at),
+            -- A new attempt must not inherit the previous attempt's start/conclusion.
+            -- A job-only stub's start is not authoritative run metadata.
+            started_at = CASE WHEN EXCLUDED.run_attempt > run.run_attempt
+                THEN EXCLUDED.started_at WHEN run.status IS NULL
+                THEN coalesce(EXCLUDED.started_at, run.started_at)
+                ELSE coalesce(run.started_at, EXCLUDED.started_at) END,
             tree_sha = coalesce(EXCLUDED.tree_sha, run.tree_sha),
             pull_request_number =
                 coalesce(EXCLUDED.pull_request_number, run.pull_request_number)
+        WHERE run.repo_id = EXCLUDED.repo_id AND EXCLUDED.run_attempt >= run.run_attempt
+          AND (run.updated_at IS NULL OR EXCLUDED.updated_at >= run.updated_at)
+          AND (EXCLUDED.run_attempt > run.run_attempt
+               OR (run.status IS DISTINCT FROM 'completed'
+                   AND EXCLUDED.updated_at > run.updated_at
+                   AND ({status_rank_sql('EXCLUDED.status')}) >= 0)
+               OR ({status_rank_sql('EXCLUDED.status')}) >= ({status_rank_sql('run.status')}))
+          AND NOT coalesce((EXCLUDED.run_attempt = run.run_attempt AND run.status = 'completed'
+                   AND EXCLUDED.status = 'completed'
+                   AND EXCLUDED.updated_at IS NOT DISTINCT FROM run.updated_at
+                   AND run.conclusion IS NOT NULL AND EXCLUDED.conclusion IS NOT NULL
+                   AND run.conclusion <> EXCLUDED.conclusion), false)
+        RETURNING id
         """,
         {
             "id": run.id,
@@ -98,6 +119,14 @@ def upsert_run(conn: psycopg.Connection, run: Run) -> None:
             "updated_at": run.updated_at,
         },
     )
+    if result.fetchone() is not None:
+        return True
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute("SELECT repo_id FROM run WHERE id=%s", (run.id,))
+        previous = cur.fetchone()
+    if previous is not None and previous["repo_id"] != run.repo_id:
+        raise ValueError("run identity conflicts with its stored repository")
+    return False
 
 
 def _store_etag(conn: psycopg.Connection, repo_id: int, etag: str | None) -> None:
@@ -143,8 +172,9 @@ def ensure_run_stub(conn: psycopg.Connection, run: Run) -> None:
 
 
 def upsert_job(conn: psycopg.Connection, job: Job, repo_id: int) -> int:
-    conn.execute(
-        """
+    """Monotonic lifecycle plus missing-field enrichment; caller rolls back on conflicts."""
+    result = conn.execute(
+        f"""
         INSERT INTO job (
             id, run_id, repo_id, name, name_base, status, conclusion, runner_labels,
             runner_group, created_at, started_at, completed_at, attempt, matrix
@@ -154,20 +184,22 @@ def upsert_job(conn: psycopg.Connection, job: Job, repo_id: int) -> int:
             %(started_at)s, %(completed_at)s, %(attempt)s, %(matrix)s
         )
         ON CONFLICT (id) DO UPDATE SET
-            status = EXCLUDED.status,
-            conclusion = EXCLUDED.conclusion,
-            completed_at = EXCLUDED.completed_at,
-            -- Webhooks deliver a job three times (queued -> in_progress -> completed),
-            -- and only the last two carry started_at. Omitting it here left every
-            -- webhook-ingested job with started_at NULL permanently, which silently
-            -- voids execution_time, queue_time, and every downstream billing figure.
-            started_at = coalesce(EXCLUDED.started_at, job.started_at),
-            runner_group = coalesce(EXCLUDED.runner_group, job.runner_group),
-            -- labels arrive empty on some queued payloads; don't let that erase them
+            status = CASE WHEN {advance_sql('job')} THEN EXCLUDED.status
+                          ELSE coalesce(job.status, EXCLUDED.status) END,
+            conclusion = CASE WHEN {advance_sql('job')} THEN EXCLUDED.conclusion
+                WHEN job.status IS NOT DISTINCT FROM EXCLUDED.status
+                THEN coalesce(job.conclusion, EXCLUDED.conclusion) ELSE job.conclusion END,
+            created_at = coalesce(job.created_at, EXCLUDED.created_at),
+            completed_at = coalesce(job.completed_at, EXCLUDED.completed_at),
+            started_at = coalesce(job.started_at, EXCLUDED.started_at),
+            runner_group = coalesce(job.runner_group, EXCLUDED.runner_group),
             runner_labels = CASE
-                WHEN EXCLUDED.runner_labels = '{}' THEN job.runner_labels
-                ELSE EXCLUDED.runner_labels END,
-            matrix = coalesce(EXCLUDED.matrix, job.matrix)
+                WHEN job.runner_labels = '{{}}' THEN EXCLUDED.runner_labels
+                ELSE job.runner_labels END,
+            matrix = coalesce(job.matrix, EXCLUDED.matrix)
+        WHERE job.repo_id = EXCLUDED.repo_id AND job.run_id = EXCLUDED.run_id
+          AND job.attempt = EXCLUDED.attempt AND NOT {terminal_conflict_sql('job')}
+        RETURNING id
         """,
         {
             "id": job.id,
@@ -186,18 +218,26 @@ def upsert_job(conn: psycopg.Connection, job: Job, repo_id: int) -> int:
             "matrix": psycopg.types.json.Json(job.matrix) if job.matrix else None,
         },
     )
+    if result.fetchone() is None:
+        raise ValueError("job identity or terminal conclusion conflicts with stored evidence")
 
     written = 0
     for step in job.steps:
-        conn.execute(
-            """
+        result = conn.execute(
+            f"""
             INSERT INTO step (job_id, number, name, status, conclusion,
                               started_at, completed_at)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (job_id, number) DO UPDATE SET
-                status = EXCLUDED.status,
-                conclusion = EXCLUDED.conclusion,
-                completed_at = EXCLUDED.completed_at
+                status = CASE WHEN {advance_sql('step')} THEN EXCLUDED.status
+                              ELSE coalesce(step.status, EXCLUDED.status) END,
+                conclusion = CASE WHEN {advance_sql('step')} THEN EXCLUDED.conclusion
+                    WHEN step.status IS NOT DISTINCT FROM EXCLUDED.status
+                    THEN coalesce(step.conclusion, EXCLUDED.conclusion) ELSE step.conclusion END,
+                started_at = coalesce(step.started_at, EXCLUDED.started_at),
+                completed_at = coalesce(step.completed_at, EXCLUDED.completed_at)
+            WHERE NOT {terminal_conflict_sql('step')}
+            RETURNING number
             """,
             (
                 job.id,
@@ -209,6 +249,8 @@ def upsert_job(conn: psycopg.Connection, job: Job, repo_id: int) -> int:
                 step.completed_at,
             ),
         )
+        if result.fetchone() is None:
+            raise ValueError("step terminal conclusion conflicts with stored evidence")
         written += 1
     return written
 
@@ -273,8 +315,10 @@ async def ingest_repo(
     stats.runs_seen = len(collected)
 
     for run in collected:
-        upsert_run(conn, run)
-        stats.runs_written += 1
+        if upsert_run(conn, run):
+            stats.runs_written += 1
+        else:
+            stats.runs_ignored += 1
     conn.commit()
 
     if not fetch_jobs:
