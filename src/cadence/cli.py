@@ -12,6 +12,7 @@ from rich.table import Table
 from cadence.audit import (
     build_context,
     enrich_changed_paths,
+    enrich_refusal_reasons,
     fetch_action_index,
     fetch_root_package_json,
     run_audit,
@@ -681,6 +682,10 @@ def audit(
                 raise typer.Exit(1)
 
             summary = summarize_pipeline(ctx)
+            # At most a few requests, and only when jobs were refused: the reason GitHub
+            # gives is the whole finding, and nothing else in storage holds it.
+            if ctx.unstarted_failures:
+                await enrich_refusal_reasons(provider2, gh_repo, ctx)
             if paths:
                 n = await enrich_changed_paths(provider2, gh_repo, ctx)
                 console.print(f"[dim]changed-path data for {n} runs[/dim]")

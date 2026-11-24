@@ -351,6 +351,20 @@ class GitHubProvider:
                     continue
         return out
 
+    async def fetch_job_annotations(self, repo: Repo, job_id: int) -> list[tuple[str, str]]:
+        """(level, message) for a job's check-run annotations.
+
+        A job's id is its check run's id. This is where GitHub says why a job never
+        started -- a billing block, a spending limit, no runner for a label -- which
+        nothing in the jobs payload carries.
+        """
+        resp = await self._get_with_backoff(
+            f"/repos/{repo.owner}/{repo.name}/check-runs/{job_id}/annotations",
+            params={"per_page": 50},
+        )
+        return [(str(a.get("annotation_level") or ""), str(a.get("message") or ""))
+                for a in resp.json()]
+
     async def fetch_commit_paths(self, repo: Repo, sha: str) -> list[str]:
         """Files changed by one commit. Empty list if unavailable.
 
