@@ -145,7 +145,8 @@ class TestWhatIsNotUntested:
 class TestGroupIsShared:
     @pytest.mark.parametrize("group,shared", [
         ("ci-${{ github.ref }}", True),
-        ("deploy", True),
+        ("deploy", False),  # a constant group is a deliberate mutex
+        ("pages-${{ github.ref }}", True),
         ("ci-${{ github.event.pull_request.number || github.sha }}", False),
         ("${{ github.workflow }}-${{ github.head_ref || github.run_id }}", False),
         ("", False),

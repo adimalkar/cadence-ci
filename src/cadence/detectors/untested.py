@@ -48,11 +48,18 @@ class UntestedCommit:
 
 
 def group_is_shared(wf: Workflow) -> bool:
-    """True when the workflow-level concurrency group can hold two different commits."""
+    """True when the workflow-level concurrency group can hold two different commits.
+
+    A group with no expression at all (`group: pages`) is a deliberate mutex, the pattern
+    GitHub's own Pages starter uses: deploys and publishes serialise, and only the newest
+    matters. Displacing one is the point, so a constant group is not reported.
+    """
     if not wf.concurrency:
         return False
     group = str(wf.concurrency.get("group") or "")
-    return bool(group) and not any(key in group for key in _PER_COMMIT_KEYS)
+    if "${{" not in group:
+        return False
+    return not any(key in group for key in _PER_COMMIT_KEYS)
 
 
 def untested_commits(outcomes: list[RunOutcome], workflow_path: str,
