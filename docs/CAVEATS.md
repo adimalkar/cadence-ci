@@ -58,6 +58,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 86 | `untested_default_branch_commits` reads only workflow-level groups and cannot tell tests from scans | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1598,46 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 86. `untested_default_branch_commits` reads only workflow-level groups and cannot tell tests from scans · Medium
+
+**What.** A new rule, `untested_default_branch_commits@1` (module `observability`), reports
+commits pushed to the default branch whose every run of a workflow was displaced by the
+next push. The cause is a workflow-level concurrency group shared across commits, such as
+`group: ci-${{ github.ref }}`. With `cancel-in-progress` the running run is cancelled.
+Without it, GitHub keeps one pending run per group and cancels the older pending one. A
+cancelled run counts only if a newer default-branch run of the same workflow, for a
+different commit, was created within 60 seconds of its end. A commit with any concluded,
+non-cancelled run counts as tested. A commit with a run still in progress is not judged.
+No savings are claimed: the cost is attribution, not minutes.
+
+It was found by a backtest. On a private field repository, an audit `--as-of` 2026-08-08
+reports "5 of 72 commits pushed to `main` never got a result". The team changed the
+group 13 days later, after a regression went unreported for three merges and surfaced
+against an innocent commit. Their fix keys the group per commit on `main`, which is the
+rule's suggested action. On the public corpus the rule reports 10 findings on 9 of 50
+repos; spot-checked angular runs were cancelled 16-17 s after the next push's run was
+created. `audit.py` now also hands detectors `run_outcomes`, which include runs cancelled
+before any job started. `AuditContext.runs` cannot see those, and they are exactly the
+runs a group evicts.
+
+**Why it matters.**
+1. Job-level `concurrency:` is not read, so a job-scoped group that displaces commits
+   is missed.
+2. The group expression is not evaluated, only searched for per-commit keys
+   (`github.sha`, `github.run_id`, ...). A group such as
+   `${{ github.event.pull_request.number || github.ref }}` is correctly treated as
+   shared on pushes, but an exotic expression could be misread either way.
+3. A constant group (`group: pages`) is skipped as a deliberate mutex. A test workflow
+   that really uses a constant group is therefore missed.
+4. The rule cannot tell a test suite from an analysis or publish workflow. vscode's
+   `codeql.yml` (23 of 33 commits) is reported, though skipping intermediate scans on
+   `main` may be acceptable to its maintainers.
+
+**What would close it.** Read job-level concurrency. Evaluate the group expression for a
+push to the default branch with the same context evaluator `no_run_cancellation@3` uses
+for `github.event_name`. Let a repository mark analysis or publish workflows, or infer
+them from `environment:` and known scan actions, before reporting.
 
 ## Environmental and tooling notes
 
