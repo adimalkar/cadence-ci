@@ -56,6 +56,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 79 | Timing health describes bounded stored observations, not upstream completeness or root cause | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1709,3 +1710,52 @@ chain; re-resolving every package would mix unrelated dependency changes into th
 [PR #33](https://github.com/adimalkar/cadence-ci/pull/33), which changes only urllib3's locked
 version/artifacts to 2.8.0. Merged `origin/main` into the cache branch (`5254e2b`) so its
 security check uses the same fix. Local `pip-audit` and workflow hardening checks pass.
+
+
+### 79. Timing health is bounded observation evidence, not a coverage certificate · Medium
+
+**What.** `493a314` (2026-11-18) adds offline `timing-health`: current-attempt job/step
+timestamp diagnostics with exact run/job/step IDs, fields, values and lifecycle context.
+It reports missing observations, unknown states/conclusions, invalid timestamp encoding,
+reversed ordering, steps outside a valid job interval and overlapping positive executed
+step intervals. Zero-length intervals and gaps are not invented errors. No clamping or
+numerical tolerance hides reversals.
+
+Skipped rows are unmeasured work: missing/order anomalies remain visible as information,
+and skipped intervals are excluded from executed-overlap checks. Missing timestamps on
+cancelled or otherwise unfinished observations can be legitimate unknowns, not ingest bugs.
+Invalid timestamp encoding remains an error. Run states distinguish inconsistent,
+incomplete, pending, no-observations, informational-only and consistent observed rows.
+None certifies complete inventory or actual execution accuracy.
+
+The command opens READ ONLY REPEATABLE READ, with up to 500 runs, 10,000 jobs and 50,000
+steps. Row overflow is an explicit failure with no partial clean report. Auto selection
+uses descending completed run IDs and an exclusive cursor; explicit IDs may inspect active
+runs. Page snapshots are independent, so newly completed runs require revisiting the head.
+A global issue-detail cap (default 200/max 2000, zero counts-only) does not suppress counts
+or classifications. Optional failure exit uses unknown/invalid counts, not displayed rows.
+A valid empty selection is an empty report, not proof of no defects.
+
+**Why it matters.** Stored rows cannot prove that an upstream job or step was never missed.
+No receipt is consulted; open PR #53 is separate. Current-attempt scope excludes older
+attempts and does not prove upstream run-attempt freshness. First-known timestamps can
+be wrong, and a strict interval contradiction can reflect skew or provider bookkeeping
+rather than an application problem. The report does not infer root cause, recommend
+deletion, repair data, establish workload comparability or attribute savings. Existing
+stats/detectors and their timing interpretations are unchanged.
+
+**Verification.** 49 new pure/real-SQL/CLI cases cover intervals, unknown/skipped/ongoing
+work, capped details, exit policy, scope/paging/bounds/ownership and read-only behavior.
+Full suite 694 passed without skips (79.26% coverage); lint/types/dependency/workflow checks pass.
+Read-only public-corpus report `data/corpus/timing-health-smoke.json` retains both selection
+policies: 20 newest completed curl runs all lack current-attempt jobs; a separate fixed
+job-present OpenSSL selection has 15 consistent-observation and 5 informational-only runs.
+Ten skipped-job end times precede start by 1–9 seconds. Initial smoke classified these
+as contradictions; stored outcome inspection showed all 10 were skipped. The final policy
+retains their fields and context as information, with tests keeping executed reversals
+invalid. No numerical threshold was lowered to improve counts. No API or data/schema writes.
+
+**What would close it.** Integrate verified inventory and source provenance after merges
+are chosen, measure coverage explicitly, and build evidence-driven corrections with a
+durable outcome policy. Diagnostic consistency alone must not gate a savings claim.
+Numbers 70–78 are reserved by independent open PRs; none was copied or merged here.

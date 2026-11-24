@@ -1,6 +1,6 @@
 # Phase progress — what is built, what is left
 
-Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-10-19. Checkbox
+Measured 2026-09-03 against the code, with Phase 2 refreshed 2026-11-18. Checkbox
 counts come from the phase files themselves; the "actually exists" column is the source tree and a live corpus
 sweep.
 
@@ -203,6 +203,15 @@ workflows. There are 17 missing-cache findings and **zero accepted previews** un
 current floor and shape guards (CAVEATS 67). The ≥20 real before/after criterion is still
 unmet. Next, measure additional eligible shapes before expanding coverage; keep opt-in
 publishing and its anti-spam controls separate.
+
+**Offline timing health implemented, 2026-11-18 (`493a314`).** `timing-health`
+identifies missing/contradictory current-attempt job/step observations with exact fields
+and IDs. Read-only snapshots, row bounds and global capped details preserve complete
+issue totals for the selected window; optional failure exit uses unknown/invalid counts.
+49 new cases; full suite 694 passed (79.26% coverage). Public-corpus checks report 20 curl runs with missing
+jobs, plus 15 consistent and 5 informational-only OpenSSL runs. Ten reversed skipped-job
+intervals remain visible as unmeasured information. No repairs/production changes or
+coverage/causality claims; integration limits in CAVEATS 79. Prior PRs remain unmerged.
 
 **Realized savings is blocked on PR → run linkage.** Nothing joins a pull request to the
 runs it caused, so writeback cannot attribute correctly. This does not block local previews.

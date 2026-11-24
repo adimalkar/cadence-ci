@@ -95,6 +95,30 @@ a projected lower-bound saving of 30 seconds per run and declines publishing wor
 custom checkout layouts and ambiguous install commands. Its current corpus evaluation
 produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
+Inspect stored job and step timing observations offline:
+
+```bash
+uv run cadence timing-health owner/repo --limit 50 --json timing-health.json
+uv run cadence timing-health owner/repo --run 123456 --max-issues 0 --fail-on-issues
+```
+
+Automatic selection inspects the newest completed run IDs; continue with the reported
+exclusive `--before` cursor. Explicit repeated `--run` IDs may include active runs.
+The command uses one read-only snapshot, current attempts only, and makes no API requests
+or repairs. It requires no token or new schema.
+
+Findings identify affected run/job/step IDs, fields and stored lifecycle context. Missing
+observations are unknown; malformed or contradictory executed timings are errors.
+Skipped-row timing absence/order anomalies remain informational and are excluded from
+executed overlap checks. `consistent_observations` does not certify complete coverage.
+Reports include counts even when issue details are capped (default 200, maximum 2,000;
+zero gives counts only). Selection is bounded to 500 runs, 10,000 jobs and 50,000 steps;
+row overflow is an error rather than a partial clean report.
+
+The default exit is successful even with findings. `--fail-on-issues` exits nonzero for
+unknown/invalid observations while still writing JSON; informational skipped work does
+not trip it. See CAVEATS 79 for interpretation and coverage limits.
+
 Tests:
 
 ```bash
