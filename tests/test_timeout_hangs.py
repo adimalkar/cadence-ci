@@ -99,10 +99,27 @@ class TestFinding:
         assert "360-minute default" in finding.suggested_action
         assert finding.evidence[0].payload["timeout_declared"] is False
 
-    def test_each_step_is_its_own_finding(self):
-        kills = [kill(i) for i in range(1, 4)] + [kill(i, step="Test") for i in range(10, 13)]
-        assert [g.step for g in group_hangs(ctx(kills))] == ["Install browser", "Test"]
-        assert len(TimeoutHangDetector().run(ctx(kills))) == 2
+    def test_kills_in_different_steps_are_one_job_outrunning_its_limit(self):
+        kills = ([kill(i, run_attempt=1, run_conclusion="cancelled") for i in range(1, 3)]
+                 + [kill(i, step="Test", run_attempt=1, run_conclusion="cancelled")
+                    for i in range(10, 13)])
+        group, = group_hangs(ctx(kills))
+        assert group.step is None
+        assert group.steps == [("Test", 3), ("Install browser", 2)]
+        finding, = TimeoutHangDetector().run(ctx(kills))
+        assert finding.title == (
+            "`e2e` (.github/workflows/e2e.yml) hung until the 35-minute job timeout 5 times "
+            "(177 runner-minutes), in 2 different steps, most often `Test` (3)")
+        assert finding.dedupe_key == "timeout_hang:.github/workflows/e2e.yml:e2e"
+        assert "outrunning its 35-minute limit" in finding.suggested_action
+        assert finding.evidence[1].payload["steps_at_kill"] == [
+            {"step": "Test", "kills": 3}, {"step": "Install browser", "kills": 2}]
+
+    def test_kills_with_no_recorded_step_name_the_job_only(self):
+        kills = [kill(i, step=None) for i in range(1, 3)]
+        finding, = TimeoutHangDetector().run(ctx(kills))
+        assert finding.title.startswith("`e2e` (.github/workflows/e2e.yml) hung until")
+        assert "different steps" not in finding.title
 
 
 class TestWhatIsNotAHang:

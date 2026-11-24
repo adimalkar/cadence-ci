@@ -1618,6 +1618,12 @@ of the fix reports "hung until the 35-minute job timeout 4 times (141 runner-min
 2 of 4 runs passed on re-run". The public corpus has one such kill in its window (remix,
 360-minute default), below the two-kill floor, so the rule produces no corpus findings.
 
+Kills are grouped per job, not per step. The same repository's CI job was killed at its
+45-minute limit about 30 times in three weeks, landing 5-45 seconds past it each time, in
+whatever step was running on an overloaded runner. Grouping per step had turned that one
+cause into four findings. A job killed in one step every time names the step. A job
+killed in several names the most frequent one and says the job is outrunning its limit.
+
 **Why it matters.**
 1. Step-level `timeout-minutes` is not read. A step that hits its own limit fails with
    `failure`, which `first_failing_step` already sees.
