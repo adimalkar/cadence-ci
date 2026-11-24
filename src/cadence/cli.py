@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
@@ -15,6 +16,7 @@ from cadence.audit import (
     fetch_action_index,
     fetch_root_package_json,
     run_audit,
+    runs_with_steps,
     summarize_pipeline,
 )
 from cadence.commitstore import backfill_tree_shas, store_commits, unfetched_shas
@@ -24,10 +26,11 @@ from cadence.configstore import store_snapshot
 from cadence.corpus import CORPUS
 from cadence.cost import render_saving
 from cadence.db import apply_migrations, connect
-from cadence.ingest import ingest_repo
+from cadence.ingest import BackfillStats, backfill_window, ingest_repo
 from cadence.logstore import LocalLogStore
 from cadence.preview import preview_cache_fixes
 from cadence.providers import GitHubProvider
+from cadence.providers.base import RateLimited
 from cadence.queue import enqueue
 from cadence.report import (
     build_model,
@@ -202,6 +205,101 @@ def ingest(
                 console.print(f"[dim]{repo}: unchanged since last poll (304)[/dim]")
             else:
                 console.print(f"[green]{repo}[/green]: {stats}")
+        finally:
+            await provider.aclose()
+
+    asyncio.run(_run())
+
+
+def _parse_instant(text: str) -> datetime:
+    """A UTC instant from `YYYY-MM-DD` (its start) or an ISO timestamp."""
+    try:
+        if len(text) == 10:
+            return datetime.combine(date.fromisoformat(text), datetime.min.time(), UTC)
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        raise typer.BadParameter(f"not a date or ISO timestamp: {text!r}") from None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+@app.command()
+def backfill(
+    repo: str = typer.Argument(..., help="owner/name"),
+    since: str = typer.Option(..., help="First UTC day to fetch, YYYY-MM-DD."),
+    until: str = typer.Option(None, help="Last UTC day to fetch, YYYY-MM-DD; default today."),
+    no_jobs: bool = typer.Option(False, "--no-jobs", help="Run metadata only, skip step timings."),
+    reserve: int = typer.Option(
+        500, min=0,
+        help="Requests to leave unspent for other users of the same token. Below this, "
+             "wait for the rate-limit reset instead of spending into it.",
+    ),
+    day_timeout: int = typer.Option(
+        900, min=60, help="Seconds before one day's fetch is abandoned and retried."
+    ),
+) -> None:
+    """Fetch the runs created between two dates, oldest day first, for backtests.
+
+    `ingest` walks newest-first to a run count and keeps a delta-poll cursor; this walks a
+    date range one UTC day at a time and never touches that cursor. Each day commits on its
+    own, and runs already stored with their jobs are skipped, so an interrupted backfill
+    resumes by re-running it. GitHub drops step timings after roughly 120 days (observed
+    2026-11-24), so older days yield job timings without steps.
+    """
+    token = _require_token()
+    try:
+        owner, name = repo.split("/", 1)
+    except ValueError:
+        console.print("[red]repo must be owner/name[/red]")
+        raise typer.Exit(1) from None
+    first = _parse_instant(since)
+    last = _parse_instant(until) if until else datetime.now(UTC).replace(
+        hour=0, minute=0, second=0, microsecond=0)
+    if last < first:
+        raise typer.BadParameter("--until is before --since")
+
+    async def _run() -> None:
+        provider = GitHubProvider(token)
+        total = BackfillStats()
+        try:
+            gh_repo = await provider.get_repo(owner, name)
+            day, failures = first, 0
+            while day <= last:
+                remaining, reset_in = await provider.rate_remaining()
+                if remaining < reserve:
+                    console.print(f"[dim]{remaining} requests left (reserve {reserve}); "
+                                  f"waiting {reset_in:.0f}s for the reset[/dim]")
+                    await asyncio.sleep(reset_in + 5)
+                    continue
+                end = day + timedelta(days=1) - timedelta(seconds=1)
+                try:
+                    # Bounded: an unexplained hang once held a worker for 19 hours
+                    # (CAVEATS 34). A day is atomic, so abandoning one loses nothing.
+                    with connect() as conn:
+                        stats = await asyncio.wait_for(
+                            backfill_window(provider, conn, gh_repo, day, end,
+                                            fetch_jobs=not no_jobs),
+                            timeout=day_timeout,
+                        )
+                except RateLimited as exc:
+                    console.print(f"[yellow]rate limited; waiting "
+                                  f"{exc.retry_after_seconds:.0f}s[/yellow]")
+                    await asyncio.sleep(exc.retry_after_seconds + 5)
+                    continue
+                except TimeoutError:
+                    failures += 1
+                    console.print(f"[yellow]{day:%Y-%m-%d}: timed out after {day_timeout}s "
+                                  f"(attempt {failures}/3)[/yellow]")
+                    if failures >= 3:
+                        console.print("[red]giving up; re-run to resume[/red]")
+                        raise typer.Exit(1) from None
+                    continue
+                failures = 0
+                for field in ("runs_seen", "runs_written", "jobs_written", "steps_written",
+                              "pages_fetched", "runs_skipped_known", "windows_split"):
+                    setattr(total, field, getattr(total, field) + getattr(stats, field))
+                console.print(f"{day:%Y-%m-%d}: {stats} · {remaining} requests left")
+                day += timedelta(days=1)
+            console.print(f"[green]{repo}[/green]: {total}")
         finally:
             await provider.aclose()
 
@@ -629,6 +727,12 @@ def audit(
         None, "--html", help="Write the shareable HTML report here (the cold-pitch artifact)."
     ),
     json_out: str = typer.Option(None, "--json", help="Write machine-readable results here."),
+    as_of: str = typer.Option(
+        None, "--as-of",
+        help="Backtest: audit history as it stood at this UTC date (YYYY-MM-DD, meaning its "
+             "start) or ISO instant, with the workflow files of the default branch's last "
+             "commit before it. Writes nothing to the database.",
+    ),
 ) -> None:
     """Audit a repo's CI for recoverable waste. Read-only against GitHub."""
     token = _require_token()
@@ -638,17 +742,28 @@ def audit(
         console.print("[red]repo must be owner/name[/red]")
         raise typer.Exit(1) from None
 
+    when = _parse_instant(as_of) if as_of else None
+
     async def _run() -> None:
         provider2 = GitHubProvider(token)
         try:
             gh_repo = await provider2.get_repo(owner, name)
+            ref = None
+            if when is not None:
+                ref = await provider2.commit_before(gh_repo, when)
+                if ref is None:
+                    console.print(f"[red]{repo}: no commit on the default branch before "
+                                  f"{when:%Y-%m-%d %H:%M} UTC[/red]")
+                    raise typer.Exit(1)
+                console.print(f"[dim]as of {when:%Y-%m-%d %H:%M} UTC · workflow files at "
+                              f"{ref[:12]}[/dim]")
             with console.status(f"reading {repo} workflows…"):
-                workflow_files = await provider2.fetch_workflow_files(gh_repo)
-            await _audit_body(provider2, gh_repo, repo, workflow_files)
+                workflow_files = await provider2.fetch_workflow_files(gh_repo, ref=ref)
+            await _audit_body(provider2, gh_repo, repo, workflow_files, ref)
         finally:
             await provider2.aclose()
 
-    async def _audit_body(provider2, gh_repo, repo, workflow_files) -> None:
+    async def _audit_body(provider2, gh_repo, repo, workflow_files, ref) -> None:
 
         if not workflow_files:
             console.print(f"[yellow]{repo}: no workflow files found[/yellow]")
@@ -657,9 +772,13 @@ def audit(
         with connect() as conn:
             # Persist the exact YAML this audit is about to analyse. Free -- these bytes
             # are already in memory -- and it is what makes the analysis reproducible
-            # later, and what turns repeated audits into a config history.
-            new_blobs, changed = store_snapshot(conn, gh_repo.id, workflow_files)
-            conn.commit()
+            # later, and what turns repeated audits into a config history. Never for a
+            # backtest: the snapshot is stamped now, so storing August's YAML would make
+            # it the "latest" config every offline re-analysis reads.
+            changed = 0
+            if when is None:
+                _, changed = store_snapshot(conn, gh_repo.id, workflow_files)
+                conn.commit()
             if changed:
                 console.print(
                     f"[dim]config changed since last audit: {changed} "
@@ -668,28 +787,43 @@ def audit(
 
             ctx = build_context(
                 conn, gh_repo.id, workflow_files, window_days=window, limit_runs=limit,
+                as_of=when,
                 root_package_json=await fetch_root_package_json(
-                    provider2, gh_repo, workflow_files
+                    provider2, gh_repo, workflow_files, ref=ref
                 ),
-                actions=await fetch_action_index(provider2, gh_repo, workflow_files),
+                actions=await fetch_action_index(provider2, gh_repo, workflow_files,
+                                                 ref=ref),
             )
             if not ctx.runs:
                 console.print(
-                    f"[yellow]{repo}: no ingested runs in the last {window} days. "
-                    f"Run [cyan]cadence ingest {repo}[/cyan] first.[/yellow]"
+                    f"[yellow]{repo}: no ingested runs in the {window} days before "
+                    f"{'now' if when is None else f'{when:%Y-%m-%d}'}. Run "
+                    f"[cyan]cadence {'ingest' if when is None else 'backfill'} {repo}"
+                    f"[/cyan] first.[/yellow]"
                 )
                 raise typer.Exit(1)
+
+            if when is not None:
+                with_steps = runs_with_steps(conn, [r.run_id for r in ctx.runs])
+                if with_steps < len(ctx.runs):
+                    console.print(
+                        f"[yellow]step timings for {with_steps} of {len(ctx.runs)} runs. "
+                        f"GitHub drops them after about 120 days, so step-based rules "
+                        f"(long tail, caching, first failing step) see only those runs; "
+                        f"silence from them is not a clean result.[/yellow]"
+                    )
 
             summary = summarize_pipeline(ctx)
             if paths:
                 n = await enrich_changed_paths(provider2, gh_repo, ctx)
                 console.print(f"[dim]changed-path data for {n} runs[/dim]")
-            result = run_audit(conn, ctx, commit_sha="HEAD", persist=not dry_run)
+            writes = not dry_run and when is None
+            result = run_audit(conn, ctx, commit_sha="HEAD", persist=writes)
 
             # Suppressions the repository itself declares. Applied after persistence so
             # the ledger stays complete -- a silenced finding is recorded and explained,
             # never withheld, or "what is silenced here and why" becomes unanswerable.
-            if not dry_run:
+            if writes:
                 ignore_text = await _fetch_ignore_file(provider2, gh_repo)
                 try:
                     rules = collect(workflow_files, ignore_text)
@@ -704,7 +838,7 @@ def audit(
                         f"{f'; {n} finding(s) silenced' if n else ''}[/dim]"
                     )
 
-        _render_audit(repo, ctx, summary, result, dry_run=dry_run)
+        _render_audit(repo, ctx, summary, result, dry_run=dry_run, as_of=when)
 
         if html_out or json_out:
             model = build_model(ctx, summary, result["drafts"])
@@ -724,7 +858,8 @@ def _fmt(seconds: float | None) -> str:
     return f"{int(seconds // 60)}:{int(seconds % 60):02d}"
 
 
-def _render_audit(repo, ctx, summary, result, *, dry_run: bool) -> None:
+def _render_audit(repo, ctx, summary, result, *, dry_run: bool,
+                  as_of: datetime | None = None) -> None:
     drafts = result["drafts"]
 
     # A detector that raised produced no findings, which is indistinguishable from a
@@ -802,7 +937,9 @@ def _render_audit(repo, ctx, summary, result, *, dry_run: bool) -> None:
         )
         console.print("[dim]Projection-based findings are excluded from this total.[/dim]")
 
-    if dry_run:
+    if as_of is not None:
+        console.print(f"\n[dim]--as-of {as_of:%Y-%m-%d %H:%M} UTC: nothing written[/dim]")
+    elif dry_run:
         console.print("\n[dim]--dry-run: nothing written[/dim]")
     elif result["persisted"]:
         p = result["persisted"]

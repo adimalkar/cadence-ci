@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 import psycopg
 import structlog
@@ -281,6 +282,26 @@ async def ingest_repo(
         _store_etag(conn, repo.id, new_etag)
         return stats
 
+    await _store_jobs(provider, conn, repo, collected, stats, job_concurrency)
+    conn.commit()
+
+    # Only now is the cursor safe to advance: every run in this window has its jobs and
+    # steps durably written.
+    _store_etag(conn, repo.id, new_etag)
+
+    log.info("ingest.done", repo=repo.full_name, stats=str(stats))
+    return stats
+
+
+async def _store_jobs(
+    provider: CIProvider,
+    conn: psycopg.Connection,
+    repo: Repo,
+    runs: list[Run],
+    stats: IngestStats,
+    job_concurrency: int,
+) -> None:
+    """Fetch and upsert every job (and earlier attempts) of `runs`. Caller commits."""
     semaphore = asyncio.Semaphore(job_concurrency)
 
     async def _jobs_for(run: Run) -> tuple[Run, list[Job]]:
@@ -300,7 +321,7 @@ async def ingest_repo(
                 log.warning("ingest.jobs_failed", run_id=run.id, error=str(exc))
                 return run, []
 
-    tasks = [asyncio.create_task(_jobs_for(r)) for r in collected]
+    tasks = [asyncio.create_task(_jobs_for(r)) for r in runs]
     try:
         for coro in asyncio.as_completed(tasks):
             run, jobs = await coro
@@ -316,11 +337,108 @@ async def ingest_repo(
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         raise
+
+
+# GitHub returns at most this many runs for any filtered listing, however many pages.
+FILTERED_LISTING_CAP = 1000
+
+
+@dataclass
+class BackfillStats(IngestStats):
+    runs_skipped_known: int = 0
+    windows_split: int = 0
+
+    def __str__(self) -> str:
+        return (
+            super().__str__()
+            + f", {self.runs_skipped_known} already stored, {self.windows_split} splits"
+        )
+
+
+def _created_filter(start: datetime, end: datetime) -> str:
+    fmt = "%Y-%m-%dT%H:%M:%SZ"
+    return f"{start.astimezone(UTC).strftime(fmt)}..{end.astimezone(UTC).strftime(fmt)}"
+
+
+async def backfill_window(
+    provider: CIProvider,
+    conn: psycopg.Connection,
+    repo: Repo,
+    start: datetime,
+    end: datetime,
+    *,
+    fetch_jobs: bool = True,
+    job_concurrency: int = 5,
+    stats: BackfillStats | None = None,
+) -> BackfillStats:
+    """Store every run created in [start, end], with its jobs, then commit.
+
+    The history a delta poll cannot reach: `ingest_repo` walks newest-first and stops at
+    its limit. Three differences from it, all deliberate:
+
+    - The ETag cursor is never read or written. It belongs to the delta poll, and a
+      backfill of August must not make September's poll 304.
+    - Runs whose jobs are already stored are not re-fetched, so an interrupted backfill
+      resumes at the cost of its listing calls only.
+    - A window that fills GitHub's 1,000-run cap for filtered listings is split in half
+      and both halves fetched, rather than silently truncated.
+
+    Commits once, at the end: a window is all-or-nothing, so a failure leaves nothing
+    half-written for a resume to mistake as complete.
+    """
+    stats = stats if stats is not None else BackfillStats()
+    upsert_repo(conn, repo)
+
+    collected: dict[int, Run] = {}
+    page = 1
+    per_page = 100
+    while True:
+        result = await provider.fetch_runs(
+            repo, page=page, per_page=per_page, created=_created_filter(start, end)
+        )
+        stats.pages_fetched += 1
+        for run in result.runs:
+            collected[run.id] = run
+        if len(result.runs) < per_page:
+            break
+        if page * per_page >= FILTERED_LISTING_CAP:
+            if end - start <= timedelta(minutes=1):
+                raise RuntimeError(
+                    f"over {FILTERED_LISTING_CAP} runs created within one minute "
+                    f"({_created_filter(start, end)}); cannot split further"
+                )
+            # Possibly truncated: discard this pass and fetch each half on its own.
+            stats.windows_split += 1
+            mid = start + (end - start) / 2
+            await backfill_window(provider, conn, repo, start, mid, fetch_jobs=fetch_jobs,
+                                  job_concurrency=job_concurrency, stats=stats)
+            await backfill_window(provider, conn, repo, mid + timedelta(seconds=1), end,
+                                  fetch_jobs=fetch_jobs, job_concurrency=job_concurrency,
+                                  stats=stats)
+            return stats
+        page += 1
+
+    runs = list(collected.values())
+    stats.runs_seen += len(runs)
+    known: set[int] = set()
+    if runs and fetch_jobs:
+        with conn.cursor(row_factory=dict_row) as cur:
+            # Completed when stored, and with jobs: nothing left to learn from GitHub.
+            cur.execute(
+                """
+                SELECT r.id FROM run r
+                WHERE r.id = ANY(%s) AND r.status = 'completed'
+                  AND EXISTS (SELECT 1 FROM job j WHERE j.run_id = r.id)
+                """,
+                ([r.id for r in runs],),
+            )
+            known = {row["id"] for row in cur.fetchall()}
+    for run in runs:
+        upsert_run(conn, run)
+        stats.runs_written += 1
+    if fetch_jobs:
+        todo = [r for r in runs if r.id not in known]
+        stats.runs_skipped_known += len(runs) - len(todo)
+        await _store_jobs(provider, conn, repo, todo, stats, job_concurrency)
     conn.commit()
-
-    # Only now is the cursor safe to advance: every run in this window has its jobs and
-    # steps durably written.
-    _store_etag(conn, repo.id, new_etag)
-
-    log.info("ingest.done", repo=repo.full_name, stats=str(stats))
     return stats

@@ -8,6 +8,8 @@ raw names would silently miss every matrix job.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import structlog
 
 from cadence.actions import ActionIndex, resolve_actions
@@ -74,6 +76,10 @@ def build_context(
     limit_runs: int = 500,
     root_package_json: RootPackageJson | None = None,
     actions: ActionIndex | None = None,
+    # Analyse history as it stood at this instant: the window ends here instead of now,
+    # and nothing created after it is read. For backtests -- "what would the audit have
+    # said in August" -- paired with the workflow files as of the same moment.
+    as_of: datetime | None = None,
 ) -> AuditContext:
     from psycopg.rows import dict_row
 
@@ -93,11 +99,13 @@ def build_context(
             SELECT id, head_branch, conclusion, workflow_path, head_sha,
                    extract(epoch FROM created_at) AS created_epoch
             FROM run
-            WHERE repo_id = %s AND created_at > now() - make_interval(days => %s)
+            WHERE repo_id = %s
+              AND created_at > coalesce(%s::timestamptz, now()) - make_interval(days => %s)
+              AND created_at <= coalesce(%s::timestamptz, now())
             ORDER BY created_at DESC
             LIMIT %s
             """,
-            (repo_id, window_days, limit_runs),
+            (repo_id, as_of, window_days, as_of, limit_runs),
         )
         run_rows = cur.fetchall()
         run_ids = [r["id"] for r in run_rows]
@@ -211,7 +219,7 @@ def build_context(
         is_private=repo["is_private"],
         runs_per_month=(len(run_rows) / span_days) * 30.0,
         rate_card=rate_card,
-        dominant_labels=_dominant_labels(conn, repo_id),
+        dominant_labels=_dominant_labels(conn, repo_id, as_of),
     )
 
     return AuditContext(
@@ -338,17 +346,40 @@ def _config_key_for(
     return None
 
 
-def _dominant_labels(conn, repo_id: int) -> list[str]:
+def runs_with_steps(conn, run_ids: list[int]) -> int:
+    """How many of these runs have any step timings stored.
+
+    GitHub drops step timings after roughly 120 days while keeping job timings (observed
+    2026-11-24, CAVEATS 85), so a backtest past that horizon sees jobs without steps.
+    Every step-based rule then goes quiet for want of data, which reads exactly like a
+    clean bill of health unless the caller says so.
+    """
+    if not run_ids:
+        return 0
+    row = conn.execute(
+        """
+        SELECT count(DISTINCT j.run_id) AS n FROM job j
+        WHERE j.run_id = ANY(%s) AND EXISTS (SELECT 1 FROM step s WHERE s.job_id = j.id)
+        """,
+        (run_ids,),
+    ).fetchone()
+    return int(row["n"] if isinstance(row, dict) else row[0])
+
+
+def _dominant_labels(conn, repo_id: int, as_of: datetime | None = None) -> list[str]:
     from psycopg.rows import dict_row
 
     with conn.cursor(row_factory=dict_row) as cur:
+        # Bounded by as_of: a repo that moved runners must be priced on the runners it
+        # used then, not the ones it moved to later.
         cur.execute(
             """
             SELECT unnest(runner_labels) AS label, count(*) AS n
             FROM job WHERE repo_id = %s AND runner_labels <> '{}'
+              AND (%s::timestamptz IS NULL OR created_at <= %s::timestamptz)
             GROUP BY 1 ORDER BY n DESC LIMIT 1
             """,
-            (repo_id,),
+            (repo_id, as_of, as_of),
         )
         row = cur.fetchone()
     return [row["label"]] if row else ["ubuntu-latest"]
@@ -376,7 +407,7 @@ async def enrich_changed_paths(provider, repo, ctx: AuditContext, *, max_runs: i
 
 
 async def fetch_root_package_json(
-    provider, repo, workflow_files: dict[str, str]
+    provider, repo, workflow_files: dict[str, str], *, ref: str | None = None
 ) -> RootPackageJson:
     """The root `package.json`, fetched only when a setup-node step's caching depends on it.
 
@@ -387,13 +418,16 @@ async def fetch_root_package_json(
     if not needs_root_package_json(workflows):
         return RootPackageJson()
     try:
-        text = await provider.fetch_text_file(repo, "package.json")
+        text = (await provider.fetch_text_file(repo, "package.json", ref=ref) if ref
+                else await provider.fetch_text_file(repo, "package.json"))
     except Exception:  # never fail an audit over a file that only refines one rule
         return RootPackageJson()
     return RootPackageJson.from_text(text)
 
 
-async def fetch_action_index(provider, repo, workflow_files: dict[str, str]) -> ActionIndex:
+async def fetch_action_index(
+    provider, repo, workflow_files: dict[str, str], *, ref: str | None = None
+) -> ActionIndex:
     """Manifests for the actions that run ahead of a dependency install.
 
     Only those can decide whether the install is cached, so only those are fetched --
@@ -414,7 +448,9 @@ async def fetch_action_index(provider, repo, workflow_files: dict[str, str]) -> 
                     wanted.setdefault(step.uses, None)
     if not wanted:
         return {}
-    return await resolve_actions(provider, repo, list(wanted), known=KNOWN_ACTIONS)
+    # `ref` matters only for local `./` actions: a backtest must read the composite as it
+    # was then, not as it is now.
+    return await resolve_actions(provider, repo, list(wanted), known=KNOWN_ACTIONS, ref=ref)
 
 
 def run_audit(conn, ctx: AuditContext, *, commit_sha: str, persist: bool = True) -> dict:

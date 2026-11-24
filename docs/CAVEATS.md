@@ -58,6 +58,8 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 84 | `audit --as-of` reconstructs config from commit dates and skips repo-declared suppressions | Low | Open |
+| 85 | GitHub drops step timings after about 120 days; job timings survive | **High** | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1599,53 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 84. `audit --as-of` reconstructs config from commit dates and skips repo-declared suppressions · Low
+
+**What.** `cadence backfill REPO --since D --until D` stores the runs created in a UTC date
+range, one day at a time. `cadence audit REPO --as-of D` analyses only runs created before
+that instant, in a window ending there. It reads workflow files, the root `package.json`
+and local composite actions at the default branch's newest commit at or before it, and
+takes the dominant runner label from jobs before it. It writes nothing: no findings, no
+workflow snapshot, no suppressions. Four approximations remain:
+
+1. The commit is chosen by *commit date* (`GET /commits?until=`). A merge that landed on
+   the default branch long after it was authored is dated by its commit, not its arrival.
+   The audit prints the sha it used, so this is checkable rather than silent.
+2. Runs on other branches ran their own branch's YAML, which a normal audit also ignores.
+3. Suppressions declared in the repository (`.cadenceignore` and inline comments) are
+   not read for a backtest, so findings the repo had silenced then are shown.
+4. Remote actions resolve to their manifests at the pinned ref, which is immutable for a
+   sha or a tag but not for a branch ref such as `@main`.
+
+**Why it matters.** A backtest is only as honest as its reconstruction. These four
+approximations cannot invent a finding from data after `as_of`, but they can describe
+config slightly differently from what actually ran.
+
+**What would close it.** Resolve the commit from the `push` event's `head_sha` of the last
+default-branch run before `as_of`, which records what actually ran. Read the suppression
+file at the same ref.
+
+### 85. GitHub drops step timings after about 120 days; job timings survive · High
+
+**What.** Probed on a private field repository on 2026-11-24. For runs created on or
+before 2026-07-26, `GET /actions/runs/{id}/jobs` still returns every job with its
+`created_at`, `started_at`, `completed_at` and labels, but every job's `steps` array is
+empty. From 2026-07-27 23:43 UTC onward, steps are present. That is about 120 days, and
+the boundary moves forward one day per day. It is not the 90-day log retention
+`ingest.py` warns about, and nothing in the response says the steps were removed.
+
+**Why it matters.** Step timings are the input to the long-tail, cache and first-failing-
+step rules. A repo that is ingested late, or a backtest that reaches past the horizon,
+gets jobs without steps. Those rules then go quiet, which looks like a clean result.
+`audit --as-of` now prints how many runs carry step timings when that is not all of them.
+A normal audit does not, and history ingested after the horizon cannot be recovered
+from GitHub at all.
+
+**What would close it.** Ingest continuously, as the webhook and worker path already
+allows, so step timings are stored before they age out. Report step coverage in every
+audit, not only backtests. Confirm the horizon on a second repository, since it may be
+an account- or plan-level retention setting rather than a platform constant.
 
 ## Environmental and tooling notes
 
