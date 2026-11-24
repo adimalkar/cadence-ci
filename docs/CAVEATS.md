@@ -56,6 +56,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 77 | Explicit job repair recovers observations without a coverage certificate or durable batch journal | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1709,3 +1710,61 @@ chain; re-resolving every package would mix unrelated dependency changes into th
 [PR #33](https://github.com/adimalkar/cadence-ci/pull/33), which changes only urllib3's locked
 version/artifacts to 2.8.0. Merged `origin/main` into the cache branch (`5254e2b`) so its
 security check uses the same fix. Local `pip-audit` and workflow hardening checks pass.
+
+
+### 77. Explicit job repair is not complete historical coverage · Medium
+
+**What.** `4c4fedb` (2026-11-18) adds `refresh-jobs` for 1–100 explicit stored completed
+run IDs. The user may select one prior attempt across the batch, otherwise each stored
+current attempt is used. Per-attempt page budget defaults to 10, maximum 100; strict reads
+require stable advertised counts fitting that budget, explicit raw run/attempt identities
+and consistent termination. Legacy provider calls without the new budget remain unchanged.
+
+Selected run attempt/head SHA/update timestamp must still match at persistence time.
+Each successful attempt commits job/step observations atomically. Shared job upserts
+guard repo/run/attempt ownership with conflict-WHERE/RETURNING, covering a conflicting
+insert between selection and upsert. Known omitted timestamps and unreturned rows survive.
+Job creation time/verbatim names and missing step starts can be recovered. Run metadata,
+polling cursors, findings and logs are untouched. No migration or receipt is created.
+
+**Why it matters.** This is a targeted observation repair, not an authoritative inventory
+or a global backfill. It does not select every historical hole, delete missing upstream
+rows or infer absence from an empty response. Stored current attempts may lag upstream;
+the user can only request attempts already represented by stored run metadata. In-progress
+runs and malformed/nonterminal jobs or steps are declined. Nullable timings remain unknown
+when neither source nor stored rows supplies them; timestamps are not invented.
+
+JSON preserves exact selected/pending run-attempt pairs, outcomes, stop reason and any
+retry delay. A rate/access/transport/persistence stop keeps earlier committed attempts and
+leaves the current/later pairs pending. Unavailable/invalid/empty/changed/missing outcomes
+are terminal for that batch, exit nonzero, and can be explicitly reviewed/reselected.
+A 404/410 does not prove deletion rather than hidden permission. The page budget limits
+pages, while the existing transport retry policy may make multiple requests per page.
+
+There is no durable batch journal; a hard interruption can lose the final report. Retain
+the requested IDs/attempts and retry bounded work. The unchanged-run check covers stored
+state, not atomic upstream pagination or freshness. Existing polling/webhook writers can
+later overwrite repaired observations; this change does not introduce their own timestamp
+ordering or a universal concurrency protocol.
+
+**Integration.** Open PR #53 supplies attempt receipts/shared live-membership verification;
+open PR #52 supplies observed cohorts. Neither is copied into this fresh main branch.
+After merges are chosen, repair should use that capability and persist receipts with jobs,
+then cohort consumers must require verified membership. Until then all repair output
+explicitly says coverage is unverified. The two bounded fetch paths should be consolidated
+during integration. No completeness, workload matching or causal savings claim is made.
+
+**Verification.** 49 new cases; full suite 694 passed without skips, 79.32% coverage.
+Lint/types/dependency/workflow security checks pass. Tests cover late identity-conflict
+rollback, unchanged-run guards, timing repair/preservation, exact attempt scoping, strict
+page budgets, ordinary legacy fetch compatibility and resumable errors.
+`data/corpus/job-refresh-smoke.json` records GET-only own-repo run 44247165206 attempt 1:
+9 jobs/86 steps repaired from deliberately partial test-DB rows, 9 job starts restored,
+run/polling fields unchanged, all writes rolled back. The provider closed before DB work.
+No live multi-page or expired-history repair was observed; those failures are fixture-tested.
+No production data/schema changes or PR merges were performed.
+
+**What would close it.** Integrate shared inventory evidence, bounded coverage-driven
+selection and a durable repair/terminal-outcome policy; measure historical coverage with
+explicit exclusions. Timing quality and causal verification remain separate requirements.
+Numbers 70–76 are reserved by independent open PRs, whose code/entries are not copied here.

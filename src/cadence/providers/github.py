@@ -207,21 +207,55 @@ class GitHubProvider:
             updated_at=_dt(raw.get("updated_at")),
         )
 
-    async def fetch_jobs(self, repo: Repo, run_id: int, *, attempt: int | None = None) -> list[Job]:
+    async def fetch_jobs(
+        self, repo: Repo, run_id: int, *, attempt: int | None = None,
+        max_pages: int | None = None,
+    ) -> list[Job]:
+        # Explicit repair opts into a bounded strict read. Existing ingest behavior is
+        # unchanged when max_pages is omitted; no receipt/coverage claim is returned.
+        if max_pages is not None and (
+            type(max_pages) is not int or not 1 <= max_pages <= 100
+            or type(attempt) is not int or not 1 <= attempt <= 2**31 - 1
+            or type(run_id) is not int or not 1 <= run_id <= 2**63 - 1
+        ):
+            raise ValueError("bounded job reads need an explicit attempt and 1..100 pages")
         base = f"/repos/{repo.owner}/{repo.name}/actions/runs/{run_id}"
         path = f"{base}/attempts/{attempt}/jobs" if attempt else f"{base}/jobs"
 
         jobs: list[Job] = []
         page = 1
+        expected_total = None
         while True:
+            if max_pages is not None and page > max_pages:
+                raise ValueError("job page budget exhausted")
             resp = await self._get_with_backoff(
-                path, params={"page": page, "per_page": 100, "filter": "latest"}
+                path, params={"page": page, "per_page": 100,
+                              **({"filter": "latest"} if max_pages is None else {})}
             )
             payload = resp.json()
+            if max_pages is not None:
+                if not isinstance(payload, dict) or not isinstance(payload.get("jobs"), list):
+                    raise ValueError("bounded job response has no jobs list")
+                count = payload.get("total_count")
+                if type(count) is not int or not 0 <= count <= max_pages * 100:
+                    raise ValueError("job total_count is invalid or exceeds the page budget")
+                if expected_total is not None and count != expected_total:
+                    raise ValueError("job total_count changed during pagination")
+                expected_total = count
+                for raw in payload["jobs"]:
+                    if (not isinstance(raw, dict) or type(raw.get("run_id")) is not int
+                            or raw["run_id"] != run_id or type(raw.get("run_attempt")) is not int
+                            or raw["run_attempt"] != attempt):
+                        raise ValueError("job response does not match the requested attempt")
             batch = payload.get("jobs", [])
             jobs.extend(self._to_job(raw, run_id) for raw in batch)
 
             total = payload.get("total_count", len(jobs))
+            if max_pages is not None and (
+                len(jobs) > total or (not batch and len(jobs) < total)
+                or (len(jobs) == total and "next" in resp.links)
+            ):
+                raise ValueError("job pagination contradicts the advertised total")
             if len(jobs) >= total or not batch:
                 break
             page += 1

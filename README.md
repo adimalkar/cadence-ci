@@ -95,6 +95,29 @@ a projected lower-bound saving of 30 seconds per run and declines publishing wor
 custom checkout layouts and ambiguous install commands. Its current corpus evaluation
 produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
+Repair job and step observations for explicit stored completed runs:
+
+```bash
+uv run cadence refresh-jobs owner/repo --run 123456 --run 123457 --json repair.json
+uv run cadence refresh-jobs owner/repo --run 123456 --attempt 1 --max-pages 5
+```
+
+Replace the example IDs with ingested runs. Select up to 100 distinct runs; the default
+attempt is each run's stored current attempt. Each attempt has a 10-page budget by default,
+configurable from 1 to 100. Reads bypass polling ETags and fetch no logs. A changed stored
+run is skipped, conflicting job identities are rejected, and each successful attempt
+commits separately. Known omitted timings and unreturned job/step rows are preserved.
+
+JSON records outcomes, exact pending run/attempt pairs, stop reason and rate-limit delay.
+Resume pending work with explicit `--run` and `--attempt` values; group different attempts
+into separate invocations. Empty, unavailable, invalid, changed or missing outcomes also
+exit nonzero and can be reviewed/reselected by ID. Earlier commits survive a later stop.
+Repair writes no run metadata, polling state, findings or logs and requires no new schema.
+
+This command repairs observations and creates no coverage receipt. It does not establish
+complete job/step coverage or current upstream freshness. Receipt integration remains
+separate in open PR #53; see CAVEATS 77 for the remaining limits.
+
 Tests:
 
 ```bash
