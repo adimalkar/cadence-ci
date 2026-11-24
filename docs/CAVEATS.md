@@ -58,6 +58,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 87 | `timeout_hang` reads only job-level timeouts and infers the kill from duration | Low | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1598,39 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 87. `timeout_hang` reads only job-level timeouts and infers the kill from duration · Low
+
+**What.** A new rule, `timeout_hang@1` (module `flake`), reports a job step that was still
+running when the job's `timeout-minutes` killed it, on at least two attempts. GitHub
+records such a job as `cancelled`, not `failure` or `timed_out`, so `first_failing_step`
+never saw it. Its re-run usually passes, so the latest attempt is green. The rule reads
+every attempt of every cancelled job, which `build_context` now collects separately from
+the latest-attempt job observations. A kill is a cancelled job whose runtime falls between
+30 seconds before and 5 minutes after its limit. The observed kills landed 18-24 seconds
+after a 35-minute limit. An absent `timeout-minutes` means GitHub's 360. No savings are
+claimed; the burned runner-minutes are reported as measured.
+
+It was found by a backtest. On a private field repository, an install step hung until
+the 35-minute limit 4 times on one day and 8 more the next, each re-run passing, before
+the team added a step-level timeout and a browser cache. An audit `--as-of` the morning
+of the fix reports "hung until the 35-minute job timeout 4 times (141 runner-minutes);
+2 of 4 runs passed on re-run". The public corpus has one such kill in its window (remix,
+360-minute default), below the two-kill floor, so the rule produces no corpus findings.
+
+**Why it matters.**
+1. Step-level `timeout-minutes` is not read. A step that hits its own limit fails with
+   `failure`, which `first_failing_step` already sees.
+2. A job-level timeout that is an expression is skipped rather than guessed.
+3. A person cancelling at almost exactly the limit would be counted. That is unlikely
+   but not excluded.
+4. The rule has no reach on the public corpus, so its precision rests on one field
+   repository.
+
+**What would close it.** Read the check-run annotation GitHub attaches to a timeout kill
+("exceeded the maximum execution time"), which would make the kill observed rather than
+inferred, at one request per cancelled job. Measure reach on repositories with
+self-hosted runners, where hangs are more common.
 
 ## Environmental and tooling notes
 
