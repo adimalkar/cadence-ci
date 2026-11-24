@@ -88,6 +88,26 @@ class RunObservation:
         return max(0.0, self.completed_epoch - self.exec_started_epoch)
 
 
+@dataclass(frozen=True, slots=True)
+class RunOutcome:
+    """One run as GitHub reported it, whether or not any of its jobs ever started.
+
+    `AuditContext.runs` holds only runs with executed jobs, which is right for timing and
+    wrong for asking what happened to every commit: a run cancelled while still pending
+    never started a job, and is exactly the run a concurrency group evicts.
+    """
+
+    run_id: int
+    workflow_path: str | None
+    event: str | None
+    head_branch: str | None
+    head_sha: str | None
+    conclusion: str | None
+    created_epoch: float
+    # Last update, which for a completed run is when it reached its conclusion.
+    updated_epoch: float | None
+
+
 @dataclass(slots=True)
 class StepSeries:
     """Duration history for one named step across runs, for cache analysis."""
@@ -197,6 +217,10 @@ class AuditContext:
     # Manifests of the actions jobs run, keyed by `uses:`. Absent means not looked up, which
     # a detector must read as unknown -- see cadence.actions.
     actions: ActionIndex = field(default_factory=dict)
+    # The repository's default branch, and every run in the window including those that
+    # never started a job. Empty when unknown; rules that need them must then stay quiet.
+    default_branch: str | None = None
+    run_outcomes: list[RunOutcome] = field(default_factory=list)
     # NOTE: class E (runner fit) is deliberately NOT built. Detecting "single-threaded
     # job on an 8-core runner" needs CPU utilisation, which the Actions API does not
     # expose -- only labels. Inferring it from duration alone would be a guess presented
