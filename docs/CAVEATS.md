@@ -56,6 +56,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 76 | Job inventory receipts need deployment, historical refresh and cohort integration | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1709,3 +1710,60 @@ chain; re-resolving every package would mix unrelated dependency changes into th
 [PR #33](https://github.com/adimalkar/cadence-ci/pull/33), which changes only urllib3's locked
 version/artifacts to 2.8.0. Merged `origin/main` into the cache branch (`5254e2b`) so its
 security check uses the same fix. Local `pip-audit` and workflow hardening checks pass.
+
+
+### 76. Job inventory receipts need rollout and historical/cohort integration · Medium
+
+**What.** `181ad70` (2026-11-18) adds migration 011, optional provider
+`fetch_job_inventory`, terminal receipt persistence and offline `job-coverage`.
+GitHub ingest consumes an explicit attempt endpoint and checks stable advertised counts,
+unique positive job IDs, run/attempt identity, premature empty pages, overflow and next-link
+contradictions. Jobs and receipts commit together. Count validation is bounded to 10,000
+jobs per attempt; reports inspect up to 500 runs and 50,000 stored jobs.
+
+A receipt records repository/run/attempt, expected IDs/count, page count and a local
+observation time. It is a historical observation, not a permanent complete flag.
+The shared reader rechecks current-attempt exact membership and terminal job/run status
+in a consistent snapshot. Old SQL workers and webhook changes cannot silently preserve
+a verified report when IDs/statuses no longer match. A new attempt never inherits an old
+receipt. A validated zero inventory is distinguishable from unknown coverage.
+
+**Why it matters.** Migration 011 must run before updated ingest workers. It does not
+backfill old counts, certify webhook-only data or force a job fetch through a stored ETag.
+No production migration was performed here. Existing audit/cohort readers do not yet use
+this prerequisite; in particular open PR #52 needs integration after merges are chosen.
+Receipt rows must not be consumed directly as a certificate.
+
+Checks cannot provide atomic upstream pagination or prove provider freshness. A failed
+later fetch leaves the last good receipt unchanged; current stored membership may still
+verify against that historical observation. The observation timestamp is local fetch
+time, not an upstream revision or impact date. The receipt does not certify timestamps,
+step/log completeness, matching workloads or causal savings. Membership mutations are
+detected at report time; no job rows are deleted as a repair.
+
+**Fixed alongside the prerequisite.** Non-rate job-fetch errors used to be caught as empty
+lists and still advance the ETag, making the next poll 304 and hiding missing timings.
+They now increment `jobs_failed` and preserve the prior cursor. Valid jobs/receipts from
+other runs may still commit, and stats expose failures/receipt counts. Rate limits still
+propagate. Permanent per-run access/deletion or malformed responses can therefore keep
+a polling window retrying; a bounded repair/terminal-outcome policy is future work.
+Fetching one rerun's attempts remains all-or-nothing if an attempt fetch fails. Legacy
+providers continue ingesting without receipts; an empty legacy list proves no coverage.
+
+**Verification.** 53 new cases; full suite 698 passed without skips, 79.31% coverage.
+Lint/types/dependency/workflow security checks pass. New migration was tested locally
+only in the test DB, including rollback, cascade, changed membership with equal counts,
+attempt isolation and old receipts. One draft schema adjustment added repo identity to
+the empty test table before commit; no deployed migration was edited or run.
+`data/corpus/job-inventory-smoke.json` records one real own-repo attempt with one terminal
+job, exact receipt match and test-DB rollback. No live multi-page rerun was observed;
+those paths are fixture-tested.
+`data/corpus/job-coverage-baseline.json` measures 93,042 public stored runs: 58,491 have
+current-attempt jobs and 34,551 have none. The receipt table is absent there, and none of
+these counts proves complete historical coverage. Reads were READ ONLY REPEATABLE READ.
+
+**What would close it.** Deploy the migration/workers deliberately, build bounded historical
+job refresh with explicit failures/coverage, then require shared receipt verification in
+cohort consumers and measure the resulting coverage. Timing quality, workload controls,
+uncertainty and attribution remain separate requirements. Numbers 70–75 are reserved by
+independent open PRs and their features/entries have not been copied here.

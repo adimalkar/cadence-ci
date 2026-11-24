@@ -183,6 +183,32 @@ This is the first phase requiring `pull_requests:write` and `contents:write`. Bo
 **opt-in at install time, separately from the read scopes.** A user can run the audit
 forever without granting write. Preserve that — it is the whole no-commitment thesis.
 
+### Job inventory evidence (implemented 2026-11-18)
+
+Source `181ad70` adds an attempt-specific REST inventory capability, migration 011 and
+`cadence job-coverage OWNER/REPO` (offline, `--run` repeat, `--limit`, `--json FILE`).
+New GitHub ingest requires stable advertised totals, unique run/attempt-scoped job IDs
+and fully consumed pages. Terminal receipts and jobs commit together. Old providers and
+webhook events create no receipt. Existing rows are deliberately not backfilled.
+
+The shared reader checks the current attempt's stored IDs and terminal statuses against
+the receipt within a repeatable-read snapshot. An old receipt cannot hide inserted/deleted
+jobs or an incomplete run/job status. It reports unknown, verified, membership/identity
+mismatch, and incomplete states with counts and evidence. The receipt table alone is a
+historical observation and must not be treated as a permanent complete flag.
+
+The same change fixes ordinary job-fetch failures advancing the polling ETag: failed runs
+now leave the cursor unchanged so another poll can retry. This adds a prerequisite for
+complete cohort selection. The independent open cohort PR #52 does not consume receipts
+yet; attribution, lifecycle/suppression and realized-savings writeback remain open.
+Apply migration 011 before deploying new workers; no production migration was run here.
+
+Validation: 53 new cases; full suite 698 passed, 79.31% coverage. Static/security checks pass.
+A live one-job attempt matched its receipt in a rollback-only test DB transaction.
+Read-only public baseline: 93,042 runs, 58,491 with current-attempt jobs and 34,551 without.
+No receipt table is deployed there; counts alone establish no historical completeness.
+See CAVEATS 76 and the committed corpus reports.
+
 ### Verification loop
 
 After a Cadence PR merges, watch the next 30 days of runs on that ref and write
@@ -327,7 +353,7 @@ groups. Checkout must precede setup at the repository root. Ambiguous actions/sc
 conditions, cache overrides and publishing contexts decline with reasons.
 
 All original lines survive; reparsing verifies that only those two inputs changed and that
-the detector now sees a cache. Snapshots live in `data/corpus/owner__repo/COMMIT_SHA.json`,
+the detector now sees a cache. Snapshots live in `data/corpus/owner__repo/`181ad70`_SHA.json`,
 including workflow bytes, regular-file inventory, action manifests and suppression policy.
 JSON exports carry the pinned revision, evidence, savings range, diff and revert instruction.
 The database transaction is read-only. No workflow file or remote repository is modified.

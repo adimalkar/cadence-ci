@@ -14,6 +14,7 @@ import psycopg
 import structlog
 from psycopg.rows import dict_row
 
+from cadence.job_inventory import JobInventory, store_inventory
 from cadence.models import Job, Repo, Run
 from cadence.providers.base import CIProvider, RateLimited
 
@@ -28,11 +29,14 @@ class IngestStats:
     steps_written: int = 0
     pages_fetched: int = 0
     not_modified: bool = False
+    jobs_failed: int = 0
+    inventories_written: int = 0
 
     def __str__(self) -> str:
         return (
             f"{self.runs_written} runs, {self.jobs_written} jobs, "
-            f"{self.steps_written} steps ({self.pages_fetched} pages)"
+            f"{self.steps_written} steps ({self.pages_fetched} pages; "
+            f"{self.jobs_failed} failed job fetches; {self.inventories_written} inventories)"
         )
 
 
@@ -283,9 +287,17 @@ async def ingest_repo(
 
     semaphore = asyncio.Semaphore(job_concurrency)
 
-    async def _jobs_for(run: Run) -> tuple[Run, list[Job]]:
+    async def _jobs_for(run: Run) -> tuple[Run, list[Job] | None, list[JobInventory]]:
         async with semaphore:
             try:
+                inventory_fetch = getattr(provider, "fetch_job_inventory", None)
+                if callable(inventory_fetch):
+                    inventories = [
+                        await inventory_fetch(repo, run.id, attempt=attempt)
+                        for attempt in range(1, run.run_attempt + 1)
+                    ]
+                    return run, [job for i in inventories for job in i.jobs], inventories
+                # Older providers can still ingest jobs; they supply no coverage evidence.
                 jobs = await provider.fetch_jobs(repo, run.id)
                 # A re-run's earlier attempts are the single strongest flaky label
                 # available ("retry succeeded, no intervening commit"), and
@@ -293,20 +305,25 @@ async def ingest_repo(
                 # dropped entirely. Only reruns pay the extra calls (~0.6% of runs).
                 for attempt in range(1, run.run_attempt):
                     jobs.extend(await provider.fetch_jobs(repo, run.id, attempt=attempt))
-                return run, jobs
+                return run, jobs, []
             except RateLimited:
                 raise
             except Exception as exc:  # one bad run must not abort a 500-run backfill
                 log.warning("ingest.jobs_failed", run_id=run.id, error=str(exc))
-                return run, []
+                return run, None, []
 
     tasks = [asyncio.create_task(_jobs_for(r)) for r in collected]
     try:
         for coro in asyncio.as_completed(tasks):
-            run, jobs = await coro
+            run, jobs, inventories = await coro
+            if jobs is None:
+                stats.jobs_failed += 1
+                continue
             for job in jobs:
                 stats.steps_written += upsert_job(conn, job, repo.id)
                 stats.jobs_written += 1
+            for inventory in inventories:
+                stats.inventories_written += int(store_inventory(conn, inventory))
             run.jobs = jobs
     except BaseException:
         # Without this, a raise here leaves the remaining tasks running against a client
@@ -318,9 +335,10 @@ async def ingest_repo(
         raise
     conn.commit()
 
-    # Only now is the cursor safe to advance: every run in this window has its jobs and
-    # steps durably written.
-    _store_etag(conn, repo.id, new_etag)
+    # A swallowed non-rate failure is not a valid empty inventory. Keep the old cursor
+    # so the next poll can retry; successful rows/receipts can still commit together.
+    if not stats.jobs_failed:
+        _store_etag(conn, repo.id, new_etag)
 
     log.info("ingest.done", repo=repo.full_name, stats=str(stats))
     return stats
