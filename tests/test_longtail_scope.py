@@ -40,7 +40,7 @@ def test_identical_job_and_step_names_have_separate_identity_statistics_and_evid
                                         (RELEASE, 600.0, 100, 0.6667)]:
         finding = by_path[path]
         assert finding.dedupe_key == f"long_tail_step:{path}:build:Test"
-        assert finding.detector_version == "long_tail_step@2"
+        assert finding.detector_version == "long_tail_step@3"
         assert finding.savings is None
         assert f"`build` ({path})" in finding.title
         timing, history = finding.evidence

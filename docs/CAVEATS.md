@@ -58,6 +58,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 83 | `long_tail_step` statistics are per event; thin events and unknown events are not pooled | Low | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1598,36 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 83. `long_tail_step` statistics are per event; thin events and unknown events are not pooled · Low
+
+**What.** `long_tail_step@3` splits each step's history by the triggering event of the run
+it came from. Concentration is unchanged: the step's share of all measured step time, top
+three steps, 30% floor. The p50, p95, the 60-second median floor and the 20-observation
+floor are now taken within one event, and the title names the slow event and any event in
+which the same step is at most half as slow. On a private field repository, @2 reported
+a guard step at p50 27:24. Its push runs take 29:17 at the median and its pull-request
+runs take 0:35, so the blended figure described neither and hid the one fact worth acting
+on. Dedupe keys are unchanged, so suppressions keep matching (item 71 does not grow).
+
+Corpus comparison against @2, 46 public repos plus the field repository: 17 findings
+before and after, the same steps. Statistics moved where events differ. babel's `test262`
+shows 4:46 on PRs but 0:49 in `merge_group`; etcd's CodeQL `Autobuild` p95 drops from 2:43
+to 1:39 once pushes stop inflating it. A rejected variant divided each step by its own
+event's step time and doubled findings to 33, flagging steps that are 99% of an event
+that runs one small workflow.
+
+**Why it matters.** A step with at least 20 observations overall but fewer than 20 in
+every event now produces no finding, where @2 would have reported a blended median.
+None of the 17 corpus findings were lost this way, but a repo with evenly spread, thin
+history could be. Runs the context does not describe, and series whose run ids do not
+align with their durations, fall into one unknown-event bucket rather than being guessed
+at; with every observation unknown, the rule behaves exactly as @2. All 93,642 runs in the
+local database carry an event, so this is a fallback, not an observed state.
+
+**What would close it.** Pool events whose duration distributions are statistically
+indistinguishable, for example with a two-sample test, before applying the per-event
+floor, and measure how many thin-history findings that recovers.
 
 ## Environmental and tooling notes
 
