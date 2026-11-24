@@ -95,6 +95,23 @@ a projected lower-bound saving of 30 seconds per run and declines publishing wor
 custom checkout layouts and ambiguous install commands. Its current corpus evaluation
 produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
+Refresh metadata for runs already stored locally (GitHub GET requests only):
+
+```bash
+uv run cadence refresh-runs adimalkar/cadence-ci --limit 50 --json refresh.json
+uv run cadence refresh-runs adimalkar/cadence-ci --run 44202738884 --run 44202738740
+```
+
+Automatic selection uses descending stored run IDs. Continue with the reported
+`--before` cursor; retry `remaining_run_ids` using repeated `--run` options before moving
+to another page. The default limit is 50, maximum 500. This bypasses the list endpoint's
+ETag and updates existing run metadata in a short transaction per response. It preserves
+polling state and job/step/log data. Stale snapshots are skipped. Inaccessible or malformed
+runs are reported individually; rate, access, transport or persistence failures stop the
+batch with pending IDs and any retry delay. Partial failures exit nonzero and still write
+`--json` output. Unavailable runs can be permission-hidden, so they are not deleted.
+See CAVEATS 74 for association and coverage limits.
+
 Tests:
 
 ```bash

@@ -1,0 +1,18 @@
+{
+  "measured_at": "2026-11-18T00:10:45.651311+00:00",
+  "repo": "adimalkar/cadence-ci",
+  "run_ids": [
+    44202738884,
+    44202738740,
+    44162934762
+  ],
+  "refreshed_in_rollback_transaction": 3,
+  "scalar_pr_numbers": [
+    50,
+    50,
+    49
+  ],
+  "poll_cursor_unchanged": true,
+  "database": "test only; all writes rolled back",
+  "network": "GET repo, GET list (3 runs), GET each exact run; provider closed before DB"
+}
