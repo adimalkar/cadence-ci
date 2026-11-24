@@ -889,3 +889,90 @@ def webhook_serve(
 
 if __name__ == "__main__":
     app()
+
+
+@app.command()
+def analyze(
+    repo: str | None = typer.Argument(None, help="owner/name; omit with --snapshot"),
+    ref: str | None = typer.Option(None, help="Branch, tag or commit; default: default branch."),
+    snapshot: Annotated[Path | None, typer.Option(
+        help="Re-use a pinned source saved by an earlier analyze: offline, no API calls.",
+        exists=True, dir_okay=False,
+    )] = None,
+    finding: str | None = typer.Option(
+        None, help="Return this finding (an `f_` id) with its action and full evidence."),
+    window: int = typer.Option(90, min=1, help="Days of stored history to analyse."),
+    limit: int = typer.Option(500, min=1, help="Maximum stored runs to analyse."),
+    top: int = typer.Option(10, min=1, help="Findings in the summary view."),
+    include_suppressed: bool = typer.Option(
+        False, "--include-suppressed", help="List suppressed findings, marked as such."),
+    pretty: bool = typer.Option(False, "--pretty", help="Indent the JSON."),
+    cache_dir: Annotated[Path, typer.Option(help="Where pinned sources are saved.")] = CACHE_DIR,
+) -> None:
+    """Machine-readable analysis for agents and scripts (schema cadence.analysis/1).
+
+    Prints exactly one JSON object on stdout -- a result or an `error` with a code -- and
+    nothing else; logs go to stderr. Writes nothing to the database. The source it read is
+    pinned to a commit and saved, so `--snapshot PATH --finding ID` answers offline.
+    """
+    import sys
+
+    import structlog
+
+    from cadence.analysis import AnalysisError, finding_view, summary_view
+    from cadence.analysis import analyze as run_analysis
+    from cadence.providers.base import AccessDenied, NotFound, RateLimited
+    from cadence.source import SourceUnavailable
+
+    # structlog prints to stdout by default; one retry warning would corrupt the JSON.
+    structlog.configure(logger_factory=structlog.PrintLoggerFactory(file=sys.stderr))
+
+    def emit(obj: dict, code: int = 0) -> None:
+        typer.echo(json.dumps(obj, indent=2 if pretty else None, sort_keys=False))
+        if code:
+            raise typer.Exit(code)
+
+    if snapshot and ref:
+        raise typer.BadParameter("choose --snapshot or --ref, not both")
+    if not snapshot and not repo:
+        raise typer.BadParameter("give owner/name, or --snapshot")
+
+    async def _source() -> tuple[PreviewSource, str]:
+        if snapshot:
+            src = PreviewSource.load(snapshot)
+            if repo and repo != src.repo:
+                raise AnalysisError("snapshot_mismatch",
+                                    f"snapshot is for {src.repo}, not {repo}")
+            return src, str(snapshot)
+        assert repo is not None
+        parts = repo.split("/")
+        if len(parts) != 2 or not all(parts):
+            raise AnalysisError("bad_repo", "repo must be owner/name")
+        if not settings.github_token:
+            raise AnalysisError("no_token", "no GitHub token configured",
+                                hint="export CADENCE_GITHUB_TOKEN=$(gh auth token)")
+        provider = GitHubProvider(settings.github_token)
+        try:
+            remote = await provider.get_repo(*parts)
+            src = await capture_source(provider, remote, ref=ref)
+        finally:
+            await provider.aclose()
+        return src, str(src.save(cache_dir))
+
+    try:
+        source, path = asyncio.run(_source())
+        with connect() as conn:
+            result = run_analysis(conn, source, window_days=window, limit_runs=limit,
+                                  source_path=path)
+        emit(finding_view(result, finding) if finding else
+             summary_view(result, top=top, include_suppressed=include_suppressed))
+    except AnalysisError as exc:
+        emit(exc.as_dict(), 1)
+    except RateLimited as exc:
+        emit(AnalysisError("rate_limited", str(exc), retryable=True,
+                           hint=f"retry in {exc.retry_after_seconds:.0f}s").as_dict(), 1)
+    except (NotFound, AccessDenied) as exc:
+        emit(AnalysisError("github_access", str(exc)[:200],
+                           hint="check the repo name and the token's access").as_dict(), 1)
+    except SourceUnavailable as exc:
+        emit(AnalysisError("source_unavailable", str(exc), retryable=True).as_dict(), 1)

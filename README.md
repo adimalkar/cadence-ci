@@ -95,6 +95,17 @@ a projected lower-bound saving of 30 seconds per run and declines publishing wor
 custom checkout layouts and ambiguous install commands. Its current corpus evaluation
 produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
+For agents and scripts, `analyze` prints one JSON object (schema `cadence.analysis/1`),
+writes nothing to the database, and keeps evidence out of the summary until asked:
+
+```bash
+uv run cadence analyze astral-sh/ruff                     # summary: ranked findings, coverage
+uv run cadence analyze --snapshot <source.snapshot> --finding f_1a2b3c4d5e6f   # offline
+```
+
+Errors are JSON too (`{"error": {"code": "not_ingested", "hint": ...}}`, exit 1). See
+CAVEATS 90 for what it does not do yet.
+
 Tests:
 
 ```bash

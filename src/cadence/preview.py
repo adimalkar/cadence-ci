@@ -10,6 +10,7 @@ from cadence.detectors.context import AuditContext
 from cadence.fixers.base import FixResult
 from cadence.fixers.cache import CacheFixer
 from cadence.source import PreviewSource, SourceUnavailable
+from cadence.suppress import stored_matches
 
 
 @dataclass(slots=True)
@@ -59,10 +60,4 @@ def preview_cache_fixes(
 
 
 def _matches_suppression(row: dict, finding: FindingDraft) -> bool:
-    if row["kind"] != finding.kind:
-        return False
-    if row["suppress_scope"] == "rule_repo":
-        return True
-    if row["suppress_scope"] == "rule_path":
-        return row["dedupe_key"].split(":")[:2] == finding.dedupe_key.split(":")[:2]
-    return row["dedupe_key"] == finding.dedupe_key
+    return stored_matches(row, finding.kind, finding.dedupe_key)
