@@ -209,6 +209,39 @@ Rule 4 deserves emphasis. The no-install corpus exists to build and evaluate det
 and to generate reports we offer *in an issue, when invited*. It does not license writing
 to 50 repos.
 
+### Implemented: manual fix PR/run association
+
+Migration `009`, `pr_tracking.py` and `cadence fix track/runs` establish a durable PR-to-
+finding registration and query associated ingested runs. Registration reads GitHub using
+GET only; it does not publish, merge, edit workflows or change finding decisions. The PR
+is bound to one stored finding in its base repository. Refresh rejects stale/conflicting
+revisions and changes to recorded merge evidence. Repository/finding scope is enforced by
+a composite database foreign key, and registration is serialized per PR.
+
+```bash
+cadence db init
+cadence fix track owner/repo 42 --finding 'no_dependency_cache:.github/workflows/ci.yml:test'
+cadence fix runs owner/repo 42 --json linked-runs.json
+```
+
+The offline query emits provenance for each link: `api_pr_number`, or
+`exact_merge_commit` for a base-branch `push` of the recorded merge SHA at/after merge.
+It includes unsuccessful runs rather than equating association with success. A PR's
+unmerged test-merge SHA is never stored as merge evidence. Shared heads, branch names,
+and later descendant commits do not establish a link. The response reports the stored
+metadata sync time and truncation (500 default, maximum 5,000).
+
+**Validated 2026-11-17:** 42 new unit/provider, real-database and CLI cases; full suite
+687 passed, no skips, 79.07% coverage. A GET-only smoke on our own implementation PRs
+used a temporary synthetic finding in the test database and rolled back every write:
+merged #37 linked 3 exact-merge pushes from 33 same-SHA runs fetched; open #48 linked 2
+explicit API PR runs from 2 fetched. This validates plumbing, not a real fix's benefit.
+
+Automatic refresh, closed-PR suppression, publisher opt-in/anti-spam and complete 30-day
+causal attribution are still unbuilt. The existing ingest field stores only the first PR
+number reported by a workflow run, so this query cannot recover omitted/multiple
+associations. See CAVEATS 72 before using these links for any realized-savings writeback.
+
 ### Rule 3 was unimplementable — fixed 2026-09-06, before any fixer exists
 
 **Found 2026-09-03, closed 2026-09-06** by migration `006` and
@@ -430,8 +463,9 @@ re-litigated.
 
 ## The prerequisite this phase does not have
 
-**PR → run linkage does not exist.** Nothing joins a pull request to the runs it caused.
-That blocks realized-savings writeback from attributing correctly, and it is the same
-missing piece that blocks PR impact analysis (`FEATURE_CANDIDATES.md` F3) and stacked-PR
-detection (5B). One unglamorous piece of work unblocks three features — do it early in this
-phase rather than working around it three times.
+**Direct fix PR/run association is implemented; causal attribution remains incomplete.**
+Manual registration now joins an existing fix PR to its finding and directly evidenced
+ingested runs. It does not infer the impact on later commits, refresh PR state
+automatically or write savings. Completing those semantics is still required for the
+30-day verification loop, general PR impact analysis (`FEATURE_CANDIDATES.md` F3) and
+stacked-PR detection (5B). See CAVEATS 72 for the first-stage boundary.

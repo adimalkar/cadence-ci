@@ -56,6 +56,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 72 | Direct fix PR/run association exists; lifecycle automation and causal savings attribution remain | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1590,6 +1591,40 @@ predates the preview implementation and remains recorded rather than folded into
 **What would close it.** Treat manifests with no valid `using` as unreadable in
 `manifest_steps`, add invalid-metadata cache-state tests and version the detector change.
 
+### 72. Fix PR/run links cover direct evidence; savings attribution is incomplete · Medium
+
+**Implemented by `2c07c47`, 2026-11-17.** Migration `009` stores one finding binding per
+PR, with repository-scoped identity, immutable head/merge SHAs, lifecycle state and sync
+timestamps. `cadence fix track` registers or refreshes an existing PR using GET-only
+GitHub access. `cadence fix runs` reads only stored data and exports per-run provenance.
+Conflicting finding bindings, stale revisions and merge-evidence regression are rejected.
+
+**What remains.** The ingest schema holds only the first API PR number, which may be
+absent even for PR-related runs. The additional merge path covers only a `push` of the
+exact merge commit on the base branch at/after merge. Shared head/branch names and later
+descendant commits are deliberately not inferred. Tracking does not auto-refresh,
+suppress a finding on PR closure, publish a PR or enforce publisher invitation/open-PR
+limits. It does not write realized savings or finding status.
+
+**Why it matters.** Empty/partial links are not proof that a fix had no runs or no effect.
+A matching commit is association evidence, not a causal estimate of saved time. A
+maintainer must rerun `track` to refresh state; `runs` reports last sync time and an
+explicit truncation flag. No closed-PR lifecycle or anti-spam criterion is marked shipped.
+
+**Evidence.** Full suite 687 passed, no skips, 79.07% coverage; 42 new model/provider,
+database and CLI cases. GET-only validation on our own implementation PRs: #37 merged,
+33 same-SHA runs fetched / 3 exact-merge pushes linked; #48 open, 2 fetched / 2 explicit
+API PR-number links. Finding bindings were synthetic, confined to the test database and
+rolled back. Report `data/corpus/fix-pr-linkage-smoke.json` and script
+`.agent/pr_linkage_smoke.py` are gitignored. No production migration or registration
+was made during this implementation.
+
+**What would close it.** Preserve all provider PR/run associations with missing distinct
+from unknown; add lifecycle refresh/closure handling and constrained post-merge ancestry/
+comparison cohorts. Validate against invited, genuinely merged workflow fixes before
+attributing a 30-day effect or writing money back to findings. Keep permission/invitation
+and anti-spam checks mandatory when publishing is introduced.
+
 ## Environmental and tooling notes
 
 ### 20. Reddit is unreachable directly · Info
@@ -1624,7 +1659,8 @@ Verified working (8 stacks in 100 open `vercel/next.js` PRs, including a 3-deep 
 go/k8s/pytorch/polars). **Without both guards — same-repo parents only, and the default
 branch never a parent — the detector labels 96–99 of 100 PRs as stacked**, because a fork PR
 whose head branch is named `master` matches everything targeting the default branch. Needs
-PR→run linkage that does not exist until Phase 5.
+general PR impact/ancestry attribution. Direct manual fix-PR association now exists
+(item 72), but does not implement those broader semantics.
 
 ---
 

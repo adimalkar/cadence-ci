@@ -15,7 +15,7 @@ The dashboard in [`../ROADMAP.md`](../ROADMAP.md) says *where we are*. This file
 |---|---:|---|---|
 | **[0 · Ingest](PHASE_0_INGEST.md)** | **16/16 · 100%** | Shipped, audited, deployed | Nothing. Operational caveats only |
 | **[1 · Waste audit](PHASE_1_WASTE_AUDIT.md)** | **23/25 · 92%** | 9 rules, simulator, report, cost model, eval harness, suppression | **Closed 2026-09-07** with 2 items open — see below |
-| **[2 · Fix PRs](PHASE_2_FIX_PRS.md)** | 4/19 | YAML guard, concurrency and npm/pip cache previews, suppression | Wider cache coverage, opt-in PR publishing, anti-spam, linkage and realized savings |
+| **[2 · Fix PRs](PHASE_2_FIX_PRS.md)** | 4/19 | YAML guard, concurrency and npm/pip cache previews, suppression, manual PR/run tracking | Wider cache coverage, opt-in publishing, anti-spam and causal savings attribution |
 | **[3 · Flake](PHASE_3_FLAKE.md)** | 0/18 | Nothing | All of it. Reordered, not started |
 | **[4 · Observability](PHASE_4_OBSERVABILITY.md)** | 0/24 | Nothing | All of it — **rescoped to a pillar 2026-09-05** |
 | **[5 · Review](PHASE_5_REVIEW.md)** | 0/27 | Nothing | All of it. Prerequisite missing |
@@ -204,8 +204,12 @@ current floor and shape guards (CAVEATS 67). The ≥20 real before/after criteri
 unmet. Next, measure additional eligible shapes before expanding coverage; keep opt-in
 publishing and its anti-spam controls separate.
 
-**Realized savings is blocked on PR → run linkage.** Nothing joins a pull request to the
-runs it caused, so writeback cannot attribute correctly. This does not block local previews.
+**Direct PR/run association is implemented; realized savings remains unbuilt.** Migration
+`009` and `cadence fix track/runs` bind an existing fix PR to one stored finding and list
+explicit API PR-number or exact merge-commit push links. Listing is offline/read-only;
+registration reads GitHub and writes only local tracking metadata. Broader post-merge
+attribution, automatic refresh and closed-PR handling remain prerequisites for savings
+writeback (CAVEATS 72). This does not block local previews.
 
 One prerequisite satisfied: config persistence landed (migration `005`, `configstore.py`),
 so the round-trip ship criterion — *"200 corpus workflows, byte-identical when no fix
