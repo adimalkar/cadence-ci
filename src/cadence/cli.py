@@ -17,6 +17,7 @@ from cadence.audit import (
     run_audit,
     summarize_pipeline,
 )
+from cadence.cohorts import MAX_ID, compare_stored_runs, validate_selection
 from cadence.commitstore import backfill_tree_shas, store_commits, unfetched_shas
 from cadence.commitstore import coverage as commit_coverage
 from cadence.config import settings
@@ -68,6 +69,63 @@ fix_app = typer.Typer(no_args_is_help=True, help="Preview deterministic workflow
 app.add_typer(fix_app, name="fix")
 
 console = Console()
+
+
+@app.command("compare-runs")
+def compare_runs(
+    repo: str = typer.Argument(..., help="owner/name, already ingested"),
+    workflow: str = typer.Option(..., help="Exact stored workflow path"),
+    before_ids: Annotated[list[int] | None, typer.Option(
+        "--before-run", min=1, max=MAX_ID, help="Earlier run ID; repeat for the before cohort.",
+    )] = None,
+    after_ids: Annotated[list[int] | None, typer.Option(
+        "--after-run", min=1, max=MAX_ID, help="Later run ID; repeat for the after cohort.",
+    )] = None,
+    min_samples: int = typer.Option(5, min=2, max=500, help="Samples per side/profile"),
+    json_out: Annotated[Path | None, typer.Option(
+        "--json", help="Write comparison evidence.",
+    )] = None,
+) -> None:
+    """Compare explicit stored run cohorts offline; report observed timing changes."""
+    before_ids, after_ids = before_ids or [], after_ids or []
+    parts = repo.split("/")
+    if len(parts) != 2 or not all(parts):
+        raise typer.BadParameter("repo must be owner/name")
+    try:
+        validate_selection(before_ids, after_ids, min_samples)
+        if not workflow.strip():
+            raise ValueError("workflow path is required")
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    try:
+        with connect() as conn:
+            conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+            row = conn.execute("SELECT id FROM repo WHERE owner = %s AND name = %s",
+                               tuple(parts)).fetchone()
+            if row is None:
+                raise ValueError("repository is not ingested")
+            output = {"repo": repo, **compare_stored_runs(
+                conn, row["id"], workflow, before_ids, after_ids, min_samples=min_samples,
+            )}
+        if json_out:
+            json_out.write_text(json.dumps(output, indent=2) + "\n", encoding="utf-8")
+        typer.echo(f"{repo}: {len(output['comparisons'])} matched profile(s); "
+                   f"{len(output['excluded_runs'])} excluded run(s)")
+        typer.echo("Observed timing changes; no causal savings attribution.")
+        for comparison in output["comparisons"]:
+            typer.echo(f"Profile {comparison['profile_id']}: "
+                       f"{comparison['before']['sample_count']} before / "
+                       f"{comparison['after']['sample_count']} after")
+            for name, metric in comparison["metrics"].items():
+                typer.echo(f"  {name}: median {metric['before_median']:g} -> "
+                           f"{metric['after_median']:g}; change {metric['change']:+g}s")
+        for run in output["excluded_runs"]:
+            typer.echo(f"Excluded {run['cohort']} run {run['run_id']}: {run['reason']}")
+        if not output["comparisons"]:
+            raise typer.Exit(1)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
 
 
 @fix_app.command("preview")

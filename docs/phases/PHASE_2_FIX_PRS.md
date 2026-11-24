@@ -183,6 +183,31 @@ This is the first phase requiring `pull_requests:write` and `contents:write`. Bo
 **opt-in at install time, separately from the read scopes.** A user can run the audit
 forever without granting write. Preserve that — it is the whole no-commitment thesis.
 
+### Explicit cohort observations (implemented 2026-11-18, source `09f96fc`)
+
+`cadence compare-runs OWNER/REPO --workflow PATH --before-run ID ... --after-run ID ...`
+compares explicit stored observations in a read-only repeatable-read snapshot. It does not
+choose PR-linked cohorts. Matching profiles include repository/workflow identity, event,
+branch, verbatim job names, matrix metadata and runner labels/groups. Successful completed
+first attempts need valid job queue/start/finish timestamps. Retries, skipped/failed jobs,
+self-hosted/unknown runners and ambiguous job names are excluded with reasons.
+
+Each identical profile needs at least five samples per side by default (configurable 2–500),
+with at most 500 distinct IDs total and 50,000 stored jobs. Eligible before jobs must all
+finish before eligible after jobs start. Different profiles are never pooled. Evidence
+includes selected/used/excluded IDs, head SHAs, observation windows, profile fingerprints,
+and median wall, summed execution and summed queue seconds. Delta is after minus before;
+percentage reduction is undefined for a zero baseline.
+
+This is an observation tool, not automatic fix verification or realized-savings writeback.
+Missing ingest completeness, image/hardware/workload drift, selection bias and statistical
+confidence remain open in CAVEATS 75. The ≥20 real cache-fix before/after criterion remains
+unmet. Prior PR #49 registry, PR #50 normalized links and PR #51 refresh are independent open PRs.
+
+Validation: 59 new pure/SQL/CLI cases; full suite 704 passed, 79.25% coverage. Static/security
+checks pass. Read-only public-corpus reports preserve a 10-run missing-job decline and a
+separate 5-before/5-after timing comparison; neither claims a fix effect.
+
 ### Verification loop
 
 After a Cadence PR merges, watch the next 30 days of runs on that ref and write

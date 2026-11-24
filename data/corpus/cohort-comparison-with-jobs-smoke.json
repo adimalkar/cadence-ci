@@ -1,0 +1,129 @@
+{
+  "measured_at": "2026-11-18T05:12:09.852199+00:00",
+  "source": "stored public corpus; READ ONLY REPEATABLE READ; no API",
+  "selection_policy": "Most populated successful first-attempt repo/workflow/event/branch with at least one stored job; latest20 runs by creation/id, earliest5 before and latest5 after; default minimum5; no profile-based reselection.",
+  "repo": "jestjs/jest",
+  "transaction_read_only": "on",
+  "schema_version": 1,
+  "interpretation": "observed_timing_change",
+  "workflow": ".github/workflows/close-stale.yml",
+  "minimum_samples_per_profile": 5,
+  "selected": {
+    "before": [
+      42727412493,
+      42733436310,
+      42740940294,
+      42747507946,
+      42753948421
+    ],
+    "after": [
+      42840974930,
+      42851543241,
+      42861483904,
+      42872017035,
+      42881909187
+    ]
+  },
+  "comparisons": [
+    {
+      "profile_id": "bc20e549ba59902870862f5ca229c7df2ec8db8c3b52b0057b6ea1729eaa411a",
+      "profile": {
+        "event": "schedule",
+        "head_branch": "main",
+        "jobs": [
+          {
+            "matrix": null,
+            "name": "Close month old issues and PRs",
+            "runner_group": "GitHub Actions",
+            "runner_labels": [
+              "ubuntu-latest"
+            ]
+          },
+          {
+            "matrix": null,
+            "name": "Close year old issues and PRs",
+            "runner_group": "GitHub Actions",
+            "runner_labels": [
+              "ubuntu-latest"
+            ]
+          }
+        ],
+        "repo_id": 15062869,
+        "workflow_id": 20650179,
+        "workflow_path": ".github/workflows/close-stale.yml"
+      },
+      "before_run_ids": [
+        42727412493,
+        42733436310,
+        42740940294,
+        42747507946,
+        42753948421
+      ],
+      "after_run_ids": [
+        42840974930,
+        42851543241,
+        42861483904,
+        42872017035,
+        42881909187
+      ],
+      "before": {
+        "run_ids": [
+          42727412493,
+          42733436310,
+          42740940294,
+          42747507946,
+          42753948421
+        ],
+        "sample_count": 5,
+        "head_shas": [
+          "72614448ecb9d16c58d6474b3091247c14a5c090"
+        ],
+        "observed_start": "2026-11-09T19:19:28-05:00",
+        "observed_end": "2026-11-09T23:08:56-05:00"
+      },
+      "after": {
+        "run_ids": [
+          42840974930,
+          42851543241,
+          42861483904,
+          42872017035,
+          42881909187
+        ],
+        "sample_count": 5,
+        "head_shas": [
+          "72614448ecb9d16c58d6474b3091247c14a5c090"
+        ],
+        "observed_start": "2026-11-10T10:06:53-05:00",
+        "observed_end": "2026-11-10T14:06:35-05:00"
+      },
+      "metrics": {
+        "wall_seconds": {
+          "before_median": 13.0,
+          "after_median": 14.0,
+          "change": 1.0,
+          "reduction_pct": -7.6923076923076925
+        },
+        "execution_seconds": {
+          "before_median": 21.0,
+          "after_median": 23.0,
+          "change": 2.0,
+          "reduction_pct": -9.523809523809524
+        },
+        "queue_seconds": {
+          "before_median": 4.0,
+          "after_median": 2.0,
+          "change": -2.0,
+          "reduction_pct": 50.0
+        }
+      }
+    }
+  ],
+  "declined_profiles": [],
+  "excluded_runs": [],
+  "limitations": [
+    "Matching stored metadata does not establish causality or realized savings.",
+    "Successful first attempts only; incomplete or changed job shapes are excluded.",
+    "Runner labels do not pin hardware/images; workload, config and time may differ.",
+    "Missing jobs can be undetectable without authoritative ingest completeness."
+  ]
+}

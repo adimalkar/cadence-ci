@@ -1,0 +1,87 @@
+{
+  "measured_at": "2026-11-18T05:11:46.283078+00:00",
+  "source": "stored public corpus; READ ONLY REPEATABLE READ; no API",
+  "selection_policy": "Most populated successful first-attempt repo/workflow/event/branch; latest20 runs by creation/id, earliest5 before and latest5 after; default minimum5; no profile-based reselection.",
+  "repo": "curl/curl",
+  "transaction_read_only": "on",
+  "schema_version": 1,
+  "interpretation": "observed_timing_change",
+  "workflow": ".github/workflows/appveyor-status.yml",
+  "minimum_samples_per_profile": 5,
+  "selected": {
+    "before": [
+      42834349649,
+      42834528980,
+      42834529411,
+      42835084871,
+      42835276264
+    ],
+    "after": [
+      42844833372,
+      42846615659,
+      42847709464,
+      42850059732,
+      42851229440
+    ]
+  },
+  "comparisons": [],
+  "declined_profiles": [],
+  "excluded_runs": [
+    {
+      "run_id": 42844833372,
+      "cohort": "after",
+      "reason": "missing_jobs"
+    },
+    {
+      "run_id": 42846615659,
+      "cohort": "after",
+      "reason": "missing_jobs"
+    },
+    {
+      "run_id": 42847709464,
+      "cohort": "after",
+      "reason": "missing_jobs"
+    },
+    {
+      "run_id": 42850059732,
+      "cohort": "after",
+      "reason": "missing_jobs"
+    },
+    {
+      "run_id": 42851229440,
+      "cohort": "after",
+      "reason": "missing_jobs"
+    },
+    {
+      "run_id": 42834349649,
+      "cohort": "before",
+      "reason": "missing_jobs"
+    },
+    {
+      "run_id": 42834528980,
+      "cohort": "before",
+      "reason": "missing_jobs"
+    },
+    {
+      "run_id": 42834529411,
+      "cohort": "before",
+      "reason": "missing_jobs"
+    },
+    {
+      "run_id": 42835084871,
+      "cohort": "before",
+      "reason": "missing_jobs"
+    },
+    {
+      "run_id": 42835276264,
+      "cohort": "before",
+      "reason": "missing_jobs"
+    }
+  ],
+  "limitations": [
+    "Matching stored metadata does not establish causality or realized savings.",
+    "Successful first attempts only; incomplete or changed job shapes are excluded.",
+    "Runner labels do not pin hardware/images; workload, config and time may differ.",
+    "Missing jobs can be undetectable without authoritative ingest completeness."
+  ]
+}
