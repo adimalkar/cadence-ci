@@ -56,6 +56,8 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
+| 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
 | 82 | `runner_queue_wait` measures waits but cannot name their cause | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
@@ -1464,18 +1466,6 @@ Lookup coverage across 488 install-step jobs:
 **Still open.** Item 62 (the long-tail rule reads the same merged series) and item 63 (half
 the findings sit at the savings floor).
 
-### 62. `long_tail_step` ranks series merged across workflows · Medium
-
-**What.** `ctx.step_series` is still keyed by (job display name, step name) and merged across
-every workflow with a job of that name. Item 61 moved the cache rule to the resolved index
-and deliberately left this one alone, because re-keying changes the long-tail rule's titles and
-dedupe keys. But the same merge that priced ruff's `publish-playground.yml` from another
-workflow's runs also feeds the long tail. A `build` job in `ci.yml` and a `build` job in
-`release.yml` rank as one step. **Not measured.**
-
-**What would close it.** Move `long_tail_step` to `step_series_resolved`, with the dedupe key
-`long_tail_step:{workflow}:{job}:{step}`, and measure the change in its 27.5% reach.
-
 ### 63. Half the cache findings sit at the 5-second floor · Low
 
 **What.** After item 61, 50 findings remain, and remix alone has 10 at a 5–6 s projected
@@ -1591,6 +1581,24 @@ predates the preview implementation and remains recorded rather than folded into
 **What would close it.** Treat manifests with no valid `using` as unreadable in
 `manifest_steps`, add invalid-metadata cache-state tests and version the detector change.
 
+### 71. Legacy long-tail finding suppressions need explicit re-scoping · Low
+
+**What.** Item 62 replaces `long_tail_step:{display-job}:{step}` with
+`long_tail_step:{workflow}:{config-job}:{step}`. The old identity merged workflows, so
+there is no universally correct one-to-one migration. No database migration or status
+copy is performed. A suppression attached to an exact old finding key does not transfer
+to the new identities; repository/rule and path rules still match their intended scope.
+
+**Why it matters.** Silently copying an old aggregated suppression to unrelated workflows
+would widen a user's decision, while blindly treating each split as new can ask the user
+again. The read-only corpus check found **zero stored suppressed long-tail findings**, so
+there was no observed suppression to migrate in that dataset.
+
+**What would close it.** Provide an explicit mapping/review path from an old aggregated
+finding to the selected workflow-scoped findings, preserving reasons and provenance.
+Test exact-finding, path and repository suppression scopes across the transition; never
+silently widen a finding decision to repository scope.
+
 ### 82. The audit called a pipeline "not queue-bound" while main waited hours · Medium
 
 **What.** `summarize_pipeline` decides `queue_bound` from the *median* run of the dominant
@@ -1671,6 +1679,8 @@ PR→run linkage that does not exist until Phase 5.
 
 | Date | Item | Closed by |
 |---|---|---|
+| 2026-11-17 | 62 — Long-tail timing streams crossed workflow boundaries | `37d92be` — workflow/job-scoped @2; measured 10 → 16 of 51 repos |
+| 2026-11-17 | Security gate recurrence — certifi, filelock and msgpack carried 15 advisory records | `9c5bd28` — targeted lockfile updates; local pip-audit and zizmor pass |
 | 2026-10-18 | 66 — Locked CI dependency urllib3 2.7.0 failed pip-audit with three advisories | `3f5f79b` — merge of Dependabot PR #33, urllib3 2.8.0; brought into the cache branch by `5254e2b` |
 | 2026-10-18 | 65 — Go/Ruby/uv caching inputs and version defaults were unmodelled | `12e2ac4` — `dependency_cache@6`; action-specific states, uv runner context, 66 regression cases |
 | 2026-08-26 | Test suite was order-dependent; `TestReplayAtScale` asserted on whole-table counts and passed only by file ordering — while being the evidence for a Phase 0 ship criterion | `eb6fb5a` — fixture cleans on entry as well as teardown; verified across 5 seeds |
@@ -1685,6 +1695,44 @@ PR→run linkage that does not exist until Phase 5.
 | 2026-08-28 | Ingest stopped for ~4 days; no durable worker existed | `1066d66` — systemd user unit + install script; staleness 2d23h → 14s, zero failures |
 | 2026-08-26 | Node 20 deprecation warnings on 3 actions | `eb6fb5a` — superseded by SHA pinning at current majors |
 | 2026-08-26 | Adding a CI job silently weakened branch protection | `eb6fb5a` — protection requires only `ci-gate`, which aggregates every job |
+
+### 62. `long_tail_step` workflow-scoped histories · Resolved 2026-11-17
+
+**Original finding (2026-09-25).** `ctx.step_series` is still keyed by (job display name, step name) and merged across
+every workflow with a job of that name. Item 61 moved the cache rule to the resolved index
+and deliberately left this one alone, because re-keying changes the long-tail rule's titles and
+dedupe keys. But the same merge that priced ruff's `publish-playground.yml` from another
+workflow's runs also feeds the long tail. A `build` job in `ci.yml` and a `build` job in
+`release.yml` rank as one step. **Not measured.**
+
+**Original closure target.** Move `long_tail_step` to `step_series_resolved`, with the dedupe key
+`long_tail_step:{workflow}:{job}:{step}`, and measure the change in its 27.5% reach.
+
+**Closed by `37d92be`, `long_tail_step@2`.** The detector now ranks only
+`step_series_resolved`, preserving workflow path, config job key and observed step name in
+its identity, title and evidence. Each stream needs its own 20 observations. Unresolvable
+workflow/jobs never fall back to the merged index. Ranking remains repository-wide, with
+a 30% share / 60-second median floor and at most three findings; ties use identity for
+stable ordering. Evidence states the eligible-series count, 20-observation floor and total
+step seconds used as the denominator. Savings remain unspecified.
+
+**Measured read-only, 2026-11-17.** The same contexts at @1 and @2, with 90 days / 500 runs
+per repo: **10 → 16 findings, 10/51 (19.6%) → 16/51 (31.4%) repos**. The 51 saved source
+snapshots contain 955 workflows; 46 repos have history in the window, totalling 17,566 run
+observations. All ten previously firing repos still fire. Six additional repos are actix,
+babel, moby, rollup, cargo and scikit-learn. Spark, node and solid change their leading step;
+seven retain the same observed step, now scoped to its workflow and config key. This is a
+fresh comparison, not a direct update of September's 27.5% under a different corpus/window.
+
+**Interpretation.** Excluding unmatched jobs changes the denominator and can increase a
+matched stream's share. The new reach is not evidence of more recoverable time or of all
+repository work being covered. The measurement is concentration among mapped histories
+that satisfy the observation floor. The report makes no savings claim. Before/after
+findings, source refs and counts are reproducible from gitignored
+`data/corpus/longtail-workflow-evaluation.json`; its evaluation script is
+`.agent/longtail_evaluate.py`. No API, database writes or fresh source capture were needed.
+Eight new provenance/regression cases and five updated detector cases pass; full suite
+653 passed, no skips, 78.50% coverage. The key transition is recorded separately in item 71.
 
 ### 65. Setup-action cache inputs and defaults · Resolved 2026-10-18
 
@@ -1748,3 +1796,12 @@ chain; re-resolving every package would mix unrelated dependency changes into th
 [PR #33](https://github.com/adimalkar/cadence-ci/pull/33), which changes only urllib3's locked
 version/artifacts to 2.8.0. Merged `origin/main` into the cache branch (`5254e2b`) so its
 security check uses the same fix. Local `pip-audit` and workflow hardening checks pass.
+
+**Recurrence resolved 2026-11-17, `9c5bd28`.** On resume, current dependency PRs and a
+local audit reported 15 advisory records across three other locked packages: certifi
+2026.7.22 (2), filelock 3.32.4 (12), msgpack 1.2.1 (1). A targeted lock refresh moves only
+those packages to certifi 2026.10.23, filelock 4.2.11 and msgpack 1.2.4 (plus generated
+lock-format metadata/artifacts). The audit now reports no known vulnerabilities; zizmor
+also passes. No advisory is ignored and no existing PR was merged. The updates are a
+separate prerequisite commit in the long-tail PR because the current security gate would
+otherwise block its validation. Existing Dependabot PRs remain for maintainer review.
