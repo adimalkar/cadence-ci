@@ -79,6 +79,12 @@ uv run cadence ingest astral-sh/ruff --limit 100
 uv run cadence stats astral-sh/ruff
 ```
 
+Queue workers require migration `012_ingest_claim_tokens.sql`. For an existing deployment,
+drain or stop old workers, run `uv run cadence db init`, then start the updated workers.
+Each claim carries an ownership token so late acknowledgements cannot change a reclaimed
+job. This protects queue state; dispatch side effects may still repeat. See
+[CAVEATS 80](docs/CAVEATS.md#80-queue-ownership-fences-acknowledgements-not-dispatch-side-effects).
+
 Preview cache changes for an ingested repo:
 
 ```bash

@@ -85,8 +85,8 @@ class TestCompleteAndFail:
     def test_complete_marks_done(self, conn):
         job_id = queue.enqueue(conn, "poll_repo", {})
         conn.commit()
-        queue.claim_next(conn)
-        queue.complete(conn, job_id)
+        claimed = queue.claim_next(conn)
+        assert queue.complete(conn, job_id, claim_token=claimed["claim_token"])
         conn.commit()
         row = conn.execute("SELECT status FROM ingest_job WHERE id = %s", (job_id,)).fetchone()
         assert row[0] == "done"
@@ -94,8 +94,9 @@ class TestCompleteAndFail:
     def test_fail_with_retry_reschedules_forward(self, conn):
         job_id = queue.enqueue(conn, "poll_repo", {})
         conn.commit()
-        queue.claim_next(conn)
-        queue.fail(conn, job_id, "boom", retry_in=timedelta(minutes=5))
+        claimed = queue.claim_next(conn)
+        assert queue.fail(conn, job_id, "boom", retry_in=timedelta(minutes=5),
+                          claim_token=claimed["claim_token"])
         conn.commit()
         row = conn.execute(
             "SELECT status, attempts, run_at > now() FROM ingest_job WHERE id = %s", (job_id,)
@@ -107,8 +108,8 @@ class TestCompleteAndFail:
     def test_fail_without_retry_is_terminal(self, conn):
         job_id = queue.enqueue(conn, "poll_repo", {})
         conn.commit()
-        queue.claim_next(conn)
-        queue.fail(conn, job_id, "boom", retry_in=None)
+        claimed = queue.claim_next(conn)
+        assert queue.fail(conn, job_id, "boom", retry_in=None, claim_token=claimed["claim_token"])
         conn.commit()
         row = conn.execute("SELECT status FROM ingest_job WHERE id = %s", (job_id,)).fetchone()
         assert row[0] == "failed"

@@ -56,6 +56,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 67 | First cache preview has zero eligible corpus changes; floor and wider coverage need field evidence | Medium | Open |
 | 68 | Complete recursive inventories are unavailable on 2/51 corpus repos | Medium | Open |
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
+| 80 | Queue ownership fences acknowledgements, not dispatch side effects | Medium | Queue fix proposed; coordinated rollout required |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -89,6 +90,46 @@ on.** An entry is cheap to write and expensive to rediscover.
 ---
 
 ## Wrong right now
+
+### 80. Queue ownership fences acknowledgements, not dispatch side effects
+
+**What (2026-11-18).** A processing lease already permits reclaim, but acknowledgements
+previously matched only the job ID. A paused worker could resume after another worker
+reclaimed the row, mark that new claim done/failed, or change its attempts and retry time.
+The ten-minute dispatch timeout is below the fifteen-minute lease, but cannot prevent
+all process pauses or delayed cancellation.
+
+**Implemented on this branch.** Migration 012 adds a nullable `claim_token` UUID, without
+backfill. Every claim/reclaim generates a fresh token atomically. `queue.complete` and
+`queue.fail` require the UUID returned by `claim_next`, match the processing state and
+token, and return whether the acknowledgement was accepted. Accepted transitions clear
+the token; stale calls leave every field unchanged. Callers still commit the transaction.
+All worker success and error paths pass their original token and log `worker.claim_lost`
+when rejected. Expiry alone does not revoke a token: the current owner may acknowledge
+until another claim replaces it. Row locking serializes competing transitions.
+
+**Why it matters / limits.** This protects queue state only. Dispatch can already have
+written ingest rows, logs or follow-up jobs before ownership loss is detected. Exactly-once
+processing and fencing those side effects remain unimplemented. No retry/repair endpoint
+or automatic replay is added, and timeout, lease and retry caps are unchanged.
+
+**Rollout required.** Stop or drain old workers, apply `cadence db init`, then start the
+updated workers. Old binaries and direct SQL remain unfenced even after migration; mixed
+workers do not provide the guarantee. Existing tokenless processing rows acquire ownership
+when reclaimed after the normal lease; do not invent tokens for old workers. No production
+migration or data writes were performed during implementation. Numbers 70–79 belong to
+independent open PRs and are deliberately not imported here.
+
+**Verification.** 26 new PostgreSQL-backed cases cover separate committed claims, all stale
+acknowledgements, retries, terminal states, wrong/missing ownership, rollback, legacy rows,
+and worker success/exception paths. The rollback-only
+[`queue-ownership-smoke.json`](../data/corpus/queue-ownership-smoke.json) proves UUID rotation
+even when transaction timestamps are equal; it is a single-transaction SQL check, not a
+distributed worker capture. Final full-suite results are recorded in the phase progress.
+
+**What would close the remaining gap.** Deploy the migration and coordinated worker
+restart, then verify ownership rejection in the deployed worker. Side-effect guarantees
+need a separate idempotency/fencing design and evidence before claiming exactly-once work.
 
 ### 1. ~~Ingest has been stopped since 2026-08-24~~ · RESOLVED 2026-08-28 · Critical
 

@@ -269,3 +269,20 @@ from 2d23h to seconds.
 laptop-bound, so it accrues history only while the machine is on; and it runs on a personal
 `gh` token, sharing one 5,000/hour budget with interactive use and carrying far more scope
 than read-only ingest needs.
+
+## Queue ownership — proposed 2026-11-18
+
+A reclaimed lease now receives a fresh UUID. Completion and retry/terminal failure must
+present the processing row's current token; rejected acknowledgements preserve its state,
+error, attempts and schedule. Workers log `worker.claim_lost` for a refused transition.
+The queue API returns a boolean and leaves transaction commits to its caller.
+
+Deployment order: stop or drain old workers, apply migration 012 via `cadence db init`,
+then start updated workers. Old acknowledgement SQL remains unfenced, so mixed versions
+are unsafe. Tokenless processing rows are reclaimed after their normal lease; no backfill
+is needed. Only the test database was migrated during implementation.
+
+A token remains current after expiry until reclaimed. Dispatch side effects can still
+repeat; tokens protect the queue acknowledgement, not exactly-once ingest. The ten-minute
+timeout, fifteen-minute lease and retry policy are unchanged. See [CAVEATS 80](../CAVEATS.md#80-queue-ownership-fences-acknowledgements-not-dispatch-side-effects)
+for rollout and verification limits.
