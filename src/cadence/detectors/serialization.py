@@ -24,10 +24,14 @@ from cadence.simulate import replay_edge_removal_savings
 from cadence.workflow import Job, Workflow
 
 DETECTOR_ID = "waste.false_needs_edge"
-DETECTOR_VERSION = "false_needs_edge@1"
+DETECTOR_VERSION = "false_needs_edge@2"
 
-_UPLOAD = "actions/upload-artifact"
-_DOWNLOAD = "actions/download-artifact"
+# Any action that fetches an artifact, not only actions/download-artifact: forks and
+# third-party ones exist, and a missed consumer is a broken build.
+_DOWNLOAD = re.compile(r"download[-_]?(?:workflow[-_]?)?artifacts?|artifact[-_]?download", re.I)
+_DOWNLOAD_COMMAND = re.compile(r"\bgh\s+run\s+download\b")
+_CACHE_SAVE = "actions/cache/save"
+_CACHE_RESTORE = "actions/cache/restore"
 
 # Minimum runs before an edge-removal claim is worth making. Below this the replay
 # median is dominated by noise in a handful of runs.
@@ -151,14 +155,23 @@ def independence_verdict(job: Job, dep: Job, dep_key: str) -> Verdict:
     if dep.raw.get("outputs"):
         return Verdict(False)
 
-    # 3. Artifact flow. If the dep uploads and this job downloads *anything*, we cannot
-    #    reliably match names (they can be templated or wildcarded) -- assume coupling.
-    dep_uploads = any(s.action == _UPLOAD for s in dep.steps)
-    job_downloads = any(s.action == _DOWNLOAD for s in job.steps)
-    if dep_uploads and job_downloads:
+    # 3. A reusable workflow's steps live in another file. Whatever it uploads, downloads
+    #    or writes is unreadable from here, on either side of the edge.
+    if job.is_reusable_call or dep.is_reusable_call:
         return Verdict(False)
 
-    # 4. Shared external state we cannot model: service containers, deployment
+    # 4. Artifact flow. Whether the dependency uploads is not decidable: a third-party
+    #    action can upload without saying so (`hynek/build-and-inspect-python-package`),
+    #    and so can a script. So a job that downloads anything is assumed to consume it.
+    if _downloads_artifact(job):
+        return Verdict(False)
+    #    Splitting save from restore is how a cache is used to hand files to a later job.
+    if any(st.action == _CACHE_RESTORE for st in job.steps) or any(
+        st.action == _CACHE_SAVE for st in dep.steps
+    ):
+        return Verdict(False)
+
+    # 5. Shared external state we cannot model: service containers, deployment
     #    environments, or concurrency groups that may serialise them anyway.
     if job.services or dep.services:
         return Verdict(False)
@@ -167,7 +180,7 @@ def independence_verdict(job: Job, dep: Job, dep_key: str) -> Verdict:
     if job.raw.get("concurrency") or dep.raw.get("concurrency"):
         return Verdict(False)
 
-    # 5. A dependency that only gates on success is still doing a job -- it is a cheap
+    # 6. A dependency that only gates on success is still doing a job -- it is a cheap
     #    fail-fast guard. Removing it is a policy change, not a pure speedup.
     if _is_cheap_gate(dep):
         return Verdict(
@@ -179,24 +192,44 @@ def independence_verdict(job: Job, dep: Job, dep_key: str) -> Verdict:
             ),
         )
 
-    reason = "no artifact flow, no output reference, no shared services or environment"
-    if dep_uploads:
-        reason += "; dependency uploads artifacts this job never downloads"
-    return Verdict(True, confidence=0.80, reason=reason)
+    # 0.5, not 0.8: every public finding of @1 was wrong (CAVEATS 92), and after those
+    # fixes the corpus has none left to measure against.
+    return Verdict(
+        True, confidence=0.50,
+        reason="no artifact download, no output reference, no shared services or environment",
+    )
+
+
+def _downloads_artifact(job: Job) -> bool:
+    for step in job.steps:
+        if step.uses and _DOWNLOAD.search(step.uses):
+            return True
+        if step.run and _DOWNLOAD_COMMAND.search(step.run):
+            return True
+    return False
 
 
 def _references_needs(job: Job, dep_key: str) -> bool:
-    """Search the whole job body for `needs.<dep>` in any expression.
+    """Search the whole job body for a use of `needs` that could read `dep_key`.
 
     Serialising to JSON catches references anywhere -- `if:`, `env:`, `with:`, a step's
-    `run:` body -- without hand-walking every construct GitHub supports.
+    `run:` body -- without hand-walking every construct GitHub supports. The job's own
+    `needs:` list is dropped first, being the edge under test rather than a use of it.
+
+    `needs.<other>` reads only that other job. Every other form -- `toJSON(needs)`,
+    `needs.*.result`, `needs[...]` -- can read them all, and is how aggregate "all checks
+    passed" jobs consume the jobs they wait for.
     """
     try:
-        blob = json.dumps(job.raw, default=str)
+        body = {k: v for k, v in job.raw.items() if k != "needs"}
+        blob = json.dumps(body, default=str)
     except (TypeError, ValueError):
         return True  # unreadable -> assume coupled
-    pattern = re.compile(r"needs\s*\.\s*" + re.escape(dep_key) + r"\b")
-    return bool(pattern.search(blob))
+    for match in re.finditer(r"(?<![\w.-])needs\b(\s*\.\s*([\w-]+|\*))?", blob, re.I):
+        named = match.group(2)
+        if named is None or named == "*" or named.lower() == dep_key.lower():
+            return True
+    return False
 
 
 def _is_cheap_gate(dep: Job) -> bool:
