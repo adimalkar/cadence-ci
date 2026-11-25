@@ -161,6 +161,36 @@ class TestIrrelevantPathTrigger:
         assert not is_inert("scripts/build.sh")
         assert not is_inert("src/main.py")
 
+    def test_prose_is_inert_at_any_depth(self):
+        """@2: a docs-only change is usually a nested README or a docs folder of
+        markdown, which @1 called code because it only accepted root-level prose."""
+        assert is_inert("e2e/README.md")
+        assert is_inert("team notes/release-plan.md")
+        assert is_inert("packages/web/CHANGELOG.md")
+        assert is_inert("guide/intro.rst")
+        assert is_inert("pkg/LICENSE")
+
+    def test_txt_is_not_inert_by_extension(self):
+        """`requirements.txt` pins dependencies; @1 classed it as documentation."""
+        assert not is_inert("requirements.txt")
+        assert not is_inert("tests/fixtures/expected.txt")
+        assert is_inert("LICENSE.txt")
+        assert is_inert("README.txt")
+
+    def test_lookalikes_stay_code(self):
+        assert not is_inert("site/pages/intro.mdx")  # compiled as a component
+        assert not is_inert("src/readme.md.ts")
+
+    def test_the_suggestion_warns_about_required_checks(self):
+        runs = _runs(40)
+        changed = {r.run_id: (["e2e/README.md"] if r.run_id % 4 == 0 else ["src/x.py"])
+                   for r in runs}
+        draft, = IrrelevantPathTriggerDetector().run(
+            _ctx(NO_FILTER, runs=runs, changed_paths=changed))
+        assert draft.detector_version == "irrelevant_path_trigger@2"
+        assert "required status check" in draft.suggested_action
+        assert "a skipped job satisfies a required check" in draft.suggested_action
+
     def test_fires_when_many_runs_were_docs_only(self):
         runs = _runs(40)
         changed = {r.run_id: (["docs/a.md"] if r.run_id % 4 == 0 else ["src/x.py"])
