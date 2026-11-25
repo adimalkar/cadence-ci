@@ -1611,11 +1611,8 @@ different commit, was created within 60 seconds of its end. A commit with any co
 non-cancelled run counts as tested. A commit with a run still in progress is not judged.
 No savings are claimed: the cost is attribution, not minutes.
 
-It was found by a backtest. On a private field repository, an audit `--as-of` 2026-08-08
-reports "5 of 72 commits pushed to `main` never got a result". The team changed the
-group 13 days later, after a regression went unreported for three merges and surfaced
-against an innocent commit. Their fix keys the group per commit on `main`, which is the
-rule's suggested action. On the public corpus the rule reports 10 findings on 9 of 50
+It was found by a backtest in field testing. The rule was written after studying that case, so it is not independent evidence of reach.
+On the public corpus the rule reports 10 findings on 9 of 50
 repos; spot-checked angular runs were cancelled 16-17 s after the next push's run was
 created. `audit.py` now also hands detectors `run_outcomes`, which include runs cancelled
 before any job started. `AuditContext.runs` cannot see those, and they are exactly the

@@ -1,7 +1,7 @@
 """Default-branch commits whose every CI run was displaced by the next push.
 
-The shape comes from a backtest on a private field repository: a group keyed on
-`github.ref` with `cancel-in-progress: true` dropped 22 commits on main over 18 days.
+Synthetic: a group keyed on `github.ref` with `cancel-in-progress: true`, under a burst of
+pushes.
 """
 
 from __future__ import annotations

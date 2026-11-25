@@ -12,8 +12,7 @@ green.
 This is the opposite failure to the one `no_run_cancellation` looks for: cancelling
 superseded runs saves minutes on a pull request, where only the newest commit matters,
 and loses information on the default branch, where every commit is history. Found by a
-backtest: on a private field repository, 22 default-branch commits lost their CI result
-this way over 18 days before the team noticed through a misattributed failure.
+backtest in field testing; the rule was written after studying that case.
 
 No savings figure. This costs correctness, not minutes, and the fix spends minutes.
 """
