@@ -1605,12 +1605,11 @@ silently widen a finding decision to repository scope.
 it came from. Concentration is unchanged: the step's share of all measured step time, top
 three steps, 30% floor. The p50, p95, the 60-second median floor and the 20-observation
 floor are now taken within one event, and the title names the slow event and any event in
-which the same step is at most half as slow. On a private field repository, @2 reported
-a guard step at p50 27:24. Its push runs take 29:17 at the median and its pull-request
-runs take 0:35, so the blended figure described neither and hid the one fact worth acting
-on. Dedupe keys are unchanged, so suppressions keep matching (item 71 does not grow).
+which the same step is at most half as slow. In field testing, @2 reported
+one blended median for a step that is slow on one event and nearly instant on another, so
+the figure described neither and hid the one fact worth acting on. Dedupe keys are unchanged, so suppressions keep matching (item 71 does not grow).
 
-Corpus comparison against @2, 46 public repos plus the field repository: 17 findings
+Corpus comparison against @2, public repos plus one used for field testing: 17 findings
 before and after, the same steps. Statistics moved where events differ. babel's `test262`
 shows 4:46 on PRs but 0:49 in `merge_group`; etcd's CodeQL `Autobuild` p95 drops from 2:43
 to 1:39 once pushes stop inflating it. A rejected variant divided each step by its own
