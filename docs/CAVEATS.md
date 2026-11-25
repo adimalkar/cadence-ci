@@ -1607,21 +1607,16 @@ records such a job as `cancelled`, not `failure` or `timed_out`, so `first_faili
 never saw it. Its re-run usually passes, so the latest attempt is green. The rule reads
 every attempt of every cancelled job, which `build_context` now collects separately from
 the latest-attempt job observations. A kill is a cancelled job whose runtime falls between
-30 seconds before and 5 minutes after its limit. The observed kills landed 18-24 seconds
-after a 35-minute limit. An absent `timeout-minutes` means GitHub's 360. No savings are
+30 seconds before and 5 minutes after its limit. Observed kills landed seconds
+after the limit. An absent `timeout-minutes` means GitHub's 360. No savings are
 claimed; the burned runner-minutes are reported as measured.
 
-It was found by a backtest. On a private field repository, an install step hung until
-the 35-minute limit 4 times on one day and 8 more the next, each re-run passing, before
-the team added a step-level timeout and a browser cache. An audit `--as-of` the morning
-of the fix reports "hung until the 35-minute job timeout 4 times (141 runner-minutes);
-2 of 4 runs passed on re-run". The public corpus has one such kill in its window (remix,
-360-minute default), below the two-kill floor, so the rule produces no corpus findings.
+It was found by a backtest in field testing. The rule was written after studying that case, so it is not independent evidence of reach.
+The public corpus has one such kill in its window (remix, 360-minute default), below the
+two-kill floor, so the rule produces no corpus findings.
 
-Kills are grouped per job, not per step. The same repository's CI job was killed at its
-45-minute limit about 30 times in three weeks, landing 5-45 seconds past it each time, in
-whatever step was running on an overloaded runner. Grouping per step had turned that one
-cause into four findings. A job killed in one step every time names the step. A job
+Kills are grouped per job, not per step: one overloaded runner kills a job in whatever step
+happens to be running, and grouping per step turned that one cause into several findings. A job killed in one step every time names the step. A job
 killed in several names the most frequent one and says the job is outrunning its limit.
 
 **Why it matters.**

@@ -6,10 +6,8 @@ hang is invisible twice over: the failure rules read only `failure`, and the lat
 attempt is green. What gives it away is the duration: a cancelled job whose runtime is
 its configured limit was killed by it.
 
-Found by a backtest on a private field repository. One step hung at an apt install until
-the 35-minute job timeout four times in a day, then eight more the next, each re-run
-passing, before the team put a step-level timeout on it. The audit as of the morning
-after the first four said nothing, because no rule could see them.
+Found by a backtest in field testing, where no rule could see repeated kills of this kind;
+the rule was written after studying that case.
 
 No savings figure is claimed. The burned runner time is measured and reported, but what
 a fix recovers depends on whether the hang is removed or merely cut short.
@@ -28,7 +26,7 @@ DETECTOR_VERSION = "timeout_hang@1"
 
 MIN_KILLS = 2
 MANY_KILLS = 5
-# A kill lands shortly after the limit: observed 18-24 s past a 35-minute timeout. A job
+# A kill lands shortly after the limit: observed within a minute of the limit. A job
 # that stopped well before its limit was cancelled by something else.
 EARLY_TOLERANCE_SECONDS = 30.0
 LATE_TOLERANCE_SECONDS = 300.0
@@ -87,8 +85,8 @@ def group_hangs(ctx: AuditContext) -> list[HangGroup]:
         if limit is None or not killed_by_timeout(c.exec_seconds, limit):
             continue
         # Per job, not per step: a job killed in a different step each time is one job
-        # outrunning its limit, not several hangs (a field repository's overloaded
-        # runner produced four per-step findings for one cause).
+        # outrunning its limit, not several hangs (one overloaded runner otherwise
+        # produces several per-step findings for one cause).
         key = (wf.path, job.key)
         group = groups.get(key)
         if group is None:

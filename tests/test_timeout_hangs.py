@@ -1,7 +1,7 @@
 """Jobs killed by their own timeout, which GitHub records as `cancelled`.
 
-Shape from a backtest on a private field repository: an install step hung until a
-35-minute job timeout, each kill 18-24 s past the limit, each re-run passing.
+Synthetic: a step hangs until the job timeout, each kill seconds past the limit, each
+re-run passing.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ on: [push, pull_request]
 jobs:
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     steps:
       - name: Install browser
         run: npx playwright install --with-deps chromium
@@ -47,7 +47,7 @@ def ctx(cancelled: list[CancelledJob], yaml: str = YAML) -> AuditContext:
     )
 
 
-def kill(run_id: int, *, seconds: float = 35 * 60 + 20, step: str | None = "Install browser",
+def kill(run_id: int, *, seconds: float = 20 * 60 + 20, step: str | None = "Install browser",
          attempt: int = 1, run_attempt: int = 2, run_conclusion: str | None = "success",
          job: str = "e2e") -> CancelledJob:
     return CancelledJob(run_id=run_id, attempt=attempt, workflow_path=E2E, job_name=job,
@@ -61,14 +61,14 @@ class TestFinding:
         finding, = TimeoutHangDetector().run(ctx([kill(i) for i in range(1, 5)]))
         assert finding.title == (
             "`Install browser` in `e2e` (.github/workflows/e2e.yml) hung until the "
-            "35-minute job timeout 4 times (141 runner-minutes); 4 of 4 runs passed on re-run")
+            "20-minute job timeout 4 times (81 runner-minutes); 4 of 4 runs passed on re-run")
         assert finding.module == "flake"
         assert finding.detector_version == DETECTOR_VERSION
         assert finding.severity == 3
         assert finding.savings is None
         config, history = finding.evidence
         assert (config.file_path, config.line_start) == (E2E, 3)
-        assert config.payload == {"job": "e2e", "timeout_minutes": 35.0,
+        assert config.payload == {"job": "e2e", "timeout_minutes": 20.0,
                                   "timeout_declared": True}
         assert history.run_ids == [1, 2, 3, 4]
         assert history.payload["runs_passed_on_rerun"] == 4
@@ -92,7 +92,7 @@ class TestFinding:
         assert "environment" not in finding.suggested_action
 
     def test_the_default_timeout_applies_when_none_is_declared(self):
-        yaml = YAML.replace("    timeout-minutes: 35\n", "")
+        yaml = YAML.replace("    timeout-minutes: 20\n", "")
         kills = [kill(i, seconds=360 * 60 + 40) for i in range(1, 3)]
         finding, = TimeoutHangDetector().run(ctx(kills, yaml))
         assert "360-minute job timeout" in finding.title
@@ -108,10 +108,10 @@ class TestFinding:
         assert group.steps == [("Test", 3), ("Install browser", 2)]
         finding, = TimeoutHangDetector().run(ctx(kills))
         assert finding.title == (
-            "`e2e` (.github/workflows/e2e.yml) hung until the 35-minute job timeout 5 times "
-            "(177 runner-minutes), in 2 different steps, most often `Test` (3)")
+            "`e2e` (.github/workflows/e2e.yml) hung until the 20-minute job timeout 5 times "
+            "(102 runner-minutes), in 2 different steps, most often `Test` (3)")
         assert finding.dedupe_key == "timeout_hang:.github/workflows/e2e.yml:e2e"
-        assert "outrunning its 35-minute limit" in finding.suggested_action
+        assert "outrunning its 20-minute limit" in finding.suggested_action
         assert finding.evidence[1].payload["steps_at_kill"] == [
             {"step": "Test", "kills": 3}, {"step": "Install browser", "kills": 2}]
 
@@ -131,7 +131,7 @@ class TestWhatIsNotAHang:
         assert TimeoutHangDetector().run(ctx(kills)) == []
 
     def test_an_expression_timeout_is_not_guessed(self):
-        yaml = YAML.replace("timeout-minutes: 35", "timeout-minutes: ${{ inputs.minutes }}")
+        yaml = YAML.replace("timeout-minutes: 20", "timeout-minutes: ${{ inputs.minutes }}")
         assert TimeoutHangDetector().run(ctx([kill(i) for i in range(1, 5)], yaml)) == []
 
     def test_a_job_that_does_not_resolve_is_skipped(self):
@@ -141,22 +141,22 @@ class TestWhatIsNotAHang:
 
 class TestTimeoutMath:
     @pytest.mark.parametrize("seconds,killed", [
-        (35 * 60 - 31, False), (35 * 60 - 30, True), (35 * 60 + 24, True),
-        (35 * 60 + 300, True), (35 * 60 + 301, False),
+        (20 * 60 - 31, False), (20 * 60 - 30, True), (20 * 60 + 24, True),
+        (20 * 60 + 300, True), (20 * 60 + 301, False),
     ])
     def test_tolerance(self, seconds, killed):
-        assert killed_by_timeout(seconds, 35.0) is killed
+        assert killed_by_timeout(seconds, 20.0) is killed
 
     @pytest.mark.parametrize("value,expected", [
-        ("35", 35.0), ("'35'", 35.0), ("2.5", 2.5), ("true", None),
+        ("20", 20.0), ("'20'", 20.0), ("2.5", 2.5), ("true", None),
         ("${{ inputs.minutes }}", None),
     ])
     def test_timeout_minutes_parsing(self, value, expected):
-        yaml = YAML.replace("timeout-minutes: 35", f"timeout-minutes: {value}")
+        yaml = YAML.replace("timeout-minutes: 20", f"timeout-minutes: {value}")
         assert parse_workflow(E2E, yaml).jobs["e2e"].timeout_minutes == expected
 
     def test_absent_means_githubs_default(self):
-        yaml = YAML.replace("    timeout-minutes: 35\n", "")
+        yaml = YAML.replace("    timeout-minutes: 20\n", "")
         assert parse_workflow(E2E, yaml).jobs["e2e"].timeout_minutes == 360.0
 
 
