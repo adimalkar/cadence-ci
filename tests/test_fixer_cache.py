@@ -102,6 +102,34 @@ class TestAcceptedEdits:
         assert "cache: npm" in result.diff.after
         assert "cache-dependency-path: 'package-lock.json'" in result.diff.after
 
+    @pytest.mark.parametrize("command", [
+        "# Install JS dependencies\n          npm ci",
+        "npm ci \\\n            --no-audit \\\n            --ignore-scripts",
+        "npm install \\\n            --prefer-offline",
+    ])
+    def test_multiline_or_commented_npm_commands_are_supported(self, command):
+        text = CI.replace("actions/setup-python@v5", "actions/setup-node@v4").replace(
+            "pip install -r requirements/test.txt", "|\n          " + command)
+        src = source(text)
+        ctx = context(src)
+        drafts = DependencyCacheDetector().run(ctx)
+        assert len(drafts) == 1
+        result = CacheFixer(src).preview(ctx.workflows[0], text, drafts[0])
+        assert result.ok, result.declined
+        assert "cache: npm" in result.diff.after
+        assert "cache-dependency-path: 'package-lock.json'" in result.diff.after
+        ctx.workflows = [parse_workflow(PATH, result.diff.after)]
+        assert DependencyCacheDetector().run(ctx) == []
+
+    @pytest.mark.parametrize("replacement", [
+        ("jobs:", "defaults:\n  run:\njobs:"),
+        ("    runs-on:", "    defaults:\n      run:\n    runs-on:"),
+    ])
+    def test_empty_defaults_run_mapping_does_not_crash(self, replacement):
+        text = CI.replace(*replacement)
+        result = fix(text)
+        assert result.ok, result.declined
+
     @pytest.mark.parametrize("command, expected", [
         ("pip install --group dev", "pyproject.toml"),
         ("python -m pip install --group=dev --group=test", "pyproject.toml"),
@@ -205,6 +233,8 @@ class TestDeclines:
         ("      - uses: actions/setup-python",
          "      - &setup\n        uses: actions/setup-python"),
         ("    runs-on:", "    env:\n      PIP_NO_CACHE_DIR: '1'\n    runs-on:"),
+        ("    runs-on:", "    env: ${{ inputs.env }}\n    runs-on:"),
+        ("        with:\n", "        env: ${{ inputs.env }}\n        with:\n"),
     ])
     def test_unsafe_or_ambiguous_context(self, replacement):
         text = CI.replace(*replacement)
