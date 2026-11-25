@@ -95,6 +95,19 @@ a projected lower-bound saving of 30 seconds per run and declines publishing wor
 custom checkout layouts and ambiguous install commands. Its current corpus evaluation
 produces **no eligible changes**; see CAVEATS 67 for the measured limits.
 
+Backtest: what would the audit have said on a past date?
+
+```bash
+uv run cadence backfill astral-sh/ruff --since 2026-08-01 --until 2026-08-31
+uv run cadence audit astral-sh/ruff --as-of 2026-08-20 --window 21
+```
+
+`backfill` fetches one UTC day at a time, skips runs already stored, and waits for the
+rate-limit reset rather than spending the last 500 requests. `--as-of` reads the workflow
+files at the default branch's last commit before that date and writes nothing. GitHub
+drops step timings after about 120 days, so older backtests see job timings only
+(CAVEATS 84, 85).
+
 Tests:
 
 ```bash

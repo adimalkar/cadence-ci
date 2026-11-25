@@ -69,11 +69,14 @@ class CIProvider(Protocol):
         page: int = 1,
         per_page: int = 100,
         etag: str | None = None,
+        created: str | None = None,
     ) -> RunPage:
         """One page of workflow runs, newest first.
 
         Pass the stored `etag` to get a cheap 304 when nothing changed -- conditional
         requests do not count against the rate limit, and the delta poll depends on it.
+        `created` is GitHub's date filter (`2026-08-01`, or `<iso>..<iso>`); a filtered
+        listing returns at most 1,000 runs however many pages are requested.
         """
         ...
 

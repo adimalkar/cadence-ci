@@ -168,11 +168,13 @@ class GitHubProvider:
         page: int = 1,
         per_page: int = 100,
         etag: str | None = None,
+        created: str | None = None,
     ) -> RunPage:
+        params: dict = {"page": page, "per_page": per_page}
+        if created:
+            params["created"] = created
         resp = await self._get(
-            f"/repos/{repo.owner}/{repo.name}/actions/runs",
-            params={"page": page, "per_page": per_page},
-            etag=etag,
+            f"/repos/{repo.owner}/{repo.name}/actions/runs", params=params, etag=etag,
         )
         if resp.status_code == 304:
             return RunPage(runs=[], etag=etag, not_modified=True)
@@ -350,6 +352,32 @@ class GitHubProvider:
                 except (ValueError, TypeError):
                     continue
         return out
+
+    async def commit_before(self, repo: Repo, when: datetime) -> str | None:
+        """The default branch's newest commit at or before `when`, or None.
+
+        Ordered by commit date, which is what `until` filters on. A rebased or
+        force-pushed history can make that differ from when the commit reached the
+        branch; the caller reports the sha it used so the choice is checkable.
+        """
+        resp = await self._get_with_backoff(
+            f"/repos/{repo.owner}/{repo.name}/commits",
+            params={"sha": repo.default_branch or "HEAD", "per_page": 1,
+                    "until": when.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")},
+        )
+        commits = resp.json()
+        return commits[0]["sha"] if commits else None
+
+    async def rate_remaining(self) -> tuple[int, float]:
+        """Core requests left and seconds until the window resets.
+
+        `/rate_limit` itself is free, so checking before each unit of work is how a long
+        backfill avoids ever running the budget dry (CAVEATS 34).
+        """
+        resp = await self._get_with_backoff("/rate_limit")
+        core = resp.json()["resources"]["core"]
+        wait = max(0.0, float(core["reset"]) - datetime.now(UTC).timestamp())
+        return int(core["remaining"]), wait
 
     async def fetch_commit_paths(self, repo: Repo, sha: str) -> list[str]:
         """Files changed by one commit. Empty list if unavailable.
