@@ -59,7 +59,8 @@ jobs:
         run: uv python install 3.12
 
       - name: Install dependencies
-        run: uv sync --extra dev
+        # --extra mcp: the suite below tolerates no skips, and the MCP tests need it.
+        run: uv sync --extra dev --extra mcp
 
       - name: Full suite, no skips tolerated
         run: |
