@@ -58,6 +58,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 92 | `false_needs_edge@1` was wrong on all four of its public findings; `@2` has no corpus findings to measure | **High** | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1598,32 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 92. `false_needs_edge@1` was wrong on all four of its public findings; `@2` has no corpus findings to measure · High
+
+**What.** An AI agent asked Cadence for prettier's top CI problem and repeated its answer:
+`lint` waits for `build` but "consumes nothing from it". `lint` downloads the `dist`
+artifact `build` produces. Removing the edge would break the pipeline. The other three
+corpus findings were wrong too:
+- **prettier** and **pytest** `build`: the upload is inside a reusable workflow or a
+  third-party action, so "the dependency does not upload" was false.
+- **TypeScript** `required` and **pytest** `check`: aggregate gates that read every job
+  through `toJson(needs)`, which the reference search did not match.
+
+`@2` refuses when either side is a reusable workflow, when the job downloads any
+artifact, when a cache is split into save and restore, or when the job uses `needs` in
+any form other than `needs.<another job>`. Confidence falls from 0.80 to 0.50.
+
+**Why it matters.** The rule's own docstring requires positive evidence of independence;
+the code inferred it from not seeing an upload. It was ranked first because its savings
+are measured by replay, but the measurement assumed the edge was removable. A rendered
+answer looked well evidenced, with run ids and a line number, and an agent had no reason
+to doubt it.
+
+**What would close it.** Other hand-offs are still invisible: a dependency that pushes an
+image, publishes a package or writes to external storage. Either model those or require a
+maintainer's confirmation before ranking. Measure precision on repositories outside the
+corpus, and label every rule's corpus findings by hand: this one went unreviewed.
 
 ## Environmental and tooling notes
 

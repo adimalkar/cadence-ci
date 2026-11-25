@@ -691,3 +691,114 @@ class TestCancellationWordingMatchesTheFile:
         """Persisted findings carry the old wording and must stay attributable to it."""
         (d,) = NoRunCancellationDetector().run(make_ctx(NO_CONCURRENCY, runs=self.RUNS))
         assert d.detector_version == "no_run_cancellation@2"
+
+
+class TestNeedsEdgeRefusesWhatItCannotRead:
+    """Each shape is a public finding of false_needs_edge@1 that would have broken CI."""
+
+    @staticmethod
+    def _verdict(yaml: str, job: str, dep: str):
+        jobs = parse_workflow("ci.yml", yaml).jobs
+        return independence_verdict(jobs[job], jobs[dep], dep).independent
+
+    def test_a_reusable_workflow_may_upload_what_the_job_downloads(self):
+        assert self._verdict("""\
+on: push
+jobs:
+  build:
+    uses: ./.github/workflows/_build.yml
+  lint:
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+      - run: yarn lint
+""", "lint", "build") is False
+
+    def test_a_reusable_workflow_is_unreadable_even_without_a_visible_download(self):
+        yaml = """\
+on: push
+jobs:
+  a: {uses: ./.github/workflows/a.yml}
+  b:
+    needs: a
+    runs-on: ubuntu-latest
+    steps: [{run: make}]
+  c:
+    needs: b
+    uses: ./.github/workflows/c.yml
+"""
+        assert self._verdict(yaml, "b", "a") is False
+        assert self._verdict(yaml, "c", "b") is False
+
+    @pytest.mark.parametrize("step", [
+        "uses: actions/download-artifact@v8",
+        "uses: dawidd6/action-download-artifact@v6",
+        "run: gh run download $GITHUB_RUN_ID -n dist",
+    ])
+    def test_a_third_party_action_can_upload_without_saying_so(self, step):
+        assert self._verdict(f"""\
+on: push
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: hynek/build-and-inspect-python-package@v2
+  test:
+    needs: [package]
+    runs-on: ubuntu-latest
+    steps:
+      - {step}
+      - run: pytest
+""", "test", "package") is False
+
+    @pytest.mark.parametrize("use", [
+        "${{ toJson(needs) }}", "${{ toJSON(needs) }}", "${{ join(needs.*.result) }}",
+        "${{ contains(needs.*.result, 'failure') }}", "${{ needs['test'].result }}",
+    ])
+    def test_an_aggregate_gate_reads_every_job_it_waits_for(self, use):
+        assert self._verdict(f"""\
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps: [{{run: make test}}]
+  required:
+    if: always()
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          NEEDS: "{use}"
+        run: ./check.sh
+""", "required", "test") is False
+
+    def test_reading_another_job_is_not_reading_this_one(self):
+        assert self._verdict("""\
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps: [{run: make a}]
+  b:
+    runs-on: ubuntu-latest
+    steps: [{run: make b}]
+  c:
+    needs: [a, b]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ${{ needs.b.result }}
+""", "c", "a") is True
+
+    def test_a_cache_split_into_save_and_restore_is_a_handoff(self):
+        assert self._verdict("""\
+on: push
+jobs:
+  a:
+    runs-on: ubuntu-latest
+    steps: [{uses: actions/cache/save@v4}]
+  b:
+    needs: a
+    runs-on: ubuntu-latest
+    steps: [{run: make}]
+""", "b", "a") is False
