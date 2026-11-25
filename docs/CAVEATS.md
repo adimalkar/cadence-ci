@@ -1614,8 +1614,8 @@ with the same `analysis_id`. There are two views:
 - **finding:** the suggested action and full evidence, with lists over 50 items cut to
   a sample plus their true length.
 
-Measured on a private field repository, the summary for 4 findings with full coverage and
-caveats was about 1,100 tokens (4.3 KB). The gh path measured on 2026-11-20 was 11-15k
+Measured in field testing, a summary with several findings, full coverage and caveats was
+about 1,100 tokens. The gh path measured on 2026-11-20 was 11-15k
 tokens for `gh run list` of 100 runs alone, and 52-70k for the jobs of 50 runs.
 
 **Why it matters.**
