@@ -28,6 +28,7 @@ from cadence.detectors.context import (
     JobFailure,
     RootPackageJson,
     RunObservation,
+    RunOutcome,
     StepSeries,
 )
 from cadence.detectors.failure import FirstFailingStepDetector
@@ -35,6 +36,7 @@ from cadence.detectors.longtail import LongTailStepDetector
 from cadence.detectors.matrix import NonDiscriminatingMatrixLegDetector
 from cadence.detectors.serialization import FalseNeedsEdgeDetector
 from cadence.detectors.triggers import IrrelevantPathTriggerDetector
+from cadence.detectors.untested import UntestedDefaultBranchCommitsDetector
 from cadence.findings import persist_findings, resolve_missing
 from cadence.workflow import Workflow, parse_workflow
 
@@ -49,6 +51,7 @@ DETECTORS = [
     LongTailStepDetector(),
     JobBillingRoundingDetector(),
     FirstFailingStepDetector(),
+    UntestedDefaultBranchCommitsDetector(),
 ]
 
 
@@ -82,7 +85,8 @@ def build_context(
 
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(
-            "SELECT owner, name, is_private FROM repo WHERE id = %s", (repo_id,)
+            "SELECT owner, name, is_private, default_branch FROM repo WHERE id = %s",
+            (repo_id,),
         )
         repo = cur.fetchone()
         if repo is None:
@@ -101,6 +105,30 @@ def build_context(
         )
         run_rows = cur.fetchall()
         run_ids = [r["id"] for r in run_rows]
+
+        # Every run in the window as GitHub concluded it, including runs cancelled before
+        # any job started -- which the job-based observations below cannot see.
+        run_outcomes: list[RunOutcome] = []
+        if run_ids:
+            cur.execute(
+                """
+                SELECT id, workflow_path, event, head_branch, head_sha, conclusion,
+                       extract(epoch FROM created_at) AS created_epoch,
+                       extract(epoch FROM updated_at) AS updated_epoch
+                FROM run WHERE id = ANY(%s)
+                """,
+                (run_ids,),
+            )
+            run_outcomes = [
+                RunOutcome(
+                    run_id=row["id"], workflow_path=row["workflow_path"], event=row["event"],
+                    head_branch=row["head_branch"], head_sha=row["head_sha"],
+                    conclusion=row["conclusion"], created_epoch=float(row["created_epoch"]),
+                    updated_epoch=(float(row["updated_epoch"])
+                                   if row["updated_epoch"] is not None else None),
+                )
+                for row in cur.fetchall()
+            ]
 
         jobs_by_run: dict[int, list[dict]] = {}
         if run_ids:
@@ -235,6 +263,8 @@ def build_context(
         changed_paths=load_changed_paths(conn, repo_id, run_ids),
         root_package_json=root_package_json or RootPackageJson(),
         actions=actions or {},
+        default_branch=repo["default_branch"],
+        run_outcomes=run_outcomes,
     )
 
 

@@ -128,6 +128,9 @@ class Workflow:
     concurrency: dict[str, Any] | None
     on: dict[str, Any] | list[Any] | str | None
     parse_error: str | None = None
+    # 1-based line of the top-level `concurrency:` key, when there is one. Evidence about
+    # the concurrency group should point at it, not at line 1 (CAVEATS 57).
+    concurrency_line: int | None = None
 
     @property
     def cancel_in_progress(self) -> bool:
@@ -310,5 +313,6 @@ def parse_workflow(path: str, content: str) -> Workflow:
         name=doc.get("name"),
         jobs=jobs,
         concurrency=concurrency,
+        concurrency_line=_line_of(doc, "concurrency") if concurrency is not None else None,
         on=on_value,
     )
