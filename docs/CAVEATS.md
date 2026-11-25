@@ -58,6 +58,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 82 | `runner_queue_wait` measures waits but cannot name their cause | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1598,42 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 82. The audit called a pipeline "not queue-bound" while main waited hours · Medium
+
+**What.** `summarize_pipeline` decides `queue_bound` from the *median* run of the dominant
+workflow. When most runs start at once and a minority wait hours for a shared runner, the
+median wait is zero and the audit reports "not queue-bound". Queueing is a tail problem,
+and a median cannot see it. Found in field testing.
+
+**Added `runner_queue_wait@1`.** For each (workflow, triggering event) stream with at least
+20 runs, the wait is first job queued to first job started. A stream qualifies when its
+nearest-rank p90 is at least 10 minutes. Qualifying streams are reported **one finding per
+event** with a per-workflow breakdown, because runners are a shared pool: reported per
+workflow, one saturated pool produced six findings with the same cause. The finding claims
+no saving. Workflows with any `environment:` job are skipped (a deployment waiting for
+approval is not waiting for a runner). Negative waits and waits over 24 hours are excluded
+and counted.
+
+**Measured (90-day and 400-day windows gave the same result):** 46 repositories had at
+least one eligible stream (244 streams at 90 days). Three fired:
+- one private repository used for field testing (figures withheld);
+- tauri-apps/tauri: `pull_request` p90 28:25 across six hosted workflows;
+- apache/spark: `push` p90 5:16:05 in `build_main.yml`, and `workflow_run` p90 6:33:32 in
+  `test_report.yml`. One test-report job was spot-checked: it was created 13:39, started
+  16:31 and ran for 15 seconds on `ubuntu-latest`.
+
+**Still open.** Timestamps cannot say *why* a run waited. Self-hosted capacity, GitHub's
+concurrent-job limits (likely for tauri and for the ASF's shared pool) and other gates look
+the same, so the advice names the pool kind and stops there. The wait is measured to the
+*first* job only, so later jobs that queue inside a run are not counted. Whether a run held
+by a concurrency group creates its jobs before release has not been verified. If it does,
+such holds would also read as runner waits. `summarize_pipeline`'s median `queue_bound` is
+unchanged and still misleading on its own.
+
+**What would close it.** Correlate each long wait with the runs that occupied the same
+runner labels at that moment (we hold their timestamps), so the finding can say "behind 3
+scheduled runs of X" instead of only "waited". Then make `queue_bound` read the tail.
 
 ## Environmental and tooling notes
 

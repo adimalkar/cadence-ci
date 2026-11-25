@@ -61,6 +61,7 @@ data arriving.
 | `long_tail_step` | `detectors/longtail.py` |
 | `job_billing_rounding` | `detectors/billing.py` |
 | `first_failing_step` | `detectors/failure.py` |
+| `runner_queue_wait` (added 2026-11-20, [CAVEATS 82](../CAVEATS.md)) | `detectors/queue.py` |
 
 Plus the machinery: `simulate.py` (replay + projection, kept structurally apart),
 `dag.py` (DAG, levelling, critical path, theoretical floor), `cost.py` (two currencies,
