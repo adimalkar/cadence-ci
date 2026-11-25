@@ -1628,11 +1628,10 @@ file at the same ref.
 
 ### 85. GitHub drops step timings after about 120 days; job timings survive · High
 
-**What.** Probed on a private field repository on 2026-11-24. For runs created on or
-before 2026-07-26, `GET /actions/runs/{id}/jobs` still returns every job with its
+**What.** Probed on one repository on 2026-11-24. For runs older than about 120 days, `GET /actions/runs/{id}/jobs` still returns every job with its
 `created_at`, `started_at`, `completed_at` and labels, but every job's `steps` array is
-empty. From 2026-07-27 23:43 UTC onward, steps are present. That is about 120 days, and
-the boundary moves forward one day per day. It is not the 90-day log retention
+empty. For newer runs, steps are present. The
+boundary was sharp to within a day and is assumed, not observed, to roll forward. It is not the 90-day log retention
 `ingest.py` warns about, and nothing in the response says the steps were removed.
 
 **Why it matters.** Step timings are the input to the long-tail, cache and first-failing-
