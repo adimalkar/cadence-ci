@@ -1602,13 +1602,12 @@ silently widen a finding decision to repository scope.
 ### 81. A conditional cancel-in-progress was reported as waste it had chosen · Medium
 
 **What.** `no_run_cancellation@2` named a conditional `cancel-in-progress` correctly
-(CAVEATS 55) but still claimed every overlap as recoverable. On a private field repository
-its top-ranked finding was 3:15/run from 13 "superseded" runs. All of them were pushes to
-`main`, and the workflow had been written, after an incident recorded in its own comments,
-so that each `main` commit reports its own result:
+(CAVEATS 55) but still claimed every overlap as recoverable. In field testing
+every overlap it claimed was a push to `main`, in a workflow deliberately written so that
+each `main` commit reports its own result:
 `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, with the group keyed on
-the PR number and falling back to the sha. Following the finding would have reintroduced
-that incident. webpack/webpack's `test.yml` and `benchmarks.yml` use the same pattern with
+the PR number and falling back to the sha. Following the finding would have removed
+that guarantee. webpack/webpack's `test.yml` and `benchmarks.yml` use the same pattern with
 the same explanation.
 
 **Fixed in `no_run_cancellation@3`.** The exact form
