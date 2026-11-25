@@ -203,7 +203,8 @@ token rotation.
 
 [`release.yml`](../.github/workflows/release.yml) is dormant until a `v*` tag and will fail
 on the first one until a publisher is registered at
-<https://pypi.org/manage/account/publishing/> — project `cadence`, owner `adimalkar`, repo
+<https://pypi.org/manage/account/publishing/> — project `cadence-ci` (the name `cadence` is already registered
+by someone else), owner `adimalkar`, repo
 `cadence-ci`, workflow `release.yml`, environment `pypi`. Deliberately stores no API token.
 
 ---

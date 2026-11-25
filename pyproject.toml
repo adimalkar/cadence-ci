@@ -1,5 +1,7 @@
 [project]
-name = "cadence"
+# The distribution name. `cadence` on PyPI belongs to someone else; the import package
+# and the command are still `cadence`.
+name = "cadence-ci"
 version = "0.1.0"
 description = "Evidence-grounded CI intelligence. Reads your build history, tells you what it costs, opens the PR that fixes it."
 readme = "README.md"
@@ -44,6 +46,8 @@ ci = [
 
 [project.scripts]
 cadence = "cadence.cli:app"
+# Same command under the distribution name, so `uvx cadence-ci ...` works without --from.
+cadence-ci = "cadence.cli:app"
 
 [build-system]
 requires = ["hatchling"]
