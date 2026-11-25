@@ -27,9 +27,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
+
+import structlog
 
 from cadence.audit import DETECTORS, build_context, run_audit, summarize_pipeline
 from cadence.detectors.base import Detector, EvidenceDraft, FindingDraft
@@ -42,6 +45,17 @@ RUN_URL = "https://github.com/{repo}/actions/runs/{run_id}"
 # durations; a reader needs a sample and the true count, not all of them.
 MAX_LIST_ITEMS = 50
 SUMMARY_RUN_SAMPLE = 3
+
+
+def log_to_stderr() -> None:
+    """Send structlog to stderr, which it does not do by default (it prints to stdout).
+
+    Any adapter whose stdout is a protocol -- JSON for `cadence analyze`, MCP over stdio --
+    must call this first. The stream is looked up when each logger is made, not bound
+    once, so a replaced `sys.stderr` (a test runner's capture) is never written after it
+    is closed.
+    """
+    structlog.configure(logger_factory=lambda *_: structlog.PrintLogger(file=sys.stderr))
 
 
 class AnalysisError(Exception):

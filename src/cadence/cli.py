@@ -915,17 +915,13 @@ def analyze(
     nothing else; logs go to stderr. Writes nothing to the database. The source it read is
     pinned to a commit and saved, so `--snapshot PATH --finding ID` answers offline.
     """
-    import sys
-
-    import structlog
-
-    from cadence.analysis import AnalysisError, finding_view, summary_view
+    from cadence.analysis import AnalysisError, finding_view, log_to_stderr, summary_view
     from cadence.analysis import analyze as run_analysis
     from cadence.providers.base import AccessDenied, NotFound, RateLimited
     from cadence.source import SourceUnavailable
 
     # structlog prints to stdout by default; one retry warning would corrupt the JSON.
-    structlog.configure(logger_factory=structlog.PrintLoggerFactory(file=sys.stderr))
+    log_to_stderr()
 
     def emit(obj: dict, code: int = 0) -> None:
         typer.echo(json.dumps(obj, indent=2 if pretty else None, sort_keys=False))
