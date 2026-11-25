@@ -5,8 +5,7 @@ run it -- a billing block or spending limit on hosted runners, a label no runner
 and says why only in a check-run annotation. Every rule that reads failing steps is
 blind to it, and a re-run fails the same way until the cause clears.
 
-Found by a backtest on a private field repository, where a large share of hosted jobs
-were refused this way and no existing rule reported it.
+Found by a backtest in field testing, where no existing rule reported such jobs.
 """
 
 from __future__ import annotations

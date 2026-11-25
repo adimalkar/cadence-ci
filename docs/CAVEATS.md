@@ -1607,9 +1607,8 @@ then fetches the check-run annotations of the newest refused job in each group, 
 three requests and only when such jobs exist, and puts GitHub's stated reason in the
 title. No rule saw these before: `first_failing_step` needs a failing step.
 
-It was found by a backtest on a private field repository: refused hosted jobs preceded
-two of the team's own CI changes, and no rule reported them. With this rule, `audit
---as-of` reports them, with GitHub's stated reason, before either change.
+It was found by a backtest in field testing, where no rule reported such jobs. The rule was
+written after studying that case, so it is not independent evidence of reach.
 
 **Why it matters.** "No steps" is weak evidence alone. The first corpus sweep flagged
 two groups that were not refusals:
@@ -1623,7 +1622,7 @@ minutes of starting, and some job in the repository within a day of it must stil
 step data. Each guard is a heuristic. A refusal that took longer than two minutes, or
 that happened in a repo whose other jobs all lost their steps, is missed. After the
 guards, the public corpus has one refused job (astral-sh/uv), below the floor, so the
-rule's precision rests on the field repository.
+rule's precision is essentially unmeasured.
 
 **What would close it.** Make the annotation the evidence rather than the explanation:
 fetch it for each candidate group and report only when GitHub's message says the job
