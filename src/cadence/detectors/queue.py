@@ -4,10 +4,9 @@
 dominant workflow. A queue problem is a tail problem: most runs start at once and a
 minority wait for an hour or more behind other work. The median never sees them.
 
-Field case (CAVEATS 82): on a private repository with a single self-hosted runner, the
-median CI run waited 0 seconds, and the audit reported "not queue-bound". Pushes to
-`main` waited a p90 of more than 100 minutes for the runner, and the longest waited
-almost four hours. That was the delay the team cared about most, and the audit missed it.
+Field case (CAVEATS 82): where a minority of runs wait a long time for a shared runner, the
+median run waits 0 seconds, and the audit reported "not queue-bound" while the tail was
+what people were waiting on.
 
 **What is measured.** For each (workflow, triggering event) stream, the wait is the time
 between the run's first job being queued and its first job starting. Streams are kept

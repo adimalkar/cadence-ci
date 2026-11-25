@@ -1602,10 +1602,9 @@ silently widen a finding decision to repository scope.
 ### 82. The audit called a pipeline "not queue-bound" while main waited hours · Medium
 
 **What.** `summarize_pipeline` decides `queue_bound` from the *median* run of the dominant
-workflow. On a private field repository with one self-hosted runner, the median CI run
-waited 0 seconds, so the audit reported "not queue-bound". Pushes to `main` waited a p90 of
-about 3 hours 18 minutes before any job started, and the longest waited 3 hours 50
-minutes. Queueing is a tail problem, and a median cannot see it.
+workflow. When most runs start at once and a minority wait hours for a shared runner, the
+median wait is zero and the audit reports "not queue-bound". Queueing is a tail problem,
+and a median cannot see it. Found in field testing.
 
 **Added `runner_queue_wait@1`.** For each (workflow, triggering event) stream with at least
 20 runs, the wait is first job queued to first job started. A stream qualifies when its
@@ -1618,8 +1617,7 @@ and counted.
 
 **Measured (90-day and 400-day windows gave the same result):** 46 repositories had at
 least one eligible stream (244 streams at 90 days). Three fired:
-- the field repository: `push` p90 3:17:55 across `ci.yml` and `e2e.yml`, and
-  `pull_request` p90 25:31 in `e2e.yml`, both self-hosted;
+- one private repository used for field testing (figures withheld);
 - tauri-apps/tauri: `pull_request` p90 28:25 across six hosted workflows;
 - apache/spark: `push` p90 5:16:05 in `build_main.yml`, and `workflow_run` p90 6:33:32 in
   `test_report.yml`. One test-report job was spot-checked: it was created 13:39, started
