@@ -21,7 +21,7 @@ from cadence.simulate import Savings, SavingsBasis
 from cadence.workflow import Workflow
 
 DETECTOR_ID = "waste.irrelevant_path_trigger"
-DETECTOR_VERSION = "irrelevant_path_trigger@1"
+DETECTOR_VERSION = "irrelevant_path_trigger@2"
 
 MIN_RUNS = 30
 # At least this share of runs must be provably inert before it is worth a maintainer's
@@ -31,11 +31,17 @@ MIN_WASTED_FRACTION = 0.08
 # Deliberately conservative. A change under any of these cannot alter build or test
 # behaviour for any language we support. Notably absent: config files, CI files, and
 # anything under scripts/ -- all of which genuinely can.
+#
+# @2 (CAVEATS 89): prose is inert at any depth, not only at the root -- `e2e/README.md`
+# is as much documentation as `README.md`. And `.txt` is no longer inert
+# by extension: `requirements.txt` is a dependency manifest. Only the named files below
+# (LICENSE.txt, README.txt, ...) keep it.
 _INERT = re.compile(
     r"""^(
         docs?/ | doc/ | website/ | \.github/ISSUE_TEMPLATE/ |
-        [^/]*\.(md|rst|txt|adoc)$ |
-        (^|.*/)(LICENSE|NOTICE|AUTHORS|CONTRIBUTORS|CHANGELOG|CODEOWNERS)(\.[a-z]+)?$ |
+        (^|.*/)[^/]+\.(md|markdown|rst|adoc)$ |
+        (^|.*/)(LICENSE|LICENCE|NOTICE|AUTHORS|CONTRIBUTORS|CHANGELOG|CHANGES|README
+                |CODEOWNERS)(\.[a-z]+)?$ |
         \.editorconfig$ | \.gitattributes$ | \.gitignore$ |
         (^|.*/)\.?(images?|screenshots?|assets/docs)/
     )""",
@@ -112,8 +118,14 @@ class IrrelevantPathTriggerDetector:
             ),
             detector_version=DETECTOR_VERSION,
             suggested_action=(
-                "Add a paths-ignore filter to this workflow's triggers:\n"
-                "on:\n  pull_request:\n    paths-ignore: ['docs/**', '**/*.md', 'LICENSE']"
+                "Skip the heavy work when a change touches only documentation. If no job in "
+                "this workflow is a required status check, a trigger filter is simplest:\n"
+                "on:\n  pull_request:\n    paths-ignore: ['docs/**', '**/*.md', 'LICENSE']\n"
+                "If one is, do not use paths-ignore: a workflow that never starts leaves its "
+                "required check pending, and docs-only pull requests can never merge. Add a "
+                "small job that lists the changed files and outputs whether all are "
+                "documentation, and give the heavy jobs `needs:` on it with an `if:` on that "
+                "output -- a skipped job satisfies a required check."
             ),
             savings=savings,
             parallel_jobs=avg_jobs,

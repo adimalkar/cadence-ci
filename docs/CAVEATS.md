@@ -58,6 +58,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 89 | `irrelevant_path_trigger` judges a pull-request run by its head commit, not the pull request's diff | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1598,43 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 89. `irrelevant_path_trigger` judges a pull-request run by its head commit, not the pull request's diff · Medium
+
+**What.** Field testing found `irrelevant_path_trigger@1` silent on genuinely docs-only runs
+even with `--paths`. Three problems, all fixed in `@2`:
+
+1. **Prose only counted at the root (fixed).** @1 accepted `README.md` but called
+   `e2e/README.md` code. @2 treats `.md`, `.markdown`, `.rst` and `.adoc`
+   as inert at any depth.
+2. **`.txt` counted as inert by extension (fixed).** That made `requirements.txt` count
+   as documentation, so a dependency bump could be reported as a wasted run. @2 keeps
+   `.txt` only for named files such as `LICENSE.txt` and `README.txt`.
+3. **The suggested fix could block merges (fixed).** @1 recommended `paths-ignore`. A
+   workflow that never starts leaves its required status
+   check pending, so docs-only pull requests could never merge. @2 offers `paths-ignore`
+   only when no job is a required check. Otherwise it describes
+   a safe pattern: a job that classifies the changed files, and `if:` on the heavy jobs, since a
+   skipped job satisfies a required check.
+
+**Still open: head-commit changesets.** Changed paths come from the run's head commit
+(`repo_commit` keyed by `head_sha`). A pull-request run tests the whole pull request, so
+a code change followed by a docs-only commit is judged docs-only, and that run is
+reported as wasted when it was not. The bias points toward false positives. Separately,
+markdown consumed by a build, such as Rust's `include_str!("../README.md")` doctests, is
+inert to this rule and was already for root READMEs.
+
+**Measured.** In field testing every flagged run was docs-only across its pull request's full
+file list (`GET /pulls/{n}/files`, the pull request's final state) or its push commit. The
+sample is small, one repository, and @2 was written after studying it.
+
+**Why it matters.** The stored-commit corpus holds changed paths for about one repo
+(flask, 311 runs), and @2 changes nothing there. Precision elsewhere is unmeasured.
+
+**What would close it.** For `pull_request` runs, fetch the pull request's files (one
+request per pull request, `GET /pulls/{n}/files`) and judge the run on those; judge only
+`push` runs on their commit. Detect an existing job-level docs skip, such as a job whose
+outputs gate the others, and treat it like a path filter.
 
 ## Environmental and tooling notes
 
