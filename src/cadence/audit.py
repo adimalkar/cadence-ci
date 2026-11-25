@@ -90,7 +90,7 @@ def build_context(
 
         cur.execute(
             """
-            SELECT id, head_branch, conclusion, workflow_path, head_sha,
+            SELECT id, head_branch, conclusion, workflow_path, head_sha, event,
                    extract(epoch FROM created_at) AS created_epoch
             FROM run
             WHERE repo_id = %s AND created_at > now() - make_interval(days => %s)
@@ -311,6 +311,7 @@ def _observations(run_rows, jobs_by_run, workflows: list[Workflow]) -> list[RunO
                 conclusion=row["conclusion"],
                 workflow_path=row["workflow_path"],
                 head_sha=row["head_sha"],
+                event=row["event"],
                 jobs_total=len(job_rows),
                 jobs_mapped=len(spans),
                 timings=aggregate_spans(spans),
