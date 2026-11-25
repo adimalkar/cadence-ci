@@ -41,6 +41,9 @@ ci = [
     "zizmor>=1.0",
     "cyclonedx-bom>=4.5",
 ]
+mcp = [
+    "mcp>=2.3,<3",
+]
 
 [project.scripts]
 cadence = "cadence.cli:app"

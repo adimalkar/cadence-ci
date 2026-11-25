@@ -889,3 +889,75 @@ def webhook_serve(
 
 if __name__ == "__main__":
     app()
+
+
+@app.command()
+def analyze(
+    repo: str | None = typer.Argument(None, help="owner/name; omit with --snapshot"),
+    ref: str | None = typer.Option(None, help="Branch, tag or commit; default: default branch."),
+    snapshot: Annotated[Path | None, typer.Option(
+        help="Re-use a pinned source saved by an earlier analyze: offline, no API calls.",
+        exists=True, dir_okay=False,
+    )] = None,
+    finding: str | None = typer.Option(
+        None, help="Return this finding (an `f_` id) with its action and full evidence."),
+    window: int = typer.Option(90, min=1, help="Days of stored history to analyse."),
+    limit: int = typer.Option(500, min=1, help="Maximum stored runs to analyse."),
+    top: int = typer.Option(10, min=1, help="Findings in the summary view."),
+    include_suppressed: bool = typer.Option(
+        False, "--include-suppressed", help="List suppressed findings, marked as such."),
+    pretty: bool = typer.Option(False, "--pretty", help="Indent the JSON."),
+    cache_dir: Annotated[Path, typer.Option(help="Where pinned sources are saved.")] = CACHE_DIR,
+) -> None:
+    """Machine-readable analysis for agents and scripts (schema cadence.analysis/1).
+
+    Prints exactly one JSON object on stdout -- a result or an `error` with a code -- and
+    nothing else; logs go to stderr. Writes nothing to the database. The source it read is
+    pinned to a commit and saved, so `--snapshot PATH --finding ID` answers offline.
+    """
+    from cadence.analysis import analyze as run_analysis
+    from cadence.analysis import as_error, capture, finding_view, log_to_stderr, summary_view
+
+    # structlog prints to stdout by default; one retry warning would corrupt the JSON.
+    log_to_stderr()
+
+    def emit(obj: dict, code: int = 0) -> None:
+        typer.echo(json.dumps(obj, indent=2 if pretty else None, sort_keys=False))
+        if code:
+            raise typer.Exit(code)
+
+    if snapshot and ref:
+        raise typer.BadParameter("choose --snapshot or --ref, not both")
+    if not snapshot and not repo:
+        raise typer.BadParameter("give owner/name, or --snapshot")
+
+    try:
+        source, path = asyncio.run(capture(repo, ref=ref, snapshot=snapshot,
+                                           cache_dir=cache_dir, token=settings.github_token))
+        with connect() as conn:
+            result = run_analysis(conn, source, window_days=window, limit_runs=limit,
+                                  source_path=path)
+        emit(finding_view(result, finding) if finding else
+             summary_view(result, top=top, include_suppressed=include_suppressed))
+    except Exception as exc:
+        err = as_error(exc)
+        if err is None:
+            raise
+        emit(err.as_dict(), 1)
+
+
+@app.command()
+def mcp() -> None:
+    """Serve the analysis contract to an AI agent over MCP (stdio). Read-only tools only.
+
+    Register with your client, e.g. `claude mcp add cadence -- cadence mcp`. Needs the
+    `mcp` extra (`uv sync --extra mcp`), a database with ingested history, and
+    CADENCE_GITHUB_TOKEN for live sources.
+    """
+    try:
+        from cadence.mcp_server import serve
+    except ModuleNotFoundError as exc:
+        typer.echo(f"MCP support is not installed ({exc.name}); "
+                   "install the extra: uv sync --extra mcp", err=True)
+        raise typer.Exit(1) from None
+    serve()

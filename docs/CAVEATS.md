@@ -58,6 +58,8 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 90 | `cadence analyze` (cadence.analysis/1) is a parallel path to `audit`, and other commands still log to stdout | Medium | Open |
+| 91 | The MCP server is local-only and has been exercised with the Python SDK client, not with Claude Code, Codex, Cursor or Copilot | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1599,76 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 90. `cadence analyze` (cadence.analysis/1) is a parallel path to `audit`, and other commands still log to stdout · Medium
+
+**What.** `cadence/analysis.py` is the first shared, read-only analysis contract, and
+`cadence analyze` is its CLI adapter. The command prints exactly one JSON object: a
+result, or an `error` with a code, hint and retryable flag. Logs go to stderr. Its
+database transaction is `READ ONLY`, so nothing is persisted. It analyses a commit-pinned
+`PreviewSource`: workflow files, root `package.json`, local actions and `.cadenceignore`,
+all at one SHA. The source is saved, so `--snapshot PATH --finding ID` answers offline
+with the same `analysis_id`. There are two views:
+- **summary:** coverage, freshness, ranked findings with savings basis and suppression
+  state, and evidence handles without bodies.
+- **finding:** the suggested action and full evidence, with lists over 50 items cut to
+  a sample plus their true length.
+
+Measured in field testing, a summary with several findings, full coverage and caveats was
+about 1,100 tokens. The gh path measured on 2026-11-20 was 11-15k
+tokens for `gh run list` of 100 runs alone, and 52-70k for the jobs of 50 runs.
+
+**Why it matters.**
+1. `audit` was not refactored onto the service, to avoid conflicting with open PRs that
+   change it (#63 `--as-of`, #66 refusal reasons). Until it is, the two paths can
+   drift. `analyze` has no `--as-of`, and does not fetch refusal reasons, until those
+   land.
+2. structlog prints to **stdout** by default. `analyze` reconfigures it to stderr, but
+   `audit --json`, `fix preview` and the other commands do not. A retry warning
+   interleaves with their output.
+3. Contract finding ids (`f_` + hash of repo and dedupe key) are stable across analyses
+   but are not the database `finding.id` UUIDs used by `suppress add`.
+4. The window ends at `now()`. `analysis_id` changes whenever new runs are ingested,
+   which is correct but means "same id" cannot be expected across an ingest.
+5. A pinned source is saved under `data/corpus/`, which is gitignored. That is a local
+   file write; the database is never written.
+
+**What would close it.** Move `audit` onto `analysis.analyze`, with persistence as an
+explicit second step. Configure logging to stderr once, in the CLI entry point. Accept a
+contract finding id in `suppress add`. Add `--as-of` and refusal enrichment once #63 and
+#66 merge. Then the MCP adapter calls the same two views.
+
+### 91. The MCP server is local-only and has been exercised with the Python SDK client, not with Claude Code, Codex, Cursor or Copilot · Medium
+
+**What.** `cadence mcp` serves the analysis contract over stdio with two tools.
+`cadence_analyze` returns the summary view and `cadence_finding` the finding view; both
+come from the same functions as `cadence analyze`. Both are annotated read-only,
+non-destructive and idempotent. There is no ingest, suppress or edit tool. It is an
+optional extra (`mcp>=2.3,<3`), installed in CI so its tests run rather than skip. A real
+stdio session ran with the SDK's own client against the local database: initialize, list
+tools, analyse pallets/flask (~520 tokens), fetch one finding (~1,200 tokens, same
+`analysis_id`), and get a coded refusal for a missing repo. A test asserts that the tool
+output and a direct `summary_view` are identical.
+
+**Why it matters.**
+1. No real agent host has run it, so client-specific behaviour is unknown. That includes
+   structured versus text output, timeouts on a cold `cadence_analyze` (about 10-20
+   GitHub requests to pin the source), and tool approval prompts.
+2. Each `cadence_analyze` captures the source live. The process-level cache serves
+   follow-up `cadence_finding` calls, and a miss recomputes offline from the saved
+   snapshot, but a restart loses the cache.
+3. There is no authentication beyond local process access, and no hosted mode. The
+   GitHub token is the operator's.
+4. Results carry the same JSON twice, as structured content and as text, as MCP
+   recommends. A client that bills both doubles the token cost.
+5. Workflow YAML and log-derived strings reach the agent inside evidence. The server's
+   instructions call them data, but that is guidance, not enforcement.
+
+**What would close it.** Register it in Claude Code, Codex and Cursor and run the same
+three tasks in each (find the largest waste, inspect a finding, check a refusal). Record
+approval, output and timing differences. Add an optional `snapshot` argument so a client
+can pin a source across restarts. Then decide between hosted HTTP and OAuth, per the
+2026-11-19 integration research.
 
 ## Environmental and tooling notes
 

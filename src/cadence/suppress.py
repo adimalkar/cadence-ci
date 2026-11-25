@@ -78,6 +78,18 @@ class Rule:
         return self.job_name is None or self.job_name in parts
 
 
+def stored_matches(row: dict, kind: str, dedupe_key: str) -> bool:
+    """Does a stored suppression row (`kind`, `dedupe_key`, `suppress_scope`) silence this
+    finding? Its scope widens it from the exact finding to a path or the whole repo."""
+    if row["kind"] != kind:
+        return False
+    if row["suppress_scope"] == "rule_repo":
+        return True
+    if row["suppress_scope"] == "rule_path":
+        return row["dedupe_key"].split(":")[:2] == dedupe_key.split(":")[:2]
+    return row["dedupe_key"] == dedupe_key
+
+
 class SuppressionError(ValueError):
     """A malformed instruction. Raised rather than skipped: an ignore rule that silently
     does nothing is worse than one that fails loudly, because the user believes it worked."""
