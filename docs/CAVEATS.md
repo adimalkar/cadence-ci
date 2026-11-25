@@ -58,6 +58,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 81 | `no_run_cancellation` evaluates only `github.event_name` conditions; groups are still assumed per branch | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1598,42 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 81. A conditional cancel-in-progress was reported as waste it had chosen · Medium
+
+**What.** `no_run_cancellation@2` named a conditional `cancel-in-progress` correctly
+(CAVEATS 55) but still claimed every overlap as recoverable. In field testing
+every overlap it claimed was a push to `main`, in a workflow deliberately written so that
+each `main` commit reports its own result:
+`cancel-in-progress: ${{ github.event_name == 'pull_request' }}`, with the group keyed on
+the PR number and falling back to the sha. Following the finding would have removed
+that guarantee. webpack/webpack's `test.yml` and `benchmarks.yml` use the same pattern with
+the same explanation.
+
+**Fixed in `no_run_cancellation@3`.** The exact form
+`${{ github.event_name ==|!= '<event>' }}` is evaluated against the *superseding* run's
+event, which is how GitHub evaluates it. `RunObservation` now carries the run's `event`.
+An overlap the condition already decides is not claimed: either the author exempted it, or
+the condition cancels and the run finished anyway, which means the two runs were in
+different groups and editing `cancel-in-progress` recovers nothing. Those overlaps are
+counted as `overlaps_decided_by_condition` in the run-history evidence. Runs whose event is
+unknown remain claimable.
+
+**Measured on the corpus (every ingested public repo with a pinned workflow snapshot, 400-day window):** findings
+95 → 90 and summed replay savings 20,556 → 19,382 s/run (−5.7%). The five removed findings
+were the only conditional ones: vuejs/core `ci.yml` and four webpack workflows. No
+conditional finding remains, so no corpus workflow currently depends on an unevaluated
+expression.
+
+**Still open.** Any other expression (`github.ref`, `&&`, `contains`, reversed operands)
+stays unevaluated and claimable. The replay still treats runs on the same branch as one
+group, so a workflow with **no** concurrency block whose suggested fix would be a per-sha
+group is not modelled, and a group key that differs from the branch is never read.
+
+**What would close it.** Evaluate the concurrency `group` expression for the contexts we
+hold (`github.workflow`, `github.ref`, `github.head_ref`, `github.sha`,
+`github.event.pull_request.number`, `||` fallbacks), refuse anything else, and replay
+overlap within evaluated groups instead of branches.
 
 ## Environmental and tooling notes
 
