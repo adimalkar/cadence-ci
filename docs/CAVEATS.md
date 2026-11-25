@@ -58,6 +58,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 90 | `cadence analyze` (cadence.analysis/1) is a parallel path to `audit`, and other commands still log to stdout | Medium | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1598,44 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 90. `cadence analyze` (cadence.analysis/1) is a parallel path to `audit`, and other commands still log to stdout · Medium
+
+**What.** `cadence/analysis.py` is the first shared, read-only analysis contract, and
+`cadence analyze` is its CLI adapter. The command prints exactly one JSON object: a
+result, or an `error` with a code, hint and retryable flag. Logs go to stderr. Its
+database transaction is `READ ONLY`, so nothing is persisted. It analyses a commit-pinned
+`PreviewSource`: workflow files, root `package.json`, local actions and `.cadenceignore`,
+all at one SHA. The source is saved, so `--snapshot PATH --finding ID` answers offline
+with the same `analysis_id`. There are two views:
+- **summary:** coverage, freshness, ranked findings with savings basis and suppression
+  state, and evidence handles without bodies.
+- **finding:** the suggested action and full evidence, with lists over 50 items cut to
+  a sample plus their true length.
+
+Measured in field testing, a summary with several findings, full coverage and caveats was
+about 1,100 tokens. The gh path measured on 2026-11-20 was 11-15k
+tokens for `gh run list` of 100 runs alone, and 52-70k for the jobs of 50 runs.
+
+**Why it matters.**
+1. `audit` was not refactored onto the service, to avoid conflicting with open PRs that
+   change it (#63 `--as-of`, #66 refusal reasons). Until it is, the two paths can
+   drift. `analyze` has no `--as-of`, and does not fetch refusal reasons, until those
+   land.
+2. structlog prints to **stdout** by default. `analyze` reconfigures it to stderr, but
+   `audit --json`, `fix preview` and the other commands do not. A retry warning
+   interleaves with their output.
+3. Contract finding ids (`f_` + hash of repo and dedupe key) are stable across analyses
+   but are not the database `finding.id` UUIDs used by `suppress add`.
+4. The window ends at `now()`. `analysis_id` changes whenever new runs are ingested,
+   which is correct but means "same id" cannot be expected across an ingest.
+5. A pinned source is saved under `data/corpus/`, which is gitignored. That is a local
+   file write; the database is never written.
+
+**What would close it.** Move `audit` onto `analysis.analyze`, with persistence as an
+explicit second step. Configure logging to stderr once, in the CLI entry point. Accept a
+contract finding id in `suppress add`. Add `--as-of` and refusal enrichment once #63 and
+#66 merge. Then the MCP adapter calls the same two views.
 
 ## Environmental and tooling notes
 
