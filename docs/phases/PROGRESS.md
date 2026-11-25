@@ -61,6 +61,7 @@ data arriving.
 | `long_tail_step` | `detectors/longtail.py` |
 | `job_billing_rounding` | `detectors/billing.py` |
 | `first_failing_step` | `detectors/failure.py` |
+| `timeout_hang` (added 2026-11-24, [CAVEATS 87](../CAVEATS.md)) | `detectors/timeouts.py` |
 
 Plus the machinery: `simulate.py` (replay + projection, kept structurally apart),
 `dag.py` (DAG, levelling, critical path, theoretical floor), `cost.py` (two currencies,
