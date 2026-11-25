@@ -28,7 +28,9 @@ from cadence.workflow import Job, Step, Workflow, parse_workflow
 MIN_SAVINGS_LOW_SECONDS = 30.0
 _DEPLOY = re.compile(r"deploy|release|publish|production|\bprod\b", re.I)
 _PATH = re.compile(r"^[A-Za-z0-9_./-]+$")
-_NPM = re.compile(r"npm (ci|install)(?:\s+--(?:ignore-scripts|no-audit|no-fund|prefer-offline))*$")
+_NPM = re.compile(
+    r"npm\s+(ci|install)(?:\s+--(?:ignore-scripts|no-audit|no-fund|prefer-offline))*$"
+)
 _CACHE_ENV = {"PIP_CACHE_DIR", "PIP_NO_CACHE_DIR", "PIP_CONFIG_FILE", "NPM_CONFIG_CACHE"}
 _PREFIX_ACTIONS = {"actions/setup-node", "actions/setup-python"}
 
@@ -117,7 +119,7 @@ class CacheFixer:
             raw_setup = raw_job["steps"][setup.index]
             if raw_setup.get("if") is not None:
                 return FixResult(None, "setup action is conditional; cache availability is unknown")
-            if any(str(k).upper() in _CACHE_ENV for k in (raw_setup.get("env") or {})):
+            if _has_cache_env(raw_setup):
                 return FixResult(None, "setup action overrides the cache environment")
             addition = {"cache": ecosystem, "cache-dependency-path": "\n".join(paths)}
             at, lines = _insertion(content, raw_setup, ecosystem, paths)
@@ -157,16 +159,28 @@ def _unsafe_context(
                 and any(v == "write" for v in permissions.values())):
             return "workflow or job has write permissions; cache policy needs manual review"
     for raw in (doc, job.raw):
-        if (raw.get("defaults") or {}).get("run", {}).get("working-directory"):
-            return "default working-directory is set; only workspace-root installs are supported"
+        defaults = raw.get("defaults")
+        if isinstance(defaults, dict):
+            run_defaults = defaults.get("run")
+            if isinstance(run_defaults, dict) and run_defaults.get("working-directory"):
+                return (
+                    "default working-directory is set; only workspace-root installs are supported"
+                )
     if raw_install.get("working-directory") or raw_install.get("if") is not None:
         return "install has a working-directory or condition; workspace context is uncertain"
     for raw in (doc, job.raw, raw_install):
-        if any(str(k).upper() in _CACHE_ENV for k in (raw.get("env") or {})):
+        if _has_cache_env(raw):
             return "custom cache environment is set; preserve its policy"
     if "self-hosted" in job.runs_on:
         return "self-hosted runner may retain downloads already; cache policy needs manual review"
     return None
+
+
+def _has_cache_env(raw: dict) -> bool:
+    env = raw.get("env")
+    if env is None:
+        return False
+    return not isinstance(env, dict) or any(str(k).upper() in _CACHE_ENV for k in env)
 
 
 def _checkout_context(job: Job, setup: Step, install: Step) -> str | None:
@@ -200,19 +214,21 @@ def _path(value: str, files: frozenset[str]) -> str:
 
 def _dependencies(script: str, files: frozenset[str]) -> tuple[str, list[str]] | str:
     script = script.strip()
-    if _NPM.fullmatch(script):
+    # Shell evaluation and directory changes are deliberately outside this first fixer.
+    if any(c in script for c in "$`;&|<>"):
+        return "install command is dynamic or compound; dependency paths are uncertain"
+    commands = [
+        line.strip()
+        for line in re.sub(r"\\\s*\n", " ", script).splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
+    if len(commands) == 1 and _NPM.fullmatch(commands[0]):
         if "package.json" not in files:
             return "npm install has no committed root package.json"
         lock = next((p for p in ("npm-shrinkwrap.json", "package-lock.json") if p in files), None)
         return ("npm", [lock]) if lock else "npm caching requires a committed npm lockfile"
-    # Shell evaluation and directory changes are deliberately outside this first fixer.
-    if any(c in script for c in "$`;&|<>"):
-        return "install command is dynamic or compound; dependency paths are uncertain"
-    commands = re.sub(r"\\\s*\n", " ", script).splitlines()
     dependencies: set[str] = set()
     for command in commands:
-        if not command.strip() or command.lstrip().startswith("#"):
-            continue
         tokens = shlex.split(command)
         if tokens[:2] == ["pip", "install"]:
             args = tokens[2:]
