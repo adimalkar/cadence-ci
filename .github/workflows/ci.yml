@@ -307,7 +307,7 @@ jobs:
           set -euo pipefail
           uv venv /tmp/wheelcheck
           VIRTUAL_ENV=/tmp/wheelcheck uv pip install dist/*.whl
-          # Exercises the console script, which is what `pip install cadence` gives a user.
+          # Exercises the console script, which is what `pip install cadence-ci` gives a user.
           /tmp/wheelcheck/bin/cadence --help > /dev/null
           echo "wheel installs and the cadence entrypoint runs"
 

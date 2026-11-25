@@ -4,7 +4,7 @@ name: Release
 #
 # MANUAL PREREQUISITE, ONE TIME: PyPI Trusted Publishing must be configured before the
 # first tag, at https://pypi.org/manage/account/publishing/ --
-#   project: cadence · owner: adimalkar · repo: cadence-ci
+#   project: cadence-ci · owner: adimalkar · repo: cadence-ci
 #   workflow: release.yml · environment: pypi
 # Until that exists the publish step will fail by design. No API token is stored anywhere:
 # the runner exchanges a short-lived OIDC identity for an upload credential, so there is no
