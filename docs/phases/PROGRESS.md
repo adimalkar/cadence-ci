@@ -61,6 +61,7 @@ data arriving.
 | `long_tail_step` | `detectors/longtail.py` |
 | `job_billing_rounding` | `detectors/billing.py` |
 | `first_failing_step` | `detectors/failure.py` |
+| `jobs_not_started` (added 2026-11-24, [CAVEATS 88](../CAVEATS.md)) | `detectors/unstarted.py` |
 
 Plus the machinery: `simulate.py` (replay + projection, kept structurally apart),
 `dag.py` (DAG, levelling, critical path, theoretical floor), `cost.py` (two currencies,

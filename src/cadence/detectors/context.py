@@ -116,6 +116,23 @@ class JobFailure:
     job_seconds: float
 
 
+@dataclass(frozen=True, slots=True)
+class UnstartedFailure:
+    """A job attempt that failed without running a single step.
+
+    That is a refusal, not a broken build: GitHub declined to run it (a billing block, a
+    spending limit, a label no runner serves) and says why only in an annotation.
+    """
+
+    job_id: int
+    run_id: int
+    attempt: int
+    workflow_path: str | None
+    job_name: str | None
+    runner_labels: tuple[str, ...]
+    created_epoch: float
+
+
 # setup-node's own test, copied from its src/main.ts: "npm", "npm@…", "^npm@…".
 _NPM_PACKAGE_MANAGER = re.compile(r"^(\^)?npm(@.*)?$")
 
@@ -197,6 +214,11 @@ class AuditContext:
     # Manifests of the actions jobs run, keyed by `uses:`. Absent means not looked up, which
     # a detector must read as unknown -- see cadence.actions.
     actions: ActionIndex = field(default_factory=dict)
+    # Failed job attempts that never ran a step, and, where fetched, the failure-level
+    # annotation messages GitHub attached to them, keyed by job id. Absent means not
+    # looked up, never "no reason given".
+    unstarted_failures: list[UnstartedFailure] = field(default_factory=list)
+    job_annotations: dict[int, list[str]] = field(default_factory=dict)
     # NOTE: class E (runner fit) is deliberately NOT built. Detecting "single-threaded
     # job on an 8-core runner" needs CPU utilisation, which the Actions API does not
     # expose -- only labels. Inferring it from duration alone would be a guess presented

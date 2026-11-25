@@ -58,6 +58,7 @@ on.** An entry is cheap to write and expensive to rediscover.
 | 69 | A malformed action manifest can be classified as known non-caching by the detector | Low | Open |
 | 62 | Long-tail histories were merged across workflows | Medium | ✅ Resolved 2026-11-17 |
 | 71 | Legacy exact-finding long-tail suppressions need explicit re-scoping | Low | Open |
+| 88 | `jobs_not_started` relies on three heuristics to tell a refusal from a job that lost its steps | Low | Open |
 | 66 | Locked urllib3 2.7.0 made current security checks fail on otherwise passing PRs | Medium | ✅ Fixed 2026-10-18 (PR #33) |
 | 65 | `setup-go`, `setup-ruby` and `setup-uv` caching inputs/defaults were unmodelled | Medium | ✅ Fixed 2026-10-18 (`dependency_cache@6`) |
 | 57 | No-cancellation evidence points at line 1, even when a concurrency block sits at a known line | Low | Open |
@@ -1597,6 +1598,36 @@ there was no observed suppression to migrate in that dataset.
 finding to the selected workflow-scoped findings, preserving reasons and provenance.
 Test exact-finding, path and repository suppression scopes across the transition; never
 silently widen a finding decision to repository scope.
+
+### 88. `jobs_not_started` relies on three heuristics to tell a refusal from a job that lost its steps · Low
+
+**What.** A new rule, `jobs_not_started@1` (module `observability`), reports failed job
+attempts that ran no step, grouped by runner kind and label set (≥5 per group). `audit`
+then fetches the check-run annotations of the newest refused job in each group, at most
+three requests and only when such jobs exist, and puts GitHub's stated reason in the
+title. No rule saw these before: `first_failing_step` needs a failing step.
+
+It was found by a backtest in field testing, where no rule reported such jobs. The rule was
+written after studying that case, so it is not independent evidence of reach.
+
+**Why it matters.** "No steps" is weak evidence alone. The first corpus sweep flagged
+two groups that were not refusals:
+- **serde:** six jobs whose steps had aged out (CAVEATS 85). Their annotation reads
+  "Process completed with exit code 101".
+- **spark:** a reusable-workflow caller job. It has no steps or labels of its own and
+  failed after two hours with its callee.
+
+Three guards now exclude these: the job must have runner labels, it must fail within two
+minutes of starting, and some job in the repository within a day of it must still have
+step data. Each guard is a heuristic. A refusal that took longer than two minutes, or
+that happened in a repo whose other jobs all lost their steps, is missed. After the
+guards, the public corpus has one refused job (astral-sh/uv), below the floor, so the
+rule's precision is essentially unmeasured.
+
+**What would close it.** Make the annotation the evidence rather than the explanation:
+fetch it for each candidate group and report only when GitHub's message says the job
+was not started, for a request per group. Store annotations at ingest time for failed
+jobs with no steps, since they are not retained forever either.
 
 ## Environmental and tooling notes
 

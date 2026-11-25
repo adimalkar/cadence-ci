@@ -29,12 +29,14 @@ from cadence.detectors.context import (
     RootPackageJson,
     RunObservation,
     StepSeries,
+    UnstartedFailure,
 )
 from cadence.detectors.failure import FirstFailingStepDetector
 from cadence.detectors.longtail import LongTailStepDetector
 from cadence.detectors.matrix import NonDiscriminatingMatrixLegDetector
 from cadence.detectors.serialization import FalseNeedsEdgeDetector
 from cadence.detectors.triggers import IrrelevantPathTriggerDetector
+from cadence.detectors.unstarted import JobsNotStartedDetector, refusal_groups
 from cadence.findings import persist_findings, resolve_missing
 from cadence.workflow import Workflow, parse_workflow
 
@@ -49,6 +51,7 @@ DETECTORS = [
     LongTailStepDetector(),
     JobBillingRoundingDetector(),
     FirstFailingStepDetector(),
+    JobsNotStartedDetector(),
 ]
 
 
@@ -178,6 +181,43 @@ def build_context(
                     )
                 )
 
+        # Failed job attempts that never ran a step: refused rather than broken. Every
+        # attempt, since a refusal is usually retried and the retry refused again.
+        unstarted: list[UnstartedFailure] = []
+        if run_ids:
+            cur.execute(
+                """
+                SELECT j.id, j.run_id, j.attempt, r.workflow_path, j.name, j.runner_labels,
+                       extract(epoch FROM j.created_at) AS created_epoch
+                FROM job j JOIN run r ON r.id = j.run_id
+                WHERE j.run_id = ANY(%s) AND j.conclusion = 'failure'
+                  AND NOT EXISTS (SELECT 1 FROM step s
+                                  WHERE s.job_id = j.id AND s.started_at IS NOT NULL)
+                  -- A reusable-workflow caller has no steps and no labels of its own, and
+                  -- fails whenever its callee does: it ran, through someone else.
+                  AND j.runner_labels <> '{}'
+                  -- Refused jobs end in seconds (observed 3-20 s); one that ran for
+                  -- minutes and recorded no steps lost them some other way.
+                  AND j.completed_at - j.started_at <= interval '2 minutes'
+                  -- GitHub drops step timings after ~120 days (CAVEATS 85), so "no steps"
+                  -- is only evidence where jobs from the same day still have them.
+                  AND EXISTS (SELECT 1 FROM job k JOIN step ks ON ks.job_id = k.id
+                              WHERE k.repo_id = j.repo_id
+                                AND k.created_at BETWEEN j.created_at - interval '1 day'
+                                                     AND j.created_at + interval '1 day')
+                """,
+                (run_ids,),
+            )
+            unstarted = [
+                UnstartedFailure(
+                    job_id=row["id"], run_id=row["run_id"], attempt=row["attempt"],
+                    workflow_path=row["workflow_path"], job_name=row["name"],
+                    runner_labels=tuple(row["runner_labels"] or ()),
+                    created_epoch=float(row["created_epoch"]),
+                )
+                for row in cur.fetchall()
+            ]
+
         # Per-leg outcomes and durations for the matrix rule. Keyed on the verbatim
         # name, since that is exactly what distinguishes one leg from another.
         leg_outcomes: dict[str, dict[str, list[tuple[int, str | None]]]] = {}
@@ -235,6 +275,7 @@ def build_context(
         changed_paths=load_changed_paths(conn, repo_id, run_ids),
         root_package_json=root_package_json or RootPackageJson(),
         actions=actions or {},
+        unstarted_failures=unstarted,
     )
 
 
@@ -373,6 +414,24 @@ async def enrich_changed_paths(provider, repo, ctx: AuditContext, *, max_runs: i
         if seen[sha]:
             ctx.changed_paths[run.run_id] = seen[sha]
     return len(ctx.changed_paths)
+
+
+async def enrich_refusal_reasons(provider, repo, ctx: AuditContext, *, max_lookups: int = 3) -> int:
+    """Fetch GitHub's stated reason for the newest refused job in each runner group.
+
+    One request per group, at most `max_lookups`, and best-effort: a failure leaves the
+    reason unknown, which the rule reports as unknown rather than guessing.
+    """
+    looked = 0
+    for group in refusal_groups(ctx.unstarted_failures)[:max_lookups]:
+        newest = max(group, key=lambda u: (u.created_epoch, u.job_id))
+        try:
+            notes = await provider.fetch_job_annotations(repo, newest.job_id)
+        except Exception:  # never fail an audit over an explanation
+            continue
+        looked += 1
+        ctx.job_annotations[newest.job_id] = [msg for level, msg in notes if level == "failure"]
+    return looked
 
 
 async def fetch_root_package_json(
