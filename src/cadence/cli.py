@@ -769,6 +769,8 @@ def _render_audit(repo, ctx, summary, result, *, dry_run: bool) -> None:
 
     if not drafts:
         console.print("\n[green]No recoverable waste found.[/green] Pipeline is tight.\n")
+        if not dry_run and result["resolved"]:
+            console.print(f"[green]resolved[/green] {result['resolved']} finding(s)\n")
         return
 
     table = Table(title=f"\n{len(drafts)} findings · ranked by time recovered")
