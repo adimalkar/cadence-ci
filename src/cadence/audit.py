@@ -436,13 +436,17 @@ def run_audit(conn, ctx: AuditContext, *, commit_sha: str, persist: bool = True)
     )
 
     result = {"drafts": drafts, "persisted": None, "resolved": 0, "failed": failed}
-    if persist and drafts:
-        result["persisted"] = persist_findings(
-            conn, ctx.repo_id, drafts, commit_sha=commit_sha, cost=ctx.cost
-        )
-        result["resolved"] = resolve_missing(
-            conn, ctx.repo_id, {d.dedupe_key for d in drafts}, commit_sha=commit_sha
-        )
+    if persist:
+        if drafts:
+            result["persisted"] = persist_findings(
+                conn, ctx.repo_id, drafts, commit_sha=commit_sha, cost=ctx.cost
+            )
+        # Never resolve missing findings after an incomplete run: a crashed detector
+        # emits no drafts, so its existing findings would be marked fixed by mistake.
+        if not failed:
+            result["resolved"] = resolve_missing(
+                conn, ctx.repo_id, {d.dedupe_key for d in drafts}, commit_sha=commit_sha
+            )
     return result
 
 

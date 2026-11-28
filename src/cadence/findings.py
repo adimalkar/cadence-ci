@@ -140,21 +140,32 @@ def resolve_missing(
 
     Suppressed findings are left alone — a user's decision to silence something must not
     be quietly overwritten by a detector that stopped firing for an unrelated reason.
+    An empty `seen_keys` resolves all active findings for `repo_id` (a clean audit).
     """
-    if not seen_keys:
-        return 0
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(
-            """
-            UPDATE finding SET status = 'resolved', resolved_at = now(),
-                               last_seen_commit = %s
-            WHERE repo_id = %s
-              AND status IN ('new', 'acknowledged', 'regressed')
-              AND NOT (dedupe_key = ANY(%s))
-            RETURNING id
-            """,
-            (commit_sha, repo_id, list(seen_keys)),
-        )
+        if seen_keys:
+            cur.execute(
+                """
+                UPDATE finding SET status = 'resolved', resolved_at = now(),
+                                   last_seen_commit = %s
+                WHERE repo_id = %s
+                  AND status IN ('new', 'acknowledged', 'regressed')
+                  AND NOT (dedupe_key = ANY(%s))
+                RETURNING id
+                """,
+                (commit_sha, repo_id, list(seen_keys)),
+            )
+        else:
+            cur.execute(
+                """
+                UPDATE finding SET status = 'resolved', resolved_at = now(),
+                                   last_seen_commit = %s
+                WHERE repo_id = %s
+                  AND status IN ('new', 'acknowledged', 'regressed')
+                RETURNING id
+                """,
+                (commit_sha, repo_id),
+            )
         n = len(cur.fetchall())
     conn.commit()
     return n
